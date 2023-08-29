@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 from airflow.exceptions import AirflowException
 
 from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
-from airflow.providers.teradata.hooks.teradata import TeradataHook
+from hooks.teradata import TeradataHook
 
 if TYPE_CHECKING:
     from airflow.utils.context import Context

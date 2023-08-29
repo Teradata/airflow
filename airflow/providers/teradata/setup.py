@@ -6,7 +6,7 @@ setuptools.setup(
     name="apache-airflow-providers-teradata",
     packages=setuptools.find_packages(),
     description="Interact with Teradata SQL Database Server from Airflow via teradatasql driver",
-    entry_points={"airflow.plugins": ["teradata_hook = airflow.providers.teradata.hooks.teradata:TeradataHook"]},
+    entry_points={"airflow.plugins": ["teradata_hook = hooks.teradata:TeradataHook"]},
     python_requires=">=3.9",
     install_requires=["teradatasql", "teradatasqlalchemy", "pandas", "apache-airflow[celery]"],
     classifiers=[

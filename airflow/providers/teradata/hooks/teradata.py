@@ -77,7 +77,7 @@ class TeradataHook(DbApiHook):
     default_conn_name = "teradata_default"
     
     # Override if this db supports autocommit.
-    # supports_autocommit = False
+    # supports_autocommit = True
     
     # Override this for hook to have a custom name in the UI selection
     conn_type = "teradata"
@@ -88,12 +88,16 @@ class TeradataHook(DbApiHook):
     # Override with the Teradata specific placeholder parameter string used for insert queries
     placeholder: str = "?"
 
+    # Override SQL query to be used for testing database connection
+    _test_connection_sql = "select 1"
+
     def __init__(
         self,
         *args,
+        database: str | None = None,
         **kwargs,
     ) -> None:
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, schema=database, **kwargs)
 
 
     def get_conn(self) -> TeradataConnection:
@@ -110,17 +114,16 @@ class TeradataHook(DbApiHook):
         :return: a mysql connection object
         """
         print("Returns a Teradata connection object using teradatasql client")
-        conn: Connection = self.get_connection(getattr(self, self.conn_name_attr))
-        teradata_conn_config: dict = self._get_conn_config_teradatasql(conn=conn)
+        teradata_conn_config: dict = self._get_conn_config_teradatasql()
         teradata_conn = teradatasql.connect(**teradata_conn_config)
         print("inside _get_teradatasql_connection")
         return teradata_conn
     
-    
-    def _get_conn_config_teradatasql(self, conn: Connection) -> dict[str, Any]:
+    def _get_conn_config_teradatasql(self) -> dict[str, Any]:
         """
          Returns set of config parameters required for connecting to Teradata SQL Database using teradatasql client
         """
+        conn: Connection = self.get_connection(getattr(self, self.conn_name_attr))
         conn_config = {
             "host": conn.host or "localhost",
             "dbs_port": conn.port or "1025",
@@ -129,7 +132,6 @@ class TeradataHook(DbApiHook):
             "password": conn.password or "dbc",
         }
         return conn_config
-       
     
     def get_sqlalchemy_engine(self, engine_kwargs=None):
         """
@@ -143,7 +145,6 @@ class TeradataHook(DbApiHook):
         connection = sqlalchemy.create_engine(link)
         return connection
     
-
     @staticmethod
     def get_connection_form_widgets() -> dict[str, Any]:
         """Returns connection widgets to add to connection form for Teradata database"""
