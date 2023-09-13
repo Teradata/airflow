@@ -67,6 +67,7 @@ airflow/providers/cncf/kubernetes/executors/ @dstandish @jedcunningham
 /airflow/providers/celery/ @hussein-awala
 /airflow/providers/hashicorp/ @hussein-awala
 /airflow/providers/smtp/ @hussein-awala
+/airflow/providers/teradata/ @SatishChGit
 /docs/apache-airflow-providers-amazon/ @eladkal @o-nikolas
 /docs/apache-airflow-providers-common-sql/ @eladkal
 /docs/apache-airflow-providers-slack/ @eladkal

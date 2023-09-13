@@ -29,6 +29,7 @@ import packaging.version
 __all__ = ["__version__"]
 
 __version__ = "1.0.0"
+MIN_AIRFLOW_VERSION = "2.4.0"
 
 try:
     from airflow import __version__ as airflow_version
@@ -36,10 +37,10 @@ except ImportError:
     from airflow.version import version as airflow_version
 
 if packaging.version.parse(packaging.version.parse(airflow_version).base_version) < packaging.version.parse(
-    "2.6.2"
+    MIN_AIRFLOW_VERSION
 ):
     raise RuntimeError(
-        f"The package `apache-airflow-providers-teradata:{__version__}` requires Apache Airflow 2.6.2+"  # NOQA: E501
+        f"The package `apache-airflow-providers-teradata:{__version__}` requires Apache Airflow {MIN_AIRFLOW_VERSION}+"  # NOQA: E501
     )
 
 ## This is needed to allow Airflow to pick up specific metadata fields it needs for certain features.
@@ -47,11 +48,11 @@ def get_provider_info():
     return {
         "package-name": "apache-airflow-providers-teradata",  # Required
         "name": "Teradata",  # Required
-        "description": "Apache Airflow Provider package containing modules for interacting with Teradata SQL Database.",  # Required
+        "description": "Airflow Provider package for interacting with Teradata DB.",  # Required
         "connection-types": [
             {
                 "connection-type": "teradata",
-                "hook-class-name": "airflow.providers.teradata.hooks.teradata.TeradataHook"
+                "hook-class-name": "airflow.providers.teradata.hooks.teradata.TeradataHook",
             }
         ],
         "extra-links": [],

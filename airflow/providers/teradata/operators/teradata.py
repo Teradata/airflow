@@ -17,27 +17,23 @@
 # under the License.
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
-from airflow.exceptions import AirflowException
+from typing import TYPE_CHECKING, Sequence
 
 from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
-from hooks.teradata import TeradataHook
+from airflow.providers.teradata.hooks.teradata import TeradataHook
 
 if TYPE_CHECKING:
-    from airflow.utils.context import Context
+    pass
 
 
 class TeradataOperator(SQLExecuteQueryOperator):
     """
-    General Teradata Operator to execute queries on Teradata Database
+    General Teradata Operator to execute queries on Teradata Database.
 
     Executes sql statements in the Teradata SQL Database using teradatasql jdbc driver
-
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
         :ref:`howto/operator:TeradataOperator`
-
     :param sql: the SQL query to be executed as a single string, or
         a list of str (sql statements)
     :param conn_id: reference to a predefined database
@@ -54,14 +50,25 @@ class TeradataOperator(SQLExecuteQueryOperator):
     template_fields_renderers = {"sql": "sql"}
     ui_color = "#e07c24"
 
-
     def __init__(
         self,
         conn_id: str = TeradataHook.default_conn_name,
+        host: str | None = None,
+        port: str | None = None,
+        schema: str | None = None,
+        login: str | None = None,
+        password: str | None = None,
         **kwargs,
     ) -> None:
+        if any([host, port, schema, login, password]):
+            hook_params = kwargs.pop("hook_params", {})
+            kwargs["hook_params"] = {
+                "host": host,
+                "port": port,
+                "schema": schema,
+                "login": login,
+                "password": password,
+                **hook_params,
+            }
         super().__init__(**kwargs)
         self.conn_id = conn_id
-        if kwargs.get("xcom_push") is not None:
-            raise AirflowException("'xcom_push' was deprecated, use 'BaseOperator.do_xcom_push' instead")
-

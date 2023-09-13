@@ -18,7 +18,7 @@
 ---
 package-name: apache-airflow-providers-teradata
 
-name: airflow-provider-teradata
+name: Teradata
 
 description: |
     `Teradata <https://www.teradata.com/>`__
@@ -29,7 +29,7 @@ versions:
   - 1.0.0
 
 dependencies:
-  - apache-airflow>=2.6.2
+  - apache-airflow>=2.4.0
   - teradatasqlalchemy>=17.20.0.0
   - teradatasql>=17.20.0.28
 
@@ -39,7 +39,7 @@ integrations:
     how-to-guide:
       - /docs/apache-airflow-providers-teradata/operators.rst
     logo: /integration-logos/teradata/Teradata.png
-    tags: [service]
+    tags: [software]
 
 operators:
   - integration-name: Teradata

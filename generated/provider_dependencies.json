@@ -887,7 +887,7 @@
   },
   "teradata": {
     "deps": [
-      "apache-airflow>=2.6.2",
+      "apache-airflow>=2.4.0",
       "teradatasql>=17.20.0.28",
       "teradatasqlalchemy>=17.20.0.0"
     ],
