@@ -229,7 +229,6 @@ option_image_tag_for_pulling = click.option(
     envvar="IMAGE_TAG",
 )
 option_image_tag_for_building = click.option(
-    "-t",
     "--image-tag",
     help="Tag the image after building it.",
     show_default=True,
@@ -237,7 +236,6 @@ option_image_tag_for_building = click.option(
     envvar="IMAGE_TAG",
 )
 option_image_tag_for_running = click.option(
-    "-t",
     "--image-tag",
     help="Tag of the image which is used to run the image (implies --mount-sources=skip).",
     show_default=True,
@@ -452,6 +450,16 @@ argument_packages_plus_all_providers = click.argument(
     required=False,
     type=BetterChoice(["all-providers"] + get_available_documentation_packages(short_version=True)),
 )
+
+argument_packages_plus_all_providers_for_shorthand = click.argument(
+    "packages_plus_all_providers",
+    nargs=-1,
+    required=False,
+    type=BetterChoice(
+        ["all-providers"] + get_available_documentation_packages(short_version=True) + ["providers-index"]
+    ),
+)
+
 option_airflow_constraints_reference = click.option(
     "--airflow-constraints-reference",
     help="Constraint reference to use. Useful with --use-airflow-version parameter to specify "
@@ -614,4 +622,16 @@ option_airflow_site_directory = click.option(
     type=click.Path(exists=True, file_okay=False, dir_okay=True, resolve_path=True),
     help="Local directory path of cloned airflow-site repo.",
     required=True,
+)
+option_upgrade_boto = click.option(
+    "--upgrade-boto",
+    help="Remove aiobotocore and upgrade botocore and boto to the latest version.",
+    is_flag=True,
+    envvar="UPGRADE_BOTO",
+)
+option_downgrade_sqlalchemy = click.option(
+    "--downgrade-sqlalchemy",
+    help="Downgrade SQLAlchemy to minimum supported version.",
+    is_flag=True,
+    envvar="DOWNGRADE_SQLALCHEMY",
 )

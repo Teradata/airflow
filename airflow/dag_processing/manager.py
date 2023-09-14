@@ -610,16 +610,12 @@ class DagFileProcessorManager(LoggingMixin):
                 continue
 
             for sentinel in ready:
-                if sentinel is self._direct_scheduler_conn:
-                    continue
-
-                processor = self.waitables.get(sentinel)
-                if not processor:
-                    continue
-
-                self._collect_results_from_processor(processor)
-                self.waitables.pop(sentinel)
-                self._processors.pop(processor.file_path)
+                if sentinel is not self._direct_scheduler_conn:
+                    processor = self.waitables.get(sentinel)
+                    if processor:
+                        self._collect_results_from_processor(processor)
+                        self.waitables.pop(sentinel)
+                        self._processors.pop(processor.file_path)
 
             if self.standalone_dag_processor:
                 self._fetch_callbacks(max_callbacks_per_loop)
@@ -1058,12 +1054,11 @@ class DagFileProcessorManager(LoggingMixin):
         )
 
         for sentinel in ready:
-            if sentinel is self._direct_scheduler_conn:
-                continue
-            processor = cast(DagFileProcessorProcess, self.waitables[sentinel])
-            self.waitables.pop(processor.waitable_handle)
-            self._processors.pop(processor.file_path)
-            self._collect_results_from_processor(processor)
+            if sentinel is not self._direct_scheduler_conn:
+                processor = cast(DagFileProcessorProcess, self.waitables[sentinel])
+                self.waitables.pop(processor.waitable_handle)
+                self._processors.pop(processor.file_path)
+                self._collect_results_from_processor(processor)
 
         self.log.debug("%s/%s DAG parsing processes running", len(self._processors), self._parallelism)
 
@@ -1086,7 +1081,7 @@ class DagFileProcessorManager(LoggingMixin):
         # needs to be done before this process is forked to create the DAG parsing processes.
         SecretCache.init()
 
-        while self._parallelism - len(self._processors) > 0 and self._file_path_queue:
+        while self._parallelism > len(self._processors) and self._file_path_queue:
             file_path = self._file_path_queue.popleft()
             # Stop creating duplicate processor i.e. processor with the same filepath
             if file_path in self._processors:

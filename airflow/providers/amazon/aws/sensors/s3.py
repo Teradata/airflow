@@ -113,7 +113,7 @@ class S3KeySensor(BaseSensorOperator):
         }]
         """
         if self.wildcard_match:
-            prefix = re.split(r"[\[\*\?]", key, 1)[0]
+            prefix = re.split(r"[\[*?]", key, 1)[0]
             keys = self.hook.get_file_metadata(prefix, bucket_name)
             key_matches = [k for k in keys if fnmatch.fnmatch(k["Key"], key)]
             if not key_matches:
@@ -157,7 +157,7 @@ class S3KeySensor(BaseSensorOperator):
                 aws_conn_id=self.aws_conn_id,
                 verify=self.verify,
                 poke_interval=self.poke_interval,
-                should_check_fn=True if self.check_fn else False,
+                should_check_fn=bool(self.check_fn),
             ),
             method_name="execute_complete",
         )

@@ -21,7 +21,6 @@ from __future__ import annotations
 import errno
 import json
 import os
-import os.path
 import platform
 import random
 import re
@@ -437,15 +436,12 @@ class CloudSQLAsyncHook(GoogleBaseAsyncHook):
 
     async def get_operation(self, project_id: str, operation_name: str):
         async with ClientSession() as session:
-            try:
-                operation = await self.get_operation_name(
-                    project_id=project_id,
-                    operation_name=operation_name,
-                    session=session,
-                )
-                operation = await operation.json(content_type=None)
-            except HttpError as e:
-                raise e
+            operation = await self.get_operation_name(
+                project_id=project_id,
+                operation_name=operation_name,
+                session=session,
+            )
+            operation = await operation.json(content_type=None)
             return operation
 
 
@@ -673,8 +669,7 @@ class CloudSqlProxyRunner(LoggingMixin):
         command_to_run.extend(["--version"])
         command_to_run.extend(self._get_credential_parameters())
         result = subprocess.check_output(command_to_run).decode("utf-8")
-        pattern = re.compile("^.*[V|v]ersion ([^;]*);.*$")
-        matched = pattern.match(result)
+        matched = re.search("[Vv]ersion (.*?);", result)
         if matched:
             return matched.group(1)
         else:
