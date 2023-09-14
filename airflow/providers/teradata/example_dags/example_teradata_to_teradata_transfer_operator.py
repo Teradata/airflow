@@ -71,7 +71,7 @@ with DAG(
             ) PRIMARY INDEX (user_id);
         """,
     )
-    
+
     create_dest_table = TeradataOperator(
         task_id="create_dest_table",
         conn_id=CONN_ID,
@@ -107,17 +107,17 @@ with DAG(
             SELECT TOP 10 * from my_users_src order by user_id desc;
         """,
     )
-    
+
     transfer_data = TeradataToTeradataOperator(
-        task_id='transfer_data',
-        teradata_destination_conn_id='teradata_default',
-        destination_table='my_users_dest',
-        teradata_source_conn_id='teradata_default',
-        source_sql='select * from my_users_src',
+        task_id="transfer_data",
+        teradata_destination_conn_id="teradata_default",
+        destination_table="my_users_dest",
+        teradata_source_conn_id="teradata_default",
+        source_sql="select * from my_users_src",
         source_sql_params={},
-        rows_chunk=2
+        rows_chunk=2,
     )
-    
+
     read_data_dest = TeradataOperator(
         task_id="read_data_dest",
         conn_id=CONN_ID,
@@ -125,20 +125,35 @@ with DAG(
             SELECT TOP 10 * from my_users_dest order by user_id desc;
         """,
     )
-    
-    drop_table = TeradataOperator(
-        task_id="drop_table",
+
+    drop_src_table = TeradataOperator(
+        task_id="drop_src_table",
         conn_id=CONN_ID,
         sql="""
             DROP TABLE my_users_src;
+        """,
+    )
+
+    drop_dest_table = TeradataOperator(
+        task_id="drop_dest_table",
+        conn_id=CONN_ID,
+        sql="""
             DROP TABLE my_users_dest;
         """,
     )
 
-    chain(create_src_table, create_dest_table, insert_data_src, read_data_src, transfer_data, read_data_dest, drop_table)
+    chain(
+        create_src_table,
+        create_dest_table,
+        insert_data_src,
+        read_data_src,
+        transfer_data,
+        read_data_dest,
+        drop_dest_table,
+        drop_src_table,
+    )
 
     # Make sure create was done before deleting table
-    [create_src_table, create_dest_table] >> drop_table
+    [create_src_table, create_dest_table] >> drop_src_table
 
     # [END howto_transfer_operator_teradata_to_teradata]
-

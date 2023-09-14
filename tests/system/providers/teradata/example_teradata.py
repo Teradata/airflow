@@ -21,10 +21,12 @@ Example use of Teradata related operators.
 from __future__ import annotations
 
 import os
-import pytest
 from datetime import datetime
 
+import pytest
+
 from airflow import DAG
+
 try:
     from airflow.providers.teradata.hooks.teradata import TeradataHook
     from airflow.providers.teradata.operators.teradata import TeradataOperator
@@ -41,7 +43,7 @@ with DAG(
     tags=["example"],
     catchup=False,
 ) as dag:
-    
+
     # [START howto_operator_teradata]
 
     # Example of creating a task to create a table in Teradata
@@ -73,8 +75,6 @@ with DAG(
                 """,
     )
     # [END teradata_operator_howto_guide_populate_country_table]
-
-    
 
     # [START howto_operator_teradata]
 
@@ -129,7 +129,6 @@ with DAG(
         params={"column": "CONVERT(VARCHAR, continent)", "value": "Asia"},
     )
     # [END teradata_operator_howto_guide_params_passing_get_query]
-    
 
     drop_table_teradata_task = TeradataOperator(
         task_id="drop_table_teradata", sql=r"""DROP TABLE Country;""", dag=dag
@@ -144,11 +143,12 @@ with DAG(
         >> get_all_description
         >> get_countries_from_continent
         >> drop_table_teradata_task
-    )  
+    )
 
     # [END howto_operator_teradata]
 
     from tests.system.utils.watcher import watcher
+
     # This test needs watcher in order to properly mark success/failure
     # when "tearDown" task with trigger rule is part of the DAG
     list(dag.tasks) >> watcher()

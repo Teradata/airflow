@@ -19,14 +19,16 @@
 from __future__ import annotations
 
 import logging as log
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import sqlalchemy
 import teradatasql
 from teradatasql import TeradataConnection
 
-from airflow.models.connection import Connection
 from airflow.providers.common.sql.hooks.sql import DbApiHook
+
+if TYPE_CHECKING:
+    from airflow.models.connection import Connection
 
 
 class TeradataHook(DbApiHook):
@@ -82,8 +84,8 @@ class TeradataHook(DbApiHook):
         super().__init__(*args, schema=database, **kwargs)
 
     def get_conn(self) -> TeradataConnection:
-        """Creates and returns a Teradata Connection object using teradatasql client
-        
+        """Creates and returns a Teradata Connection object using teradatasql client.
+
         Establishes connection to a Teradata SQL database using config corresponding to teradata_conn_id.
 
         .. note:: By default it connects to the database via the teradatasql library.
@@ -142,12 +144,12 @@ class TeradataHook(DbApiHook):
                 # Empty chunk
                 row_chunk = []
         # Commit the leftover chunk
-        cursor.executemany(prepared_stm, row_chunk)
-        conn.commit()  # type: ignore[attr-defined]
-        self.log.info("[%s] inserted %s rows", table, row_count)
+        if row_chunk:
+            cursor.executemany(prepared_stm, row_chunk)
+            conn.commit()  # type: ignore[attr-defined]
+            self.log.info("[%s] inserted %s rows", table, row_count)
         cursor.close()
         conn.close()  # type: ignore[attr-defined]
-
 
     def _get_conn_config_teradatasql(self) -> dict[str, Any]:
         """Returns set of config params required for connecting to Teradata DB using teradatasql client."""
@@ -203,4 +205,3 @@ class TeradataHook(DbApiHook):
                 "password": "dbc",
             },
         }
-

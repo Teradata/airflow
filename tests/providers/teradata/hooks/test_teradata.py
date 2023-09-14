@@ -148,7 +148,9 @@ class TestTeradataHook:
         rows = [(1, 2, 3), (4, 5, 6), (7, 8, 9)]
         target_fields = ["col1", "col2", "col3"]
         self.test_db_hook.bulk_insert_rows("table", rows, target_fields)
-        self.cur.executemany.assert_called_once_with('INSERT INTO table (col1, col2, col3) VALUES (?, ?, ?)', rows)
+        self.cur.executemany.assert_called_once_with(
+            "INSERT INTO table (col1, col2, col3) VALUES (?, ?, ?)", rows
+        )
 
     def test_bulk_insert_rows_with_commit_every(self):
         rows = [(1, 2, 3), (4, 5, 6), (7, 8, 9)]
@@ -159,18 +161,17 @@ class TestTeradataHook:
             mock.call("INSERT INTO table (col1, col2, col3) values (1, 2, 3)"),
         ]
         calls = [
-            mock.call('INSERT INTO table (col1, col2, col3) VALUES (?, ?, ?)', rows[:2]),
-            mock.call('INSERT INTO table (col1, col2, col3) VALUES (?, ?, ?)', rows[2:]),
+            mock.call("INSERT INTO table (col1, col2, col3) VALUES (?, ?, ?)", rows[:2]),
+            mock.call("INSERT INTO table (col1, col2, col3) VALUES (?, ?, ?)", rows[2:]),
         ]
         self.cur.executemany.assert_has_calls(calls, any_order=True)
 
     def test_bulk_insert_rows_without_fields(self):
         rows = [(1, 2, 3), (4, 5, 6), (7, 8, 9)]
         self.test_db_hook.bulk_insert_rows("table", rows)
-        self.cur.executemany.assert_called_once_with('INSERT INTO table  VALUES (?, ?, ?)', rows)
+        self.cur.executemany.assert_called_once_with("INSERT INTO table  VALUES (?, ?, ?)", rows)
 
     def test_bulk_insert_rows_no_rows(self):
         rows = []
         with pytest.raises(ValueError):
             self.test_db_hook.bulk_insert_rows("table", rows)
-

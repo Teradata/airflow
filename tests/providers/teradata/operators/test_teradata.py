@@ -17,20 +17,18 @@
 # under the License.
 from __future__ import annotations
 
-import re
-from random import randrange
 from unittest import mock
 from unittest.mock import MagicMock, Mock
+
 import pytest
 
-from airflow.exceptions import AirflowProviderDeprecationWarning
-from airflow.models import TaskInstance
 from airflow.models.dag import DAG
-from airflow.utils import timezone
 from airflow.providers.common.sql.hooks.sql import fetch_all_handler
+from airflow.utils import timezone
+
 try:
-    from airflow.providers.teradata.operators.teradata import TeradataOperator
     from airflow.providers.teradata.hooks.teradata import TeradataHook
+    from airflow.providers.teradata.operators.teradata import TeradataOperator
 except ImportError:
     pytest.skip("Teradata not available", allow_module_level=True)
 
@@ -38,6 +36,7 @@ from airflow import AirflowException
 
 DEFAULT_DATE = timezone.datetime(2015, 1, 1)
 TEST_DAG_ID = "unit_test_dag"
+
 
 class TestTeradataOperator:
     def setup_method(self):
@@ -63,7 +62,8 @@ class TestTeradataOperator:
         assert op.get_db_hook() == mock_hook
 
     @mock.patch(
-        "airflow.providers.common.sql.operators.sql.SQLExecuteQueryOperator.get_db_hook", autospec=TeradataHook
+        "airflow.providers.common.sql.operators.sql.SQLExecuteQueryOperator.get_db_hook",
+        autospec=TeradataHook,
     )
     def test_get_hook_default(self, mock_get_db_hook):
         """
@@ -84,13 +84,12 @@ class TestTeradataOperator:
         context = "test_context"
         task_id = "test_task_id"
 
-        
         operator = TeradataOperator(
-                sql=sql,
-                conn_id=teradata_conn_id,
-                parameters=parameters,
-                task_id=task_id,
-            )
+            sql=sql,
+            conn_id=teradata_conn_id,
+            parameters=parameters,
+            task_id=task_id,
+        )
         operator.execute(context=context)
         mock_get_db_hook.return_value.run.assert_called_once_with(
             sql=sql,
@@ -112,13 +111,13 @@ class TestTeradataOperator:
         autocommit = False
         context = "test_context"
         task_id = "test_task_id"
-        
+
         operator = TeradataOperator(
-                sql=sql,
-                conn_id=teradata_conn_id,
-                parameters=parameters,
-                task_id=task_id,
-            )
+            sql=sql,
+            conn_id=teradata_conn_id,
+            parameters=parameters,
+            task_id=task_id,
+        )
         operator.execute(context=context)
         mock_get_db_hook.return_value.run.assert_called_once_with(
             sql=sql,

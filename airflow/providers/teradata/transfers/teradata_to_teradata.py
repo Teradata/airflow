@@ -72,12 +72,15 @@ class TeradataToTeradataOperator(BaseOperator):
 
             rows_total = 0
             for rows in iter(lambda: cursor.fetchmany(self.rows_chunk), []):
-                dest_hook.bulk_insert_rows(
-                    self.destination_table, rows, target_fields=target_fields, commit_every=self.rows_chunk
-                )
+                if rows:
+                    dest_hook.bulk_insert_rows(
+                        self.destination_table,
+                        rows,
+                        target_fields=target_fields,
+                        commit_every=self.rows_chunk,
+                    )
                 rows_total += len(rows)
-                print("Total inserted: %s rows", rows_total)
-
+            self.log.info(f"Total inserted: {rows_total} rows")
             self.log.info("Finished data transfer.")
             cursor.close()
 
@@ -85,4 +88,3 @@ class TeradataToTeradataOperator(BaseOperator):
         src_hook = TeradataHook(teradata_conn_id=self.teradata_source_conn_id)
         dest_hook = TeradataHook(teradata_conn_id=self.teradata_destination_conn_id)
         self._execute(src_hook, dest_hook, context)
-
