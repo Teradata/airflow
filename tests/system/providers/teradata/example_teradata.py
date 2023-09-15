@@ -28,7 +28,6 @@ import pytest
 from airflow import DAG
 
 try:
-    from airflow.providers.teradata.hooks.teradata import TeradataHook
     from airflow.providers.teradata.operators.teradata import TeradataOperator
 except ImportError:
     pytest.skip("TERADATA provider not available", allow_module_level=True)

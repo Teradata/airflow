@@ -41,6 +41,11 @@ integrations:
     logo: /integration-logos/teradata/Teradata.png
     tags: [software]
 
+additional-extras:
+  - name: pandas
+    dependencies:
+      - pandas
+
 operators:
   - integration-name: Teradata
     python-modules:
@@ -50,6 +55,14 @@ hooks:
   - integration-name: Teradata
     python-modules:
       - airflow.providers.teradata.hooks.teradata
+
+transfers:
+  - source-integration-name: Amazon Simple Storage Service (S3)
+    target-integration-name: Teradata
+    python-module: airflow.providers.teradata.transfers.s3_to_teradata
+  - source-integration-name: Teradata
+    target-integration-name: Teradata
+    python-module: airflow.providers.teradata.transfers.teradata_to_teradata
 
 connection-types:
   - hook-class-name: airflow.providers.teradata.hooks.teradata.TeradataHook

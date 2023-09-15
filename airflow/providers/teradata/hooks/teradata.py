@@ -18,6 +18,7 @@
 """A Airflow Hook for interacting with Teradata SQL Server."""
 from __future__ import annotations
 
+import csv
 import logging as log
 from typing import TYPE_CHECKING, Any
 
@@ -144,12 +145,41 @@ class TeradataHook(DbApiHook):
                 # Empty chunk
                 row_chunk = []
         # Commit the leftover chunk
-        if row_chunk:
-            cursor.executemany(prepared_stm, row_chunk)
-            conn.commit()  # type: ignore[attr-defined]
-            self.log.info("[%s] inserted %s rows", table, row_count)
+        cursor.executemany(prepared_stm, row_chunk)
+        conn.commit()  # type: ignore[attr-defined]
+        self.log.info("[%s] inserted %s rows", table, row_count)
         cursor.close()
         conn.close()  # type: ignore[attr-defined]
+
+    # TODO: Handle duplicate load
+    def bulk_load_file_into_table(
+        self,
+        table_name: str,
+        src_file: str,
+        delimiter: str = ",",
+    ) -> None:
+        """
+        To load local data from a file into the database table in teradata.
+
+        :param table_name: The table were the file will be loaded into.
+        :param src_file: The file (name) that contains the data.
+
+        """
+        conn = self.get_conn()
+        cur = conn.cursor()
+
+        num_cols = 0
+
+        with open(src_file) as f:
+            reader = csv.reader(f, delimiter=delimiter, skipinitialspace=True)
+            first_row = next(reader)
+            num_cols = len(first_row)
+
+        prepared_stm = f"{{fn teradata_read_csv({src_file})}}INSERT INTO {table_name} ({', '.join('?' for i in range(num_cols))})"
+
+        cur.execute("{fn teradata_nativesql}{fn teradata_autocommit_off}")
+        cur.execute(prepared_stm)
+        conn.commit()
 
     def _get_conn_config_teradatasql(self) -> dict[str, Any]:
         """Returns set of config params required for connecting to Teradata DB using teradatasql client."""

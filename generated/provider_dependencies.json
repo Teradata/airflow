@@ -879,6 +879,7 @@
       "teradatasqlalchemy>=17.20.0.0"
     ],
     "cross-providers-deps": [
+      "amazon",
       "common.sql"
     ],
     "excluded-python-versions": []
