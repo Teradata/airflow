@@ -551,7 +551,6 @@ env
 envFrom
 EnvVar
 envvar
-eof
 eol
 eols
 eRevalue
@@ -1579,6 +1578,7 @@ tenantId
 Tensorboard
 tensorflow
 Teradata
+teradata
 Terraform
 testdata
 testdruid
