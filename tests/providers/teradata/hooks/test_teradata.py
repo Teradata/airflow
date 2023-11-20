@@ -84,27 +84,23 @@ class TestTeradataHook:
         )
         assert expected_link == args[0]
 
-    @mock.patch("teradatasql.connect")
     def test_get_uri(self):
         ret_uri = self.db_hook.get_uri()
         expected_uri = f"teradata://{self.connection.login}:{self.connection.password}@{self.connection.host}/{self.connection.schema}"
         assert expected_uri == ret_uri
 
-    @mock.patch("teradatasql.connect")
     def test_get_records(self):
         sql = "SQL"
         self.test_db_hook.get_records(sql)
         self.cur.execute.assert_called_once_with(sql)
         assert self.conn.commit.called
 
-    @mock.patch("teradatasql.connect")
     def test_run_without_parameters(self):
         sql = "SQL"
         self.test_db_hook.run(sql)
         self.cur.execute.assert_called_once_with(sql)
         assert self.conn.commit.called
 
-    @mock.patch("teradatasql.connect")
     def test_run_with_parameters(self):
         sql = "SQL"
         param = ("p1", "p2")
@@ -112,7 +108,6 @@ class TestTeradataHook:
         self.cur.execute.assert_called_once_with(sql, param)
         assert self.conn.commit.called
 
-    @mock.patch("teradatasql.connect")
     def test_insert_rows(self):
         rows = [
             (
@@ -138,7 +133,6 @@ class TestTeradataHook:
             ("'test_string", None, "2023-08-15T00:00:00", "1", "3.14", "str"),
         )
 
-    @mock.patch("teradatasql.connect")
     def test_bulk_insert_rows_with_fields(self):
         rows = [(1, 2, 3), (4, 5, 6), (7, 8, 9)]
         target_fields = ["col1", "col2", "col3"]
@@ -147,7 +141,6 @@ class TestTeradataHook:
             "INSERT INTO table (col1, col2, col3) VALUES (?, ?, ?)", rows
         )
 
-    @mock.patch("teradatasql.connect")
     def test_bulk_insert_rows_with_commit_every(self):
         rows = [(1, 2, 3), (4, 5, 6), (7, 8, 9)]
         target_fields = ["col1", "col2", "col3"]
@@ -162,13 +155,11 @@ class TestTeradataHook:
         ]
         self.cur.executemany.assert_has_calls(calls, any_order=True)
 
-    @mock.patch("teradatasql.connect")
     def test_bulk_insert_rows_without_fields(self):
         rows = [(1, 2, 3), (4, 5, 6), (7, 8, 9)]
         self.test_db_hook.bulk_insert_rows("table", rows)
         self.cur.executemany.assert_called_once_with("INSERT INTO table  VALUES (?, ?, ?)", rows)
 
-    @mock.patch("teradatasql.connect")
     def test_bulk_insert_rows_no_rows(self):
         rows = []
         with pytest.raises(ValueError):
