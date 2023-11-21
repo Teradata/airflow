@@ -16,10 +16,7 @@
  specific language governing permissions and limitations
  under the License.
 */
-
-CREATE SET TABLE Employee, FALLBACK (
-        Employee_Id     INTEGER,
-        Employee_Name   CHAR(25),
-        Salary           DECIMAL(8,2),
-        DOB              DATE FORMAT 'YYYY-MM-DD'
+CREATE SET TABLE Users, FALLBACK (
+        username   varchar(50),
+        description           varchar(256)
     );

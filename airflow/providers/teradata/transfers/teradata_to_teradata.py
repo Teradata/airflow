@@ -66,18 +66,14 @@ class TeradataToTeradataOperator(BaseOperator):
     def _execute(self, src_hook, dest_hook, context) -> None:
         with src_hook.get_conn() as src_conn:
             cursor = src_conn.cursor()
-            self.log.info("Querying data from source: %s", self.teradata_source_conn_id)
             cursor.execute(self.source_sql, self.source_sql_params)
             target_fields = [field[0] for field in cursor.description]
-
             rows_total = 0
             for rows in iter(lambda: cursor.fetchmany(self.rows_chunk), []):
                 dest_hook.bulk_insert_rows(
                     self.destination_table, rows, target_fields=target_fields, commit_every=self.rows_chunk
                 )
                 rows_total += len(rows)
-                print("Total inserted: %s rows", rows_total)
-
             self.log.info("Finished data transfer.")
             cursor.close()
 

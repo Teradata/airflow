@@ -141,12 +141,12 @@ class TeradataHook(DbApiHook):
             if row_count % commit_every == 0:
                 cursor.executemany(prepared_stm, row_chunk)
                 conn.commit()  # type: ignore[attr-defined]
-                self.log.info("[%s] inserted %s rows", table, row_count)
                 # Empty chunk
                 row_chunk = []
         # Commit the leftover chunk
-        cursor.executemany(prepared_stm, row_chunk)
-        conn.commit()  # type: ignore[attr-defined]
+        if len(row_chunk) > 0:
+            cursor.executemany(prepared_stm, row_chunk)
+            conn.commit()  # type: ignore[attr-defined]
         self.log.info("[%s] inserted %s rows", table, row_count)
         cursor.close()
         conn.close()  # type: ignore[attr-defined]

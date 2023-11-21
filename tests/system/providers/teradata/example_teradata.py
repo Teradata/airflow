@@ -38,10 +38,9 @@ with DAG(
     start_date=datetime.datetime(2020, 2, 2),
     schedule="@once",
     catchup=False,
-    default_args={"conn_id": "airflow_teradata"},
+    default_args={"conn_id": "teradata_default"},
 ) as dag:
     # Example of creating a task to create a table in Teradata
-
     create_table_teradata_task = TeradataOperator(
         task_id="create_country_table",
         sql=r"""
@@ -112,12 +111,16 @@ with DAG(
     get_countries_from_continent = TeradataOperator(
         task_id="get_countries_from_continent",
         sql=r"""SELECT * FROM Country where {{ params.column }}='{{ params.value }}';""",
-        params={"column": "CONVERT(VARCHAR, continent)", "value": "Asia"},
+        params={"column": "continent", "value": "Asia"},
     )
     # [END teradata_operator_howto_guide_params_passing_get_query]
 
     drop_table_teradata_task = TeradataOperator(
         task_id="drop_table_teradata", sql=r"""DROP TABLE Country;""", dag=dag
+    )
+
+    drop_users_table_teradata_task = TeradataOperator(
+        task_id="drop_users_table_teradata", sql=r"""DROP TABLE Users;""", dag=dag
     )
 
     (
@@ -129,6 +132,7 @@ with DAG(
         >> get_all_description
         >> get_countries_from_continent
         >> drop_table_teradata_task
+        >> drop_users_table_teradata_task
     )
 
     # [END howto_operator_teradata]
