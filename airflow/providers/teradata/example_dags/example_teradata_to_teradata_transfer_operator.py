@@ -135,7 +135,7 @@ with DAG(
 
     drop_dest_table = TeradataOperator(
         task_id="drop_dest_table",
-        conn_id=CONN_ID,   
+        conn_id=CONN_ID,
         sql="""
             DROP TABLE my_users_dest;
         """,
@@ -149,12 +149,10 @@ with DAG(
         transfer_data,
         read_data_dest,
         drop_src_table,
-        drop_dest_table
+        drop_dest_table,
     )
-
 
     # Make sure create was done before deleting table
     create_src_table >> drop_src_table
     create_dest_table >> drop_dest_table
     # [END howto_transfer_operator_teradata_to_teradata]
-
