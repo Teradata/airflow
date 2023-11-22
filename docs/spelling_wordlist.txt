@@ -1579,6 +1579,8 @@ Tensorboard
 tensorflow
 Teradata
 teradata
+TeradataConnection
+teradatasql
 Terraform
 testdata
 testdruid

@@ -42,32 +42,14 @@ Extra (optional)
     connection. The following parameters out of the standard python parameters
     are supported:
 
-    * ``sslmode`` - This option determines whether or with what priority a secure SSL
-      TCP/IP connection will be negotiated with the server. There are six modes:
-      ``disable``, ``allow``, ``prefer``, ``require``, ``verify-ca``, ``verify-full``.
-    * ``sslca`` - This parameter specifies the file name of a PEM file that
-      contains Certificate Authority (CA) certificates for use with sslmode values
-      VERIFY-CA or VERIFY-FULL.
-    * ``sslcapath`` - This parameter specifies a directory of PEM files that contain
-      Certificate Authority (CA) certificates for use with sslmode values VERIFY-CA
-      or VERIFY-FULL.
-    * ``sslrootcert`` - This parameter specifies the name of a file containing SSL
-      certificate authority (CA) certificate(s).
-    * ``sslcrl`` - This parameter specifies the file name of the SSL certificate
-      revocation list (CRL).
-    * ``tmode`` - Specifies the transaction mode. Possible values are DEFAULT (the default),
-      ANSI, or TERA.
-
     More details on all Teradata parameters supported can be found in
-    `Teradata documentation <https://github.com/Teradata/python-driver#ConnectionParameters`_.
+    `Teradata documentation <https://github.com/Teradata/python-driver#ConnectionParameters>`_.
 
     Example "extras" field:
 
     .. code-block:: json
 
        {
-          "sslmode": "verify-ca",
-          "sslca": "/tmp/server-ca.pem",
           "tmode": "TERA"
        }
 

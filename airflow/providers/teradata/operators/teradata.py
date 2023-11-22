@@ -29,13 +29,11 @@ class TeradataOperator(SQLExecuteQueryOperator):
 
     Executes sql statements in the Teradata SQL Database using teradatasql jdbc driver
     .. seealso::
-        For more information on how to use this operator, take a look at the guide:
-        :ref:`howto/operator:TeradataOperator`
-    :param sql: the SQL query to be executed as a single string, or
-        a list of str (sql statements)
+    For more information on how to use this operator, take a look at the guide:
+    :ref:`howto/operator:TeradataOperator`
+    :param sql: the SQL query to be executed as a single string, or a list of str (sql statements)
     :param conn_id: reference to a predefined database
-    :param autocommit: if True, each command is automatically committed.
-        (default value: False)
+    :param autocommit: if True, each command is automatically committed.(default value: False)
     :param parameters: (optional) the parameters to render the SQL query with.
     """
 

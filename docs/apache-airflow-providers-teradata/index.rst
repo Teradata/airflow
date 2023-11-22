@@ -1,3 +1,4 @@
+
  .. Licensed to the Apache Software Foundation (ASF) under one
     or more contributor license agreements.  See the NOTICE file
     distributed with this work for additional information
@@ -34,8 +35,7 @@
     :caption: Guides
 
     Connection types <connections/teradata>
-    TeradataOperator types <operators/teradata_operator_howto_guide>
-
+    Operators <operators>
 
 .. toctree::
     :hidden:
@@ -56,7 +56,7 @@
     :maxdepth: 1
     :caption: Resources
 
-    Example DAGs <https://github.com/apache/airflow/tree/providers-teradata/|version|/tests/system/providers/teradata>
+    Example DAGs <https://github.com/apache/airflow/tree/providers-teradata/|version|/airflow/providers/teradata/example_dags>
     PyPI Repository <https://pypi.org/project/apache-airflow-providers-teradata/>
     Installing from sources <installing-providers-from-sources>
 
@@ -95,14 +95,13 @@ for the minimum Airflow version supported) via
 Requirements
 ------------
 
-The minimum Apache Airflow version supported by this provider package is ``2.5.0``.
+The minimum Apache Airflow version supported by this provider package is ``2.4.0``.
 
 =======================================  ==================
 PIP package                              Version required
 =======================================  ==================
-``apache-airflow``                       ``>=2.5.0``
-``teradatasqlalchemy``  ``>=17.20.0.0``
-``teradatasql``                      ``>=17.20.0.28``
+``apache-airflow``                       ``>=2.4.0``
+``apache-airflow-providers-common-sql``  ``>=1.3.1``
 =======================================  ==================
 
 Cross provider package dependencies
@@ -118,11 +117,11 @@ You can install such cross-provider dependencies when installing from PyPI. For 
     pip install apache-airflow-providers-teradata[common.sql]
 
 
-==============================================================================================================  ===============
-Dependent package                                                                                               Extra
-==============================================================================================================  ===============
-`apache-airflow-providers-common-sql <https://airflow.apache.org/docs/apache-airflow-providers-common-sql>`_    ``common.sql``
-==============================================================================================================  ===============
+============================================================================================================  ==============
+Dependent package                                                                                             Extra
+============================================================================================================  ==============
+`apache-airflow-providers-common-sql <https://airflow.apache.org/docs/apache-airflow-providers-common-sql>`_  ``common.sql``
+============================================================================================================  ==============
 
 Downloading official packages
 -----------------------------
