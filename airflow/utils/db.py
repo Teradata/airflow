@@ -644,9 +644,9 @@ def create_default_connections(session: Session = NEW_SESSION):
         Connection(
             conn_id="teradata_default",
             conn_type="teradata",
-            host="sdt62740.labs.teradata.com",
-            login="dbc",
-            password="dbc",
+            host="airbyteteradatadest-25wbjoteev9ujvxw.env.clearscape.teradata.com",
+            login="demo_user",
+            password="airbyteintro",
             schema="airflow",
         ),
         session,
