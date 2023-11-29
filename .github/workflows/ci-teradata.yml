@@ -58,25 +58,10 @@ jobs:
       - name: "Initialize airflow database"
         run: airflow db migrate;
       - name: "Run Unit tests"
-        run:   pytest --html=report.html --self-contained-html  tests/providers/teradata/operators/test_teradata.py;      
-      - name: Init new repo in folder where report generated and commit generated files
-        run: |
-          cd /home/runner/work/airflow/airflow/
-          git init
-          git add -A
-          git config --local user.email "satishchinthanippu@gmail.com"
-          git config --local user.name "Satish Ch"
-          git commit -m 'deploy'
-      - name: Force push to destination branch
-        uses: ad-m/github-push-action@v0.5.0
-        with:
-          # Token for the repo
-          # Can be passed in using $\{{ secrets.GITHUB_TOKEN }}
-          github_token: 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
-          # Destination branch to push changes
-          branch: gh-pages
-          # Use force push to fully overwrite the destination branch
-          force: true
-          # We have to push from the folder where files were generated.
-          # Same were the new repo was initialized in the previous step
-          directory: /home/runner/work/airflow/airflow/
+        run:   pytest --html=report.html --self-contained-html  tests/providers/teradata/operators/test_teradata.py;
+      - name: upload artifact
+        uses: actions/upload-pages-artifact@v1
+        with: 
+          path: '/home/runner/work/airflow/airflow/'
+      
+          
