@@ -19,7 +19,11 @@
 name: airflow-teradata-tests
 on:  # yamllint disable-line rule:truthy
   pull_request:
-    types: [review_requested]
+    branches: ['develop']
+  schedule:
+    - cron: '28 0 * * *'
+  push:
+    branches: ['main']
 jobs:
   teradata-tests:
     name: "Run Teradata Provider Unit and System tests"
