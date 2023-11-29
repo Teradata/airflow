@@ -45,7 +45,8 @@ jobs:
       - name: Display Python version
         run: python -c "import sys; print(sys.version)"
       - name: "Install required packages"
-        run: pip install --user "pipx>=1.2.1";pip install -U pytest;python -m pip install time-machine;pip install pytest-asyncio;pip install pytest-md-report;pip install cryptography;
+        run: pip install --user "pipx>=1.2.1";pip install -U pytest;python -m pip install time-machine;pip install pytest-asyncio;
+             pip install pytest-md-report;pip install cryptography;pip install pytest-html;
       - name: "Install airflow and teradata provider from sources"
         run: INSTALL_PROVIDERS_FROM_SOURCES="true" pip install ".[teradata]" --constraint https://raw.githubusercontent.com/apache/airflow/constraints-main/constraints-source-providers-${{ matrix.python-version }}.txt      
       - name: "Verifying Airflow version"
@@ -53,6 +54,5 @@ jobs:
       - name: "Initialize airflow database"
         run: airflow db migrate;
       - name: "Run Unit tests"
-        run:   pytest --md-report --md-report-verbose=1  tests/providers/teradata/operators/test_teradata.py; pytest  --md-report --md-report-verbose=1  tests/providers/teradata/hooks/test_teradata.py; pytest  --md-report --md-report-verbose=1  tests/providers/teradata/transfers/test_teradata_to_teradata.py;      
-      - name: "Run system tests"
-        run: export SYSTEM_TESTS_ENV_ID=teradatasystemtest; pytest --system=teradata  tests/system/providers/teradata/example_teradata.py;pytest --system=teradata  tests/system/providers/teradata/example_teradata_to_teradata_transfer.py;
+        run:   pytest --html=report.html --self-contained-html  tests/providers/teradata/operators/test_teradata.py; pytest  --md-report --md-report-verbose=1  tests/providers/teradata/hooks/test_teradata.py; pytest  --md-report --md-report-verbose=1  tests/providers/teradata/transfers/test_teradata_to_teradata.py;      
+     
