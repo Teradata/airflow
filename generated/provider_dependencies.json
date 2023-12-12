@@ -939,6 +939,9 @@
       "teradatasql>=17.20.0.28",
       "teradatasqlalchemy>=17.20.0.0"
     ],
+    "cross-providers-deps": [],
+    "excluded-python-versions": []
+  },
   "trino": {
     "deps": [
       "apache-airflow-providers-common-sql>=1.3.1",
