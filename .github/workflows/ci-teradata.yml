@@ -1,0 +1,106 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+---
+name: airflow-teradata-tests
+on:  # yamllint disable-line rule:truthy
+  workflow_dispatch
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+jobs:
+  teradata-tests:
+    name: "Run Teradata Provider Unit and System tests"
+    runs-on: "ubuntu-22.04"
+    strategy:
+      max-parallel: 1
+      matrix:
+        python-version: ["3.8"]
+    steps:
+      - name: Cleanup repo
+        run: docker run -v "${GITHUB_WORKSPACE}:/workspace" -u 0:0 bash -c "rm -rf /workspace/*"
+      - name: "Checkout ${{ github.ref }} ( ${{ github.sha }} )"
+        uses: actions/checkout@v4
+        with:
+          ref: develop_test
+          persist-credentials: false      
+      - name: "Install Python"
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          cache-dependency-path: ./dev/breeze/setup*
+      - name: Display Python version
+        run: python -c "import sys; print(sys.version)"
+      - name: Download history teradata provider test report
+        uses: actions/checkout@v4
+        with:
+          repository: SatishChGit/airflowtestreport
+          path: testreport
+          token: ${{ secrets.MY_TOKEN }}
+      - name: "Install required packages"
+        run: pip install "pipx>=1.2.1"  pytest time-machine pytest-asyncio pytest-md-report cryptography pytest-html tailer pandas jinja2
+      - name: "Install airflow and teradata provider from sources"
+        run: INSTALL_PROVIDERS_FROM_SOURCES="true" pip install ".[teradata]" --constraint https://raw.githubusercontent.com/apache/airflow/constraints-main/constraints-source-providers-${{ matrix.python-version }}.txt      
+      - name: "Verifying Airflow version"
+        run: airflow version;      
+      - name: "Initialize airflow database"
+        run: airflow db migrate;
+      - name: "Run Unit tests"
+        run:   pytest tests/providers/teradata
+      - name: "Run System tests"
+        run: export SYSTEM_TESTS_ENV_ID=teradatasystemtest;pytest --system=teradata --junitxml=report_test.xml tests/system/providers/teradata
+      - name: Generate teradata provider test HTML report
+        run:  cp testreport/reporttest.csv reporttest.csv;
+              cp testreport/report_parse_xml.py  report_parse_xml.py;
+              cp testreport/report_generate_index_html.py report_generate_index_html.py;
+              cp testreport/report_index_template.html report_index_template.html;
+              python report_parse_xml.py; python report_generate_index_html.py;
+              mkdir teradata_report;
+              cp index.html teradata_report/index.html;
+      - name: Publish updated history teradata provider test report
+        run: cp reporttest.csv testreport/reporttest.csv; cd testreport; git config user.email "satishchinthanippu@gmail.com";git config user.name "Satish Ch";git add reporttest.csv;
+             git commit -m "updated with latest report"; git push origin main; cd ..;
+      - name: Setup GITHUB Page to publish teradata provider test HTML report
+        uses: actions/configure-pages@v3
+      - name: Build GITHUB Page with teradata provider test HTML report
+        uses: actions/jekyll-build-pages@v1
+        with:
+         source: ./teradata_report
+         destination: ./_site
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v2
+      - name: Deploy teradata provider test HTML report to GITHUB page
+        id: deployment
+        uses: actions/deploy-pages@v2
+      - name: Run breeze
+        run: pipx install -e ./dev/breeze
+      - name: build docucmentation
+        run: breeze ci-image build --upgrade-to-newer-dependencies; breeze build-docs --package-filter apache-airflow-providers-teradata
+      - name: Setup GITHUB Page to publish teradata provider documentation
+        uses: actions/configure-pages@v3
+      - name: Build GITHUB Page for teradata provider documentation
+        uses: actions/jekyll-build-pages@v1
+        with:
+         source: ./docs/_build
+         destination: ./_docsite
+      - name: Upload documentation
+        uses: actions/upload-pages-artifact@v2
+      - name: Deploy teradata provider documentation
+        id: deploymentDocs
+        uses: actions/deploy-pages@v2 
