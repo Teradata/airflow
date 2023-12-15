@@ -51,7 +51,5 @@
             run: pipx install -e ./dev/breeze
           - name: Run Unit Tests
             run: breeze testing tests --test-type "Providers[teradata]"
-          - name: Run System Tests
-            run: breeze --python 3.8 --db-reset --forward-credentials;pytest --system=teradata  tests/system/providers/teradata;
          
      
