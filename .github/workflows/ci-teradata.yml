@@ -37,7 +37,7 @@ jobs:
       - name: "Checkout ${{ github.ref }} ( ${{ github.sha }} )"
         uses: actions/checkout@v4
         with:
-          ref: develop_test
+          ref: ${{ vars.BRANCH }}
           persist-credentials: false      
       - name: "Install Python"
         uses: actions/setup-python@v4
