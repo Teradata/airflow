@@ -91,7 +91,7 @@ jobs:
       - name: Run breeze
         run: pipx install -e ./dev/breeze
       - name: build docucmentation
-        run: breeze build-docs --package-filter apache-airflow-providers-teradata
+        run: breeze ci-image build --upgrade-to-newer-dependencies; breeze build-docs --package-filter apache-airflow-providers-teradata
       - name: Setup GITHUB Page to publish teradata provider documentation
         uses: actions/configure-pages@v3
       - name: Build GITHUB Page for teradata provider documentation
