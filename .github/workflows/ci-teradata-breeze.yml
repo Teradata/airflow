@@ -50,6 +50,6 @@
           - name: Run breeze
             run: pipx install -e ./dev/breeze
           - name: Run Unit Tests
-            run: breeze testing tests --test-type "Providers[teradata]"
+            run: breeze --python 3.10 testing tests --test-type "Providers[teradata]"
          
      
