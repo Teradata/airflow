@@ -17,8 +17,12 @@
 #
 ---
 name: airflow-teradata-tests
-on:  # yamllint disable-line rule:truthy
-  workflow_dispatch
+on:
+  push:
+    branches:
+      - ${{ vars.BRANCH }}
+  schedule:
+  - cron: "0 6 * * *"
 permissions:
   contents: write
   pages: write
@@ -27,22 +31,18 @@ jobs:
   teradata-tests:
     name: "Run Teradata Provider Unit and System tests"
     runs-on: "ubuntu-22.04"
-    strategy:
-      max-parallel: 1
-      matrix:
-        python-version: ["3.8"]
     steps:
       - name: Cleanup repo
         run: docker run -v "${GITHUB_WORKSPACE}:/workspace" -u 0:0 bash -c "rm -rf /workspace/*"
       - name: "Checkout ${{ github.ref }} ( ${{ github.sha }} )"
         uses: actions/checkout@v4
         with:
-          ref: develop_test
+          ref: ${{ vars.BRANCH }}
           persist-credentials: false      
       - name: "Install Python"
         uses: actions/setup-python@v4
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: 3.8
           cache: 'pip'
           cache-dependency-path: ./dev/breeze/setup*
       - name: Display Python version
@@ -87,20 +87,4 @@ jobs:
         uses: actions/upload-pages-artifact@v2
       - name: Deploy teradata provider test HTML report to GITHUB page
         id: deployment
-        uses: actions/deploy-pages@v2
-      - name: Run breeze
-        run: pipx install -e ./dev/breeze
-      - name: build docucmentation
-        run: breeze ci-image build --upgrade-to-newer-dependencies; breeze build-docs --package-filter apache-airflow-providers-teradata
-      - name: Setup GITHUB Page to publish teradata provider documentation
-        uses: actions/configure-pages@v3
-      - name: Build GITHUB Page for teradata provider documentation
-        uses: actions/jekyll-build-pages@v1
-        with:
-         source: ./docs/_build
-         destination: ./_docsite
-      - name: Upload documentation
-        uses: actions/upload-pages-artifact@v2
-      - name: Deploy teradata provider documentation
-        id: deploymentDocs
-        uses: actions/deploy-pages@v2 
+        uses: actions/deploy-pages@v2      

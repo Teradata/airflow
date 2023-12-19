@@ -30,7 +30,7 @@
         strategy:
           max-parallel: 1
           matrix:
-            python-version: ["3.8"]
+            python-version: ["3.10"]
         steps:
           - name: Cleanup repo
             run: docker run -v "${GITHUB_WORKSPACE}:/workspace" -u 0:0 bash -c "rm -rf /workspace/*"
@@ -50,6 +50,6 @@
           - name: Run breeze
             run: pipx install -e ./dev/breeze
           - name: Run Unit Tests
-            run: breeze testing tests --test-type "Providers[teradata]"
+            run: breeze --python 3.10 testing tests --test-type "Providers[teradata]"
          
      
