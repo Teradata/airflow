@@ -29,7 +29,9 @@ if TYPE_CHECKING:
 class TeradataToTeradataOperator(BaseOperator):
     """
     Moves data from Teradata source database to Teradata destination database.
-
+    .. seealso::
+    For more information on how to use this operator, take a look at the guide:
+    :ref:`howto/operator:TeradataToTeradataOperator`
     :param teradata_destination_conn_id: destination Teradata connection.
     :param destination_table: destination table to insert rows.
     :param teradata_source_conn_id: :ref:`Source Teradata connection <howto/connection:Teradata>`.
