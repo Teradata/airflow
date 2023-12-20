@@ -644,10 +644,10 @@ def create_default_connections(session: Session = NEW_SESSION):
         Connection(
             conn_id="teradata_default",
             conn_type="teradata",
-            host="airbyteteradatadest-25wbjoteev9ujvxw.env.clearscape.teradata.com",
-            login="demo_user",
-            password="airbyteintro",
-            schema="airflow",
+            host="localhost",
+            login="user",
+            password="password",
+            schema="schema",
         ),
         session,
     )
