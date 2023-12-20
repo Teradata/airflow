@@ -20,7 +20,7 @@
 TeradataOperator
 ================
 
-The Teradata connection type provides connection to Teradata.
+The purpose of TeradataOperator is to define tasks involving interactions with the Teradata.
 
 Execute SQL in an Teradata
 ---------------------------------
