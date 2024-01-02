@@ -16,7 +16,7 @@
  specific language governing permissions and limitations
  under the License.
 */
-CREATE SET TABLE Users, FALLBACK (
+CREATE TABLE Users, FALLBACK (
         username   varchar(50),
         description           varchar(256)
     );
