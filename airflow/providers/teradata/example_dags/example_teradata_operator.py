@@ -52,7 +52,7 @@ with DAG(
         task_id="table_create",
         conn_id=CONN_ID,
         sql="""
-            CREATE SET TABLE my_users,
+            CREATE TABLE my_users,
             FALLBACK (
                 user_id decimal(10,0) NOT NULL GENERATED ALWAYS AS IDENTITY (
                     START WITH 1

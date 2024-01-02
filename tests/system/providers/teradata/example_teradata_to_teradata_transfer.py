@@ -62,7 +62,7 @@ with DAG(
         task_id="create_src_table",
         conn_id=CONN_ID,
         sql="""
-            CREATE SET TABLE my_users_src,
+            CREATE TABLE my_users_src,
             FALLBACK (
                 user_id decimal(10,0) NOT NULL GENERATED ALWAYS AS IDENTITY (
                     START WITH 1
@@ -82,7 +82,7 @@ with DAG(
         task_id="create_dest_table",
         conn_id=CONN_ID,
         sql="""
-            CREATE SET TABLE my_users_dest,
+            CREATE TABLE my_users_dest,
             FALLBACK (
                 user_id decimal(10,0) NOT NULL GENERATED ALWAYS AS IDENTITY (
                     START WITH 1
