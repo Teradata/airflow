@@ -96,12 +96,12 @@ for the minimum Airflow version supported) via
 Requirements
 ------------
 
-The minimum Apache Airflow version supported by this provider package is ``2.8.0``.
+The minimum Apache Airflow version supported by this provider package is ``2.6.0``.
 
 =======================================  ==================
 PIP package                              Version required
 =======================================  ==================
-``apache-airflow``                       ``>=2.8.0``
+``apache-airflow``                       ``>=2.6.0``
 ``apache-airflow-providers-common-sql``  ``>=1.3.1``
 =======================================  ==================
 
