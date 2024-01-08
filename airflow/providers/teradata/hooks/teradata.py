@@ -161,14 +161,32 @@ class TeradataHook(DbApiHook):
             "user": conn.login or "dbc",
             "password": conn.password or "dbc",
         }
+
+        if conn.extra_dejson.get("tmode", False):
+            conn_config["tmode"] = conn.extra_dejson["tmode"]
+
+        # Handling SSL connection parameters
+
+        if conn.extra_dejson.get("sslmode", False):
+            conn_config["sslmode"] = conn.extra_dejson["sslmode"]
+            if "verify" in conn_config["sslmode"]:
+                if conn.extra_dejson.get("sslca", False):
+                    conn_config["sslca"] = conn.extra_dejson["sslca"]
+                if conn.extra_dejson.get("sslcapath", False):
+                    conn_config["sslcapath"] = conn.extra_dejson["sslcapath"]
+        if conn.extra_dejson.get("sslcipher", False):
+            conn_config["sslcipher"] = conn.extra_dejson["sslcipher"]
+        if conn.extra_dejson.get("sslcrc", False):
+            conn_config["sslcrc"] = conn.extra_dejson["sslcrc"]
+        if conn.extra_dejson.get("sslprotocol", False):
+            conn_config["sslprotocol"] = conn.extra_dejson["sslprotocol"]
+
         return conn_config
 
     def get_sqlalchemy_engine(self, engine_kwargs=None):
         """Returns a connection object using sqlalchemy."""
         conn: Connection = self.get_connection(getattr(self, self.conn_name_attr))
-        log.info("Returns a Teradata connection object using sqlalchemy")
         link = f"teradatasql://{conn.login}:{conn.password}@{conn.host}"
-        log.info("link: %s", link)
         connection = sqlalchemy.create_engine(link)
         return connection
 

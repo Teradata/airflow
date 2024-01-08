@@ -24,7 +24,7 @@ description: |
 suspended: false
 source-date-epoch: 1700148082
 versions:
-  - 1.0.0
+  - 1.2.0
 
 dependencies:
   - apache-airflow>=2.6.0

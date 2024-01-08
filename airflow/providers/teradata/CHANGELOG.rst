@@ -25,6 +25,18 @@
 Changelog
 ---------
 
+1.2.0
+.....
+
+Updated documentation and readme files.
+
+Features
+~~~~~~~~
+
+* ``Added HTTPS/TLS connections support``
+
+
+
 1.0.0
 .....
 

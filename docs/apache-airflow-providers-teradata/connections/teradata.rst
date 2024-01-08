@@ -42,15 +42,32 @@ Extra (optional)
     connection. The following parameters out of the standard python parameters
     are supported:
 
+    * ``tmode`` - Specifies the transaction mode.Possible values are DEFAULT (the default), ANSI, or TERA
+    * ``sslmode`` - This option specifies the mode for connections to the database.
+      There are six modes:
+      ``disable``, ``allow``, ``prefer``, ``require``, ``verify-ca``, ``verify-full``.
+    * ``sslca`` - This parameter specifies the file name of a PEM file that contains
+      Certificate Authority (CA) certificates for use with sslmode values VERIFY-CA or VERIFY-FULL.
+    * ``sslcapath`` - This parameter specifies the TLS cipher for HTTPS/TLS connections.
+    * ``sslcipher`` - This parameter specifies the name of a file containing SSL
+      certificate authority (CA) certificate(s).
+    * ``sslcrc`` - This parameter controls TLS certificate revocation checking for
+      HTTPS/TLS connections when sslmode is VERIFY-FULL.
+    * ``sslprotocol`` - Specifies the TLS protocol for HTTPS/TLS connections.
+
     More details on all Teradata parameters supported can be found in
-    `Teradata documentation <https://github.com/Teradata/python-driver#ConnectionParameters>`_.
+    `Teradata documentation <https://github.com/Teradata/python-driver?tab=readme-ov-file#connection-parameters>`_.
 
     Example "extras" field:
 
     .. code-block:: json
 
        {
-          "tmode": "TERA"
+          "tmode": "TERA",
+          "sslmode": "verify-ca",
+          "sslcert": "/tmp/client-cert.pem",
+          "sslca": "/tmp/server-ca.pem",
+          "sslkey": "/tmp/client-key.pem"
        }
 
 
@@ -62,4 +79,4 @@ Extra (optional)
 
     .. code-block:: bash
 
-        export AIRFLOW_CONN_TERADATA_DEFAULT='teradata://teradata_user:XXXXXXXXXXXX@1.1.1.1:/teradatadb?sslmode=verify-ca&sslca=%2Ftmp%2Fserver-ca.pem'
+        export AIRFLOW_CONN_TERADATA_DEFAULT='teradata://teradata_user:XXXXXXXXXXXX@1.1.1.1:/teradatadb?tmode=tera&sslmode=verify-ca&sslca=%2Ftmp%2Fserver-ca.pem'
