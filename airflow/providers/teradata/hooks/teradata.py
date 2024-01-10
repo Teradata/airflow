@@ -161,12 +161,12 @@ class TeradataHook(DbApiHook):
             "user": conn.login or "dbc",
             "password": conn.password or "dbc",
         }
-
+        self.log.info("satish: selected tmode is %s", conn.extra_dejson["tmode"])
         if conn.extra_dejson.get("tmode", False):
             conn_config["tmode"] = conn.extra_dejson["tmode"]
 
         # Handling SSL connection parameters
-
+        self.log.info("satish: selected sslmode is %s", conn.extra_dejson["sslmode"])
         if conn.extra_dejson.get("sslmode", False):
             conn_config["sslmode"] = conn.extra_dejson["sslmode"]
             if "verify" in conn_config["sslmode"]:
