@@ -20,6 +20,7 @@ from __future__ import annotations
 from datetime import datetime
 from unittest import mock
 
+import json
 import pytest
 
 from airflow.models import Connection
@@ -73,7 +74,9 @@ class TestTeradataHook:
         assert kwargs["user"] == "login"
         assert kwargs["password"] == "password"
     @mock.patch("teradatasql.connect")
-    def test_get_ssl_conn(self, mock_connect):
+    def test_get_tmode_conn(self, mock_connect):
+        tmode_name = {"tmode": "tera"}
+        self.connection.extra = json.dumps(tmode_name)
         self.db_hook.get_conn()
         assert mock_connect.call_count == 1
         args, kwargs = mock_connect.call_args
@@ -83,8 +86,97 @@ class TestTeradataHook:
         assert kwargs["dbs_port"] == "1025"
         assert kwargs["user"] == "login"
         assert kwargs["password"] == "password"
-        assert kwargs["sslmode"] == ""
+        assert kwargs["tmode"] == "tera"
+    @mock.patch("teradatasql.connect")
+    def test_get_sslmode_conn(self, mock_connect):
+        tmode_name = {"sslmode": "require"}
+        self.connection.extra = json.dumps(tmode_name)
+        self.db_hook.get_conn()
+        assert mock_connect.call_count == 1
+        args, kwargs = mock_connect.call_args
+        assert args == ()
+        assert kwargs["host"] == "host"
+        assert kwargs["database"] == "schema"
+        assert kwargs["dbs_port"] == "1025"
+        assert kwargs["user"] == "login"
+        assert kwargs["password"] == "password"
+        assert kwargs["sslmode"] == "require"
 
+    @mock.patch("teradatasql.connect")
+    def test_get_sslverifyca_conn(self, mock_connect):
+        extravalues = {"sslmode": "verify-ca", "sslca": "/tmp/cert"}
+        self.connection.extra = json.dumps(extravalues)
+        self.db_hook.get_conn()
+        assert mock_connect.call_count == 1
+        args, kwargs = mock_connect.call_args
+        assert args == ()
+        assert kwargs["host"] == "host"
+        assert kwargs["database"] == "schema"
+        assert kwargs["dbs_port"] == "1025"
+        assert kwargs["user"] == "login"
+        assert kwargs["password"] == "password"
+        assert kwargs["sslmode"] == "verify-ca"
+        assert kwargs["sslca"] == "/tmp/cert"
+
+    @mock.patch("teradatasql.connect")
+    def test_get_sslverifyfull_conn(self, mock_connect):
+        extravalues = {"sslmode": "verify-full", "sslca": "/tmp/cert"}
+        self.connection.extra = json.dumps(extravalues)
+        self.db_hook.get_conn()
+        assert mock_connect.call_count == 1
+        args, kwargs = mock_connect.call_args
+        assert args == ()
+        assert kwargs["host"] == "host"
+        assert kwargs["database"] == "schema"
+        assert kwargs["dbs_port"] == "1025"
+        assert kwargs["user"] == "login"
+        assert kwargs["password"] == "password"
+        assert kwargs["sslmode"] == "verify-full"
+        assert kwargs["sslca"] == "/tmp/cert"
+
+    @mock.patch("teradatasql.connect")
+    def test_get_sslcrc_conn(self, mock_connect):
+        extravalues = {"sslcrc": "sslcrc"}
+        self.connection.extra = json.dumps(extravalues)
+        self.db_hook.get_conn()
+        assert mock_connect.call_count == 1
+        args, kwargs = mock_connect.call_args
+        assert args == ()
+        assert kwargs["host"] == "host"
+        assert kwargs["database"] == "schema"
+        assert kwargs["dbs_port"] == "1025"
+        assert kwargs["user"] == "login"
+        assert kwargs["password"] == "password"
+        assert kwargs["sslcrc"] == "sslcrc"
+
+    @mock.patch("teradatasql.connect")
+    def test_get_sslprotocol_conn(self, mock_connect):
+        extravalues = {"sslprotocol": "protocol"}
+        self.connection.extra = json.dumps(extravalues)
+        self.db_hook.get_conn()
+        assert mock_connect.call_count == 1
+        args, kwargs = mock_connect.call_args
+        assert args == ()
+        assert kwargs["host"] == "host"
+        assert kwargs["database"] == "schema"
+        assert kwargs["dbs_port"] == "1025"
+        assert kwargs["user"] == "login"
+        assert kwargs["password"] == "password"
+        assert kwargs["sslprotocol"] == "protocol"
+    @mock.patch("teradatasql.connect")
+    def test_get_sslcipher_conn(self, mock_connect):
+        extravalues = {"sslcipher": "cipher"}
+        self.connection.extra = json.dumps(extravalues)
+        self.db_hook.get_conn()
+        assert mock_connect.call_count == 1
+        args, kwargs = mock_connect.call_args
+        assert args == ()
+        assert kwargs["host"] == "host"
+        assert kwargs["database"] == "schema"
+        assert kwargs["dbs_port"] == "1025"
+        assert kwargs["user"] == "login"
+        assert kwargs["password"] == "password"
+        assert kwargs["sslcipher"] == "cipher"
     @mock.patch("sqlalchemy.create_engine")
     def test_get_sqlalchemy_conn(self, mock_connect):
         self.db_hook.get_sqlalchemy_engine()
