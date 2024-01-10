@@ -72,6 +72,18 @@ class TestTeradataHook:
         assert kwargs["dbs_port"] == "1025"
         assert kwargs["user"] == "login"
         assert kwargs["password"] == "password"
+    @mock.patch("teradatasql.connect")
+    def test_get_ssl_conn(self, mock_connect):
+        self.db_hook.get_conn()
+        assert mock_connect.call_count == 1
+        args, kwargs = mock_connect.call_args
+        assert args == ()
+        assert kwargs["host"] == "host"
+        assert kwargs["database"] == "schema"
+        assert kwargs["dbs_port"] == "1025"
+        assert kwargs["user"] == "login"
+        assert kwargs["password"] == "password"
+        assert kwargs["sslmode"] == ""
 
     @mock.patch("sqlalchemy.create_engine")
     def test_get_sqlalchemy_conn(self, mock_connect):

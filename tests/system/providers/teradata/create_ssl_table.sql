@@ -16,5 +16,7 @@
  specific language governing permissions and limitations
  under the License.
 */
-
-DROP TABLE Employee;
+CREATE TABLE SSL_Users, FALLBACK (
+        username   varchar(50),
+        description           varchar(256)
+    );
