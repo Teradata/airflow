@@ -103,9 +103,9 @@ class TestTeradataHook:
         assert kwargs["sslmode"] == "require"
 
     @mock.patch("teradatasql.connect")
-    def test_get_sslcert_conn(self, mock_connect):
-        tmode_name = {"sslcert": "cert"}
-        self.connection.extra = json.dumps(tmode_name)
+    def test_get_sslverifyca_conn(self, mock_connect):
+        extravalues = {"sslmode": "verify-ca", "sslca": "/tmp/cert"}
+        self.connection.extra = json.dumps(extravalues)
         self.db_hook.get_conn()
         assert mock_connect.call_count == 1
         args, kwargs = mock_connect.call_args
@@ -115,12 +115,13 @@ class TestTeradataHook:
         assert kwargs["dbs_port"] == "1025"
         assert kwargs["user"] == "login"
         assert kwargs["password"] == "password"
-        assert kwargs["sslcert"] == "cert"
+        assert kwargs["sslmode"] == "verify-ca"
+        assert kwargs["sslca"] == "/tmp/cert"
 
     @mock.patch("teradatasql.connect")
-    def test_get_sslca_conn(self, mock_connect):
-        tmode_name = {"sslca": "/tmp/cert"}
-        self.connection.extra = json.dumps(tmode_name)
+    def test_get_sslverifyfull_conn(self, mock_connect):
+        extravalues = {"sslmode": "verify-full", "sslca": "/tmp/cert"}
+        self.connection.extra = json.dumps(extravalues)
         self.db_hook.get_conn()
         assert mock_connect.call_count == 1
         args, kwargs = mock_connect.call_args
@@ -130,12 +131,13 @@ class TestTeradataHook:
         assert kwargs["dbs_port"] == "1025"
         assert kwargs["user"] == "login"
         assert kwargs["password"] == "password"
+        assert kwargs["sslmode"] == "verify-full"
         assert kwargs["sslca"] == "/tmp/cert"
 
     @mock.patch("teradatasql.connect")
     def test_get_sslcrc_conn(self, mock_connect):
-        tmode_name = {"sslcrc": "sslcrc"}
-        self.connection.extra = json.dumps(tmode_name)
+        extravalues = {"sslcrc": "sslcrc"}
+        self.connection.extra = json.dumps(extravalues)
         self.db_hook.get_conn()
         assert mock_connect.call_count == 1
         args, kwargs = mock_connect.call_args
@@ -149,8 +151,8 @@ class TestTeradataHook:
 
     @mock.patch("teradatasql.connect")
     def test_get_sslprotocol_conn(self, mock_connect):
-        tmode_name = {"sslprotocol": "protocol"}
-        self.connection.extra = json.dumps(tmode_name)
+        extravalues = {"sslprotocol": "protocol"}
+        self.connection.extra = json.dumps(extravalues)
         self.db_hook.get_conn()
         assert mock_connect.call_count == 1
         args, kwargs = mock_connect.call_args
@@ -163,8 +165,8 @@ class TestTeradataHook:
         assert kwargs["sslprotocol"] == "protocol"
     @mock.patch("teradatasql.connect")
     def test_get_sslcipher_conn(self, mock_connect):
-        tmode_name = {"sslcipher": "cipher"}
-        self.connection.extra = json.dumps(tmode_name)
+        extravalues = {"sslcipher": "cipher"}
+        self.connection.extra = json.dumps(extravalues)
         self.db_hook.get_conn()
         assert mock_connect.call_count == 1
         args, kwargs = mock_connect.call_args
