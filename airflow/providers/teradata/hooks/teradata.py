@@ -169,23 +169,17 @@ class TeradataHook(DbApiHook):
         # Handling SSL connection parameters
 
         if conn.extra_dejson.get("sslmode", False):
-            self.log.info("satish: selected sslmode is %s", conn.extra_dejson["sslmode"])
             conn_config["sslmode"] = conn.extra_dejson["sslmode"]
             if "verify" in conn_config["sslmode"]:
                 if conn.extra_dejson.get("sslca", False):
-                    self.log.info("satish: selected sslca is %s", conn.extra_dejson["sslca"])
                     conn_config["sslca"] = conn.extra_dejson["sslca"]
                 if conn.extra_dejson.get("sslcapath", False):
-                    self.log.info("satish: selected sslca is %s", conn.extra_dejson["sslcapath"])
                     conn_config["sslcapath"] = conn.extra_dejson["sslcapath"]
         if conn.extra_dejson.get("sslcipher", False):
-            self.log.info("satish: selected sslcipher is %s", conn.extra_dejson["sslcipher"])
             conn_config["sslcipher"] = conn.extra_dejson["sslcipher"]
         if conn.extra_dejson.get("sslcrc", False):
-            self.log.info("satish: selected sslcrc is %s", conn.extra_dejson["sslcrc"])
             conn_config["sslcrc"] = conn.extra_dejson["sslcrc"]
         if conn.extra_dejson.get("sslprotocol", False):
-            self.log.info("satish: selected sslprotocol is %s", conn.extra_dejson["sslprotocol"])
             conn_config["sslprotocol"] = conn.extra_dejson["sslprotocol"]
 
         return conn_config
