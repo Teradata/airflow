@@ -64,28 +64,28 @@ class S3ToTeradataOperator(BaseOperator):
         self.aws_access_key = aws_access_key
         self.aws_access_secret = aws_access_secret
 
-        def execute(self, context: Context) -> None:
-            """
-            Executes the transfer operation from S3 to Teradata.
+    def execute(self, context: Context) -> None:
+        """
+        Executes the transfer operation from S3 to Teradata.
 
-            :param context: The context that is being provided when executing.
-            """
-            self.log.info("Loading %s to Teradata table %s...", self.s3_source_key, self.mysql_table)
+        :param context: The context that is being provided when executing.
+        """
+        self.log.info("Loading %s to Teradata table %s...", self.s3_source_key, self.mysql_table)
 
-            s3_hook = S3Hook(aws_conn_id=self.aws_conn_id)
-            access_key = s3_hook.conn_config.aws_access_key_id
-            access_secret = s3_hook.conn_config.aws_secret_access_key
-            self.log.info("access key : ", self.aws_access_key)
-            self.log.info("access secret : ", self.aws_access_secret)
-            if len(access_key) == 0 or len(access_secret) == 0:
-                access_key = self.aws_access_key
-                access_secret = self.aws_access_secret
+        s3_hook = S3Hook(aws_conn_id=self.aws_conn_id)
+        access_key = s3_hook.conn_config.aws_access_key_id
+        access_secret = s3_hook.conn_config.aws_secret_access_key
+        self.log.info("access key : ", self.aws_access_key)
+        self.log.info("access secret : ", self.aws_access_secret)
+        if len(access_key) == 0 or len(access_secret) == 0:
+            access_key = self.aws_access_key
+            access_secret = self.aws_access_secret
 
-            teradata_hook = TeradataHook(teradata_conn_id=self.teradata_conn_id)
-            sql = ("CREATE MULTISET TABLE %s AS ("
-                   "SELECT * FROM ( LOCATION = %s "
-                   "ACCESS_ID= %s ACCESS_KEY=%s ) AS d ) WITH DATA",
-                   self.teradata_table, self.s3_source_key, self.access_key, self.access_secret)
-            self.log.info("sql : ", sql)
-            teradata_hook.run(sql)
+        teradata_hook = TeradataHook(teradata_conn_id=self.teradata_conn_id)
+        sql = ("CREATE MULTISET TABLE %s AS ("
+               "SELECT * FROM ( LOCATION = %s "
+               "ACCESS_ID= %s ACCESS_KEY=%s ) AS d ) WITH DATA",
+               self.teradata_table, self.s3_source_key, self.access_key, self.access_secret)
+        self.log.info("sql : ", sql)
+        teradata_hook.run(sql)
 
