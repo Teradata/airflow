@@ -70,7 +70,7 @@ class S3ToTeradataOperator(BaseOperator):
 
         :param context: The context that is being provided when executing.
         """
-        self.log.info("Loading %s to Teradata table %s...", self.s3_source_key, self.mysql_table)
+        self.log.info("Loading %s to Teradata table %s...", self.s3_source_key, self.teradata_table)
 
         s3_hook = S3Hook(aws_conn_id=self.aws_conn_id)
         access_key = s3_hook.conn_config.aws_access_key_id
@@ -85,7 +85,7 @@ class S3ToTeradataOperator(BaseOperator):
         sql = ("CREATE MULTISET TABLE %s AS ("
                "SELECT * FROM ( LOCATION = %s "
                "ACCESS_ID= %s ACCESS_KEY=%s ) AS d ) WITH DATA",
-               self.teradata_table, self.s3_source_key, self.access_key, self.access_secret)
+               self.teradata_table, self.s3_source_key, access_key, access_secret)
         self.log.info("sql : ", sql)
         teradata_hook.run(sql)
 
