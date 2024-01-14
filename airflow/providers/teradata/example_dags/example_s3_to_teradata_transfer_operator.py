@@ -56,6 +56,7 @@ with DAG(
         sql="""
                 DROP TABLE example_s3_teradata;
             """,
+        trigger_rule="all_done",
     )
 
     transfer_data = S3ToTeradataOperator(
