@@ -54,7 +54,7 @@ with DAG(
 
     transfer_data = S3ToTeradataOperator(
         task_id="transfer_data_s3_to_teradata",
-        s3_source_key="teradata_default",
+        s3_source_key="/s3/ceph-s3.teradata.com/sc250072/raw_customers.csv",
         teradata_table="example_dest",
         aws_conn_id="aws_default",
         teradata_conn_id="teradata_default"
