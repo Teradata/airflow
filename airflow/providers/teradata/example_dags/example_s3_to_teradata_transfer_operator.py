@@ -48,6 +48,7 @@ with (DAG(
     catchup=False,
     start_date=datetime(2023, 1, 1),
 ) as dag):
+
     # [START howto_transfer_operator_s3_to_teradata]
 
     drop_table_csv_exists = TeradataOperator(
@@ -205,4 +206,9 @@ with (DAG(
         drop_table_access
     )
 
+    # Make sure create was done before deleting table
+    drop_table_csv_exists >> transfer_data_csv >> drop_table_csv
+    drop_table_json_exists >> transfer_data_json >> drop_table_json
+    drop_table_parquet_exists >> transfer_data_parquet >> drop_table_parquet
+    drop_table_access_exists >> transfer_data_access >> drop_table_access
     # [END howto_transfer_operator_s3_to_teradata]
