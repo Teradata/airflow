@@ -56,7 +56,6 @@ with DAG(
         sql="""
                 DROP TABLE example_s3_teradata;
             """,
-        trigger_rule="all_done",
     )
 
     transfer_data = S3ToTeradataOperator(
@@ -64,7 +63,8 @@ with DAG(
         s3_source_key="/s3/td-usgs-public.s3.amazonaws.com/CSVDATA/",
         teradata_table="example_s3_teradata",
         aws_conn_id="aws_default",
-        teradata_conn_id="teradata_default"
+        teradata_conn_id="teradata_default",
+        trigger_rule = "all_done",
     )
 
     read_data_dest = TeradataOperator(
