@@ -39,9 +39,7 @@ try:
 except ImportError:
     pytest.skip("Teradata provider apache-airflow-provider-teradata not available", allow_module_level=True)
 
-
 CONN_ID = "teradata_default"
-
 
 with DAG(
     dag_id="example_s3_to_teradata_transfer_operator",
@@ -52,10 +50,18 @@ with DAG(
 ) as dag:
     # [START howto_transfer_operator_s3_to_teradata]
 
+    drop_table_ifexists = TeradataOperator(
+        task_id="drop_table_ifexists",
+        conn_id=CONN_ID,
+        sql="""
+                DROP TABLE example_s3_teradata;
+            """,
+    )
+
     transfer_data = S3ToTeradataOperator(
         task_id="transfer_data_s3_to_teradata",
-        s3_source_key="/s3/ceph-s3.teradata.com/sc250072/raw_customers.csv",
-        teradata_table="example_dest",
+        s3_source_key="/s3/td-usgs-public.s3.amazonaws.com/CSVDATA/",
+        teradata_table="example_s3_teradata",
         aws_conn_id="aws_default",
         teradata_conn_id="teradata_default"
     )
@@ -64,26 +70,25 @@ with DAG(
         task_id="read_data_dest",
         conn_id=CONN_ID,
         sql="""
-            SELECT TOP 10 * from example_dest;
+            SELECT TOP 10 * from example_s3_teradata;
         """,
     )
 
-    drop_src_table = TeradataOperator(
-        task_id="example_dest",
+    drop_table = TeradataOperator(
+        task_id="drop_table",
         conn_id=CONN_ID,
         sql="""
-            DROP TABLE example_dest;
+            DROP TABLE example_s3_teradata;
         """,
     )
 
-
-
     chain(
+        drop_table_ifexists,
         transfer_data,
         read_data_dest,
-        drop_src_table
+        drop_table
     )
 
     # Make sure create was done before deleting table
-    transfer_data >> drop_src_table
+    drop_table_ifexists >> transfer_data >> drop_table
     # [END howto_transfer_operator_s3_to_teradata]
