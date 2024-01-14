@@ -41,14 +41,13 @@ except ImportError:
 
 CONN_ID = "teradata_default"
 
-with (DAG(
+with DAG(
     dag_id="example_s3_to_teradata_transfer_operator",
     max_active_runs=1,
     max_active_tasks=3,
     catchup=False,
     start_date=datetime(2023, 1, 1),
-) as dag):
-
+) as dag:
     # [START howto_transfer_operator_s3_to_teradata]
 
     drop_table_csv_exists = TeradataOperator(
