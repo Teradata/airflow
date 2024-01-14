@@ -83,7 +83,7 @@ class S3ToTeradataOperator(BaseOperator):
 
         teradata_hook = TeradataHook(teradata_conn_id=self.teradata_conn_id)
         sql = ("CREATE MULTISET TABLE {} AS (  SELECT * FROM ( LOCATION = {}  ACCESS_ID= {} ACCESS_KEY={} ) "
-               "AS d ) WITH DATA").format(self.teradata_table, self.s3_source_key, self.access_key,
+               "AS d ) WITH DATA").format(self.teradata_table, self.s3_source_key, access_key,
                                           access_secret)
         self.log.info("sql : ", sql)
         teradata_hook.run(sql)
