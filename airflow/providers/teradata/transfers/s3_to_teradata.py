@@ -72,18 +72,20 @@ class S3ToTeradataOperator(BaseOperator):
         """
         self.log.info("Loading %s to Teradata table %s...", self.s3_source_key, self.teradata_table)
 
-        s3_hook = S3Hook(aws_conn_id=self.aws_conn_id)
-        access_key = s3_hook.conn_config.aws_access_key_id
-        access_secret = s3_hook.conn_config.aws_secret_access_key
+        access_key = self.aws_access_key
+        access_secret = self.aws_access_secret
+
+        if not access_key or not access_secret:
+            s3_hook = S3Hook(aws_conn_id=self.aws_conn_id)
+            access_key = s3_hook.conn_config.aws_access_key_id
+            access_secret = s3_hook.conn_config.aws_secret_access_key
+
         self.log.info("access key : ", self.aws_access_key)
         self.log.info("access secret : ", self.aws_access_secret)
-        if not access_key or not access_secret:
-            access_key = self.aws_access_key
-            access_secret = self.aws_access_secret
 
         teradata_hook = TeradataHook(teradata_conn_id=self.teradata_conn_id)
         sql = ("CREATE MULTISET TABLE {} AS (  SELECT * FROM ( LOCATION = '{}'  ACCESS_ID= '{}' ACCESS_KEY= "
                "'{}' ) AS d ) WITH DATA").format(self.teradata_table, self.s3_source_key, access_key,
                                                  access_secret)
-        self.log.info("sql : ", sql)
+        self.log.info("sql : %s", sql)
         teradata_hook.run(sql)

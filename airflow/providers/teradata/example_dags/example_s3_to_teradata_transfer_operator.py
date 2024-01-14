@@ -41,55 +41,168 @@ except ImportError:
 
 CONN_ID = "teradata_default"
 
-with DAG(
+with (DAG(
     dag_id="example_s3_to_teradata_transfer_operator",
     max_active_runs=1,
     max_active_tasks=3,
     catchup=False,
     start_date=datetime(2023, 1, 1),
-) as dag:
+) as dag):
     # [START howto_transfer_operator_s3_to_teradata]
 
-    drop_table_ifexists = TeradataOperator(
-        task_id="drop_table_ifexists",
+    drop_table_csv_exists = TeradataOperator(
+        task_id="drop_table_csv_exists",
         conn_id=CONN_ID,
         sql="""
-                DROP TABLE example_s3_teradata;
+                DROP TABLE example_s3_teradata_csv;
             """,
     )
 
-    transfer_data = S3ToTeradataOperator(
-        task_id="transfer_data_s3_to_teradata",
+    drop_table_json_exists = TeradataOperator(
+        task_id="drop_table_json_exists",
+        conn_id=CONN_ID,
+        sql="""
+                DROP TABLE example_s3_teradata_json;
+            """,
+        trigger_rule="all_done",
+    )
+
+    drop_table_parquet_exists = TeradataOperator(
+        task_id="drop_table_parquet_exists",
+        conn_id=CONN_ID,
+        sql="""
+                DROP TABLE example_s3_teradata_parquet;
+            """,
+        trigger_rule="all_done",
+    )
+
+    drop_table_access_exists = TeradataOperator(
+        task_id="drop_table_access_exists",
+        conn_id=CONN_ID,
+        sql="""
+                DROP TABLE example_s3_teradata_access;
+            """,
+        trigger_rule="all_done",
+    )
+
+    transfer_data_csv = S3ToTeradataOperator(
+        task_id="transfer_data_s3_to_teradata_csv",
         s3_source_key="/s3/td-usgs-public.s3.amazonaws.com/CSVDATA/",
-        teradata_table="example_s3_teradata",
+        teradata_table="example_s3_teradata_csv",
         aws_conn_id="aws_default",
         teradata_conn_id="teradata_default",
-        trigger_rule = "all_done",
+        trigger_rule="all_done",
     )
 
-    read_data_dest = TeradataOperator(
-        task_id="read_data_dest",
+    transfer_data_json = S3ToTeradataOperator(
+        task_id="transfer_data_s3_to_teradata_json",
+        s3_source_key="/s3/td-usgs-public.s3.amazonaws.com/JSONDATA/",
+        teradata_table="example_s3_teradata_json",
+        aws_conn_id="aws_default",
+        teradata_conn_id="teradata_default",
+        trigger_rule="all_done",
+    )
+
+    transfer_data_parquet = S3ToTeradataOperator(
+        task_id="transfer_data_s3_to_teradata_parquet",
+        s3_source_key="/s3/td-usgs-public.s3.amazonaws.com/PARQUETDATA/",
+        teradata_table="example_s3_teradata_parquet",
+        aws_conn_id="aws_default",
+        teradata_conn_id="teradata_default",
+        trigger_rule="all_done",
+    )
+
+    transfer_data_access = S3ToTeradataOperator(
+        task_id="transfer_data_s3_to_teradata_access",
+        s3_source_key="/s3/td-usgs-public.s3.amazonaws.com/CSVDATA/",
+        teradata_table="example_s3_teradata_access",
+        aws_access_key="",
+        aws_access_secret="",
+        teradata_conn_id="teradata_default",
+        trigger_rule="all_done",
+    )
+
+    read_data_table_csv = TeradataOperator(
+        task_id="read_data_table_csv",
         conn_id=CONN_ID,
         sql="""
-            SELECT TOP 10 * from example_s3_teradata;
+                SELECT * from example_s3_teradata_csv;
+            """,
+    )
+
+    read_data_table_json = TeradataOperator(
+        task_id="read_data_table_json",
+        conn_id=CONN_ID,
+        sql="""
+                SELECT * from example_s3_teradata_json;
+            """,
+    )
+
+    read_data_table_parquet = TeradataOperator(
+        task_id="read_data_table_parquet",
+        conn_id=CONN_ID,
+        sql="""
+                SELECT * from example_s3_teradata_parquet;
+            """,
+    )
+
+    read_data_table_access = TeradataOperator(
+        task_id="read_data_table_access",
+        conn_id=CONN_ID,
+        sql="""
+            SELECT * from example_s3_teradata_access;
+            """,
+    )
+
+    drop_table_csv = TeradataOperator(
+        task_id="drop_table_csv",
+        conn_id=CONN_ID,
+        sql="""
+            DROP TABLE example_s3_teradata_csv;
         """,
     )
 
-    drop_table = TeradataOperator(
-        task_id="drop_table",
+    drop_table_json = TeradataOperator(
+        task_id="drop_table_json",
         conn_id=CONN_ID,
         sql="""
-            DROP TABLE example_s3_teradata;
-        """,
+                DROP TABLE example_s3_teradata_json;
+            """,
+    )
+
+    drop_table_parquet = TeradataOperator(
+        task_id="drop_table_parquet",
+        conn_id=CONN_ID,
+        sql="""
+                DROP TABLE example_s3_teradata_parquet;
+            """,
+    )
+
+    drop_table_access = TeradataOperator(
+        task_id="drop_table_access",
+        conn_id=CONN_ID,
+        sql="""
+               DROP TABLE example_s3_teradata_access;
+           """,
     )
 
     chain(
-        drop_table_ifexists,
-        transfer_data,
-        read_data_dest,
-        drop_table
+        drop_table_csv_exists,
+        drop_table_json_exists,
+        drop_table_parquet_exists,
+        drop_table_access_exists,
+        transfer_data_csv,
+        transfer_data_json,
+        transfer_data_parquet,
+        transfer_data_access,
+        read_data_table_csv,
+        read_data_table_json,
+        read_data_table_parquet,
+        read_data_table_access,
+        drop_table_csv,
+        drop_table_json,
+        drop_table_parquet,
+        drop_table_access
     )
 
-    # Make sure create was done before deleting table
-    drop_table_ifexists >> transfer_data >> drop_table
     # [END howto_transfer_operator_s3_to_teradata]
