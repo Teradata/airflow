@@ -117,7 +117,7 @@ with DAG(
 
     transfer_data_access = S3ToTeradataOperator(
         task_id="transfer_data_s3_to_teradata_access",
-        s3_source_key="/s3/td-usgs-public.s3.amazonaws.com/CSVDATA/",
+        s3_source_key="/s3/teradata-download.s3.us-east-1.amazonaws.com/devtools/airflow/s3_test_data/",
         teradata_table="example_s3_teradata_access",
         aws_access_key=AWS_KEY,
         aws_access_secret=AWS_SECRET,

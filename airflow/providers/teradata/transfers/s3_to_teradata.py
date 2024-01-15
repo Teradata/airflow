@@ -86,12 +86,18 @@ class S3ToTeradataOperator(BaseOperator):
             access_key = ""
             access_secret = ""
 
-        self.log.info("access key : %s ", self.aws_access_key)
-        self.log.info("access secret : %s", self.aws_access_secret)
-
         teradata_hook = TeradataHook(teradata_conn_id=self.teradata_conn_id)
-        sql = ("CREATE MULTISET TABLE {} AS (  SELECT * FROM ( LOCATION = '{}'  ACCESS_ID= '{}' ACCESS_KEY= "
-               "'{}' ) AS d ) WITH DATA").format(self.teradata_table, self.s3_source_key, access_key,
-                                                 access_secret)
+        sql = f"""
+                CREATE MULTISET TABLE {self.teradata_table} AS
+                (
+                    SELECT * FROM (
+                        LOCATION = '{self.s3_source_key}'
+                        ACCESS_ID= '{access_key}'
+                        ACCESS_KEY= '{access_secret}'
+                    ) AS d
+                ) WITH DATA
+                """
+        self.log.info("COPYING using READ_NOS and CREATE TABLE AS feature of teradata....")
         self.log.info("sql : %s", sql)
         teradata_hook.run(sql)
+        self.log.info("COPYING is completed")
