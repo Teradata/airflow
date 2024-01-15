@@ -49,16 +49,7 @@ with DAG(
     catchup=False,
     default_args={"conn_id": "teradata_default"},
 ) as dag:
-    # [START teradata_operator_howto_guide_drop_country_table]
-    drop_country_table_exists = TeradataOperator(
-        task_id="drop_country_table_exists", sql=r"""DROP TABLE Country;""", dag=dag, trigger_rule="all_done",
-    )
-    # [END teradata_operator_howto_guide_drop_country_table]
-    # [START teradata_operator_howto_guide_drop_users_table]
-    drop_users_table_exists = TeradataOperator(
-        task_id="drop_users_table_exists", sql=r"""DROP TABLE Users;""", dag=dag, trigger_rule="all_done",
-    )
-    # [END teradata_operator_howto_guide_drop_users_table]
+
     # [START teradata_operator_howto_guide_create_country_table]
     create_country_table = TeradataOperator(
         task_id="create_country_table",
@@ -113,9 +104,7 @@ with DAG(
     # [END teradata_operator_howto_guide_drop_users_table]
 
     (
-        drop_country_table_exists
-        >> drop_users_table_exists
-        >> create_country_table
+        create_country_table
         >> populate_country_table
         >> create_users_table_from_external_file
         >> get_all_countries

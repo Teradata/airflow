@@ -21,7 +21,7 @@
 Amazon S3 to Teradata
 ============================
 
-Use the ``S3ToTeradataOperator`` transfer to copy the data from an Amazon Simple Storage Service (S3) file into Teradata table.
+Use the ``S3ToTeradataOperator`` transfer to copy CSV, JSON and Parquet format data from an Amazon Simple Storage Service (S3) file into Teradata table.
 
 Operators
 ---------
@@ -31,12 +31,12 @@ Operators
 Amazon S3 To Teradata transfer operator
 ==============================================
 
-This operator loads data from Amazon S3 to Teradata table.
+This operator loads CSV, JSON and Parquet format data from Amazon S3 to Teradata table.
 
 Using the Operator
 ^^^^^^^^^^^^^^^^^^
 
-To transfer data from Amazon S3 to Teradata, use the
+To transfer CSV, JSON and Parquet data from Amazon S3 to Teradata, use the
 :class:`~airflow.providers.teradata.transfers.s3_to_teradata.S3ToTeradataOperator`.
 
 An example of executing a simple query is as follows:
