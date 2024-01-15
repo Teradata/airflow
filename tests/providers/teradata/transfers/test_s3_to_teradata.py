@@ -89,10 +89,10 @@ class TestS3ToTeradataTransfer:
         )
         op.execute(None)
         transaction = f"""
-                    CREATE MULTISET TABLE {self.teradata_table} AS
+                    CREATE MULTISET TABLE {teradata_table} AS
                     (
                         SELECT * FROM (
-                            LOCATION = '{self.s3_source_key}'
+                            LOCATION = '{s3_source_key}'
                             ACCESS_ID= '{access_key}'
                             ACCESS_KEY= '{access_secret}'
                         ) AS d
