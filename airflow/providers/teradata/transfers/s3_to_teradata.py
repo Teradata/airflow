@@ -23,6 +23,8 @@ from airflow.models import BaseOperator
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.teradata.hooks.teradata import TeradataHook
 
+import os
+
 if TYPE_CHECKING:
     from airflow.utils.context import Context
 
@@ -84,8 +86,8 @@ class S3ToTeradataOperator(BaseOperator):
             access_key = ""
             access_secret = ""
 
-        self.log.info("access key : ", self.aws_access_key)
-        self.log.info("access secret : ", self.aws_access_secret)
+        self.log.info("access key : %s ", self.aws_access_key)
+        self.log.info("access secret : %s", self.aws_access_secret)
 
         teradata_hook = TeradataHook(teradata_conn_id=self.teradata_conn_id)
         sql = ("CREATE MULTISET TABLE {} AS (  SELECT * FROM ( LOCATION = '{}'  ACCESS_ID= '{}' ACCESS_KEY= "
