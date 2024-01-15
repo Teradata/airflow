@@ -41,9 +41,8 @@ except ImportError:
     pytest.skip("Teradata provider apache-airflow-provider-teradata not available", allow_module_level=True)
 
 CONN_ID = "teradata_default"
-
-aws_key = os.environ["aws_key"]
-aws_secret = os.environ["aws_secret"]
+AWS_KEY = os.environ.get("AWS_KEY")
+AWS_SECRET = os.environ["AWS_SECRET"]
 
 with DAG(
     dag_id="example_s3_to_teradata_transfer_operator",
@@ -120,8 +119,8 @@ with DAG(
         task_id="transfer_data_s3_to_teradata_access",
         s3_source_key="/s3/td-usgs-public.s3.amazonaws.com/CSVDATA/",
         teradata_table="example_s3_teradata_access",
-        aws_access_key=aws_key,
-        aws_access_secret=aws_secret,
+        aws_access_key=AWS_KEY,
+        aws_access_secret=AWS_SECRET,
         teradata_conn_id="teradata_default",
         trigger_rule="all_done",
     )
