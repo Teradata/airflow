@@ -80,6 +80,10 @@ class S3ToTeradataOperator(BaseOperator):
             access_key = s3_hook.conn_config.aws_access_key_id
             access_secret = s3_hook.conn_config.aws_secret_access_key
 
+        if access_key is None or access_secret is None:
+            access_key = ""
+            access_secret = ""
+
         self.log.info("access key : ", self.aws_access_key)
         self.log.info("access secret : ", self.aws_access_secret)
 
