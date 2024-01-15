@@ -98,6 +98,6 @@ class TestS3ToTeradataTransfer:
                         ) AS d
                     ) WITH DATA
                     """
-        assert_equal_ignore_multiple_spaces("\n".join(mock_run.call_args.args[0]), transaction)
+        assert("\n".join(mock_run.call_args.args[0]).__eq__(transaction))
 
         assert mock_run.call_count == 1
