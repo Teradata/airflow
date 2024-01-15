@@ -57,6 +57,26 @@ with DAG(
     catchup=False,
     default_args={"conn_id": "teradata_default"},
 ) as dag:
+    # [START teradata_to_teradata_transfer_operator_howto_guide_drop_src_table]
+    drop_src_table_exists = TeradataOperator(
+        task_id="drop_src_table_exists",
+        conn_id=CONN_ID,
+        sql="""
+                DROP TABLE my_users_src;
+            """,
+        trigger_rule="all_done",
+    )
+    # [END teradata_to_teradata_transfer_operator_howto_guide_drop_src_table]
+    # [START teradata_to_teradata_transfer_operator_howto_guide_drop_dest_table]
+    drop_dest_table_exists = TeradataOperator(
+        task_id="drop_dest_table_exists",
+        conn_id=CONN_ID,
+        sql="""
+                DROP TABLE my_users_dest;
+            """,
+        trigger_rule="all_done",
+    )
+    # [END teradata_to_teradata_transfer_operator_howto_guide_drop_dest_table]
     # [START teradata_to_teradata_transfer_operator_howto_guide_create_src_table]
     create_src_table = TeradataOperator(
         task_id="create_src_table",
@@ -75,6 +95,7 @@ with DAG(
                 birth_date DATE FORMAT 'YYYY-MM-DD' NOT NULL DEFAULT DATE '2023-01-01'
             ) PRIMARY INDEX (user_id);
         """,
+        trigger_rule="all_done",
     )
     # [END teradata_to_teradata_transfer_operator_howto_guide_create_src_table]
     # [START teradata_to_teradata_transfer_operator_howto_guide_create_dest_table]
@@ -156,7 +177,9 @@ with DAG(
     )
     # [END teradata_to_teradata_transfer_operator_howto_guide_drop_dest_table]
     (
-        create_src_table
+        drop_src_table_exists
+        >> drop_dest_table_exists
+        >> create_src_table
         >> create_dest_table
         >> insert_data_src
         >> read_data_src

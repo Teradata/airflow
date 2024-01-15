@@ -35,9 +35,10 @@ except ImportError:
 # [START teradata_operator_howto_guide]
 
 
-# create_table_teradata, insert_teradata_task, create_table_teradata_from_external_file, populate_user_table
-# get_all_countries, get_all_description, get_countries_from_continent, drop_table_teradata_task, drop_users_table_teradata_task
-# are examples of tasks created by instantiating the Teradata Operator
+# create_table_teradata, insert_teradata_task, create_table_teradata_from_external_file,
+# populate_user_table get_all_countries, get_all_description, get_countries_from_continent,
+# drop_table_teradata_task, drop_users_table_teradata_task are examples of tasks created by instantiating
+# the Teradata Operator
 
 ENV_ID = os.environ.get("SYSTEM_TESTS_ENV_ID")
 DAG_ID = "example_teradata"
@@ -49,6 +50,22 @@ with DAG(
     catchup=False,
     default_args={"conn_id": "teradata_ssl_default"},
 ) as dag:
+    # [START teradata_operator_howto_guide_drop_country_table]
+    drop_country_table_exists = TeradataOperator(
+        task_id="drop_country_table_exists",
+        sql=r"""DROP TABLE SSL_Country;""",
+        dag=dag,
+        trigger_rule="all_done"
+    )
+    # [END teradata_operator_howto_guide_drop_country_table]
+    # [START teradata_operator_howto_guide_drop_users_table]
+    drop_users_table_exists = TeradataOperator(
+        task_id="drop_users_table_exists",
+        sql=r"""DROP TABLE SSL_Users;""",
+        dag=dag,
+        trigger_rule="all_done"
+    )
+    # [END teradata_operator_howto_guide_drop_users_table]
     # [START teradata_operator_howto_guide_create_country_table]
     create_country_table = TeradataOperator(
         task_id="create_country_table",
@@ -59,6 +76,7 @@ with DAG(
             continent CHAR(25)
         );
         """,
+        trigger_rule="all_done"
     )
     # [END teradata_operator_howto_guide_create_country_table]
     # [START teradata_operator_howto_guide_populate_country_table]
@@ -102,7 +120,9 @@ with DAG(
     # [END teradata_operator_howto_guide_drop_users_table]
 
     (
-        create_country_table
+        drop_users_table_exists
+        >> drop_country_table_exists
+        >> create_country_table
         >> populate_country_table
         >> create_users_table_from_external_file
         >> get_all_countries
