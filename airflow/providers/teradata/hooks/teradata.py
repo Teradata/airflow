@@ -162,8 +162,6 @@ class TeradataHook(DbApiHook):
             "password": conn.password or "dbc",
         }
 
-        self.log.info("Extra parameters [%s] ", conn.extra_dejson)
-        self.log.info("selected tmode [%s] ", conn.extra_dejson["tmode"])
         if conn.extra_dejson.get("tmode", False):
             conn_config["tmode"] = conn.extra_dejson["tmode"]
 
