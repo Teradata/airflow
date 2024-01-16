@@ -31,16 +31,16 @@ if TYPE_CHECKING:
 
 class S3ToTeradataOperator(BaseOperator):
     """
-    Loads data from S3 file into a Teradata table.
+    Moves data from Teradata source database to Teradata destination database.
     .. seealso::
     For more information on how to use this operator, take a look at the guide:
-    :ref:`howto/operator:S3ToTeradataOperator`
-    :param s3_source_key: The path to the file (S3 key) that will be loaded into Teradata.
-    :param teradata_table: destination table to insert rows.
-    :param aws_conn_id: The S3 connection that contains the credentials to the S3 Bucket.
-    :param teradata_conn_id: Reference to :ref:`teradata connection id <howto/connection:teradata>.
-    :param aws_access_key: S3 bucket access key.
-    :param aws_access_secret: S3 bucket access secret.
+    :ref:`howto/operator:TeradataToTeradataOperator`
+    :param teradata_destination_conn_id: destination Teradata connection.
+    :param destination_table: destination table to insert rows.
+    :param teradata_source_conn_id: :ref:`Source Teradata connection <howto/connection:Teradata>`.
+    :param source_sql: SQL query to execute against the source Teradata database
+    :param source_sql_params: Parameters to use in sql query.
+    :param rows_chunk: number of rows per chunk to commit.
     """
 
     template_fields: Sequence[str] = ("s3_source_key", "teradata_table")
@@ -67,11 +67,6 @@ class S3ToTeradataOperator(BaseOperator):
         self.aws_access_secret = aws_access_secret
 
     def execute(self, context: Context) -> None:
-        """
-        Executes the transfer operation from S3 to Teradata.
-
-        :param context: The context that is being provided when executing.
-        """
         self.log.info("Loading %s to Teradata table %s...", self.s3_source_key, self.teradata_table)
 
         access_key = self.aws_access_key
@@ -88,15 +83,15 @@ class S3ToTeradataOperator(BaseOperator):
 
         teradata_hook = TeradataHook(teradata_conn_id=self.teradata_conn_id)
         sql = f"""
-                CREATE MULTISET TABLE {self.teradata_table} AS
-                (
-                    SELECT * FROM (
-                        LOCATION = '{self.s3_source_key}'
-                        ACCESS_ID= '{access_key}'
-                        ACCESS_KEY= '{access_secret}'
-                    ) AS d
-                ) WITH DATA
-                """
+                        CREATE MULTISET TABLE {self.teradata_table} AS
+                        (
+                            SELECT * FROM (
+                                LOCATION = '{self.s3_source_key}'
+                                ACCESS_ID= '{access_key}'
+                                ACCESS_KEY= '{access_secret}'
+                            ) AS d
+                        ) WITH DATA
+                        """
         self.log.info("COPYING using READ_NOS and CREATE TABLE AS feature of teradata....")
         self.log.info("sql : %s", sql)
         teradata_hook.run(sql)
