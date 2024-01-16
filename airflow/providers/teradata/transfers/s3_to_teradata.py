@@ -31,16 +31,16 @@ if TYPE_CHECKING:
 
 class S3ToTeradataOperator(BaseOperator):
     """
-    Moves data from Teradata source database to Teradata destination database.
+    Loads CSV, JSON and Parquet format data from Amazon S3 to Teradata.
     .. seealso::
     For more information on how to use this operator, take a look at the guide:
     :ref:`howto/operator:S3ToTeradataOperator`
-    :param teradata_destination_conn_id: destination Teradata connection.
-    :param destination_table: destination table to insert rows.
-    :param teradata_source_conn_id: :ref:`Source Teradata connection <howto/connection:Teradata>`.
-    :param source_sql: SQL query to execute against the source Teradata database
-    :param source_sql_params: Parameters to use in sql query.
-    :param rows_chunk: number of rows per chunk to commit.
+    :param s3_source_key: The path to the file (S3 key) that will be loaded into Teradata.
+    :param teradata_table: destination table to insert rows.
+    :param aws_conn_id: reference to a specific S3 connection.
+    :param teradata_conn_id: :ref:`Teradata connection <howto/connection:Teradata>`.
+    :param aws_access_key: S3 bucket access key.
+    :param aws_access_secret: S3 bucket access secret.
     """
 
     template_fields: Sequence[str] = ("s3_source_key", "teradata_table")
@@ -67,6 +67,10 @@ class S3ToTeradataOperator(BaseOperator):
         self.aws_access_secret = aws_access_secret
 
     def execute(self, context: Context) -> None:
+        """
+        Executes the transfer operation from S3 to Teradata.
+        :param context: The context that is being provided when executing.
+        """
         self.log.info("Loading %s to Teradata table %s...", self.s3_source_key, self.teradata_table)
 
         access_key = self.aws_access_key
