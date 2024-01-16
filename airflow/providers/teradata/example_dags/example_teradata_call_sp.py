@@ -36,7 +36,7 @@ except ImportError:
     pytest.skip("Teradata provider pache-airflow-provider-teradata not available", allow_module_level=True)
 
 
-CONN_ID = "teradata_default"
+CONN_ID = "teradata_sp_call"
 
 
 with DAG(
