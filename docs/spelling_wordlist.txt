@@ -1469,6 +1469,7 @@ sshHook
 sshtunnel
 SSHTunnelForwarder
 ssl
+sslmode
 ssm
 Stackdriver
 stackdriver

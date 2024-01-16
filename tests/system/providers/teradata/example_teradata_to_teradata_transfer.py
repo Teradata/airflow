@@ -57,6 +57,7 @@ with DAG(
     catchup=False,
     default_args={"conn_id": "teradata_default"},
 ) as dag:
+
     # [START teradata_to_teradata_transfer_operator_howto_guide_create_src_table]
     create_src_table = TeradataOperator(
         task_id="create_src_table",
@@ -75,6 +76,7 @@ with DAG(
                 birth_date DATE FORMAT 'YYYY-MM-DD' NOT NULL DEFAULT DATE '2023-01-01'
             ) PRIMARY INDEX (user_id);
         """,
+        trigger_rule="all_done",
     )
     # [END teradata_to_teradata_transfer_operator_howto_guide_create_src_table]
     # [START teradata_to_teradata_transfer_operator_howto_guide_create_dest_table]
