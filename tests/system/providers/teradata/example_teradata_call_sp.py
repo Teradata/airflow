@@ -45,7 +45,7 @@ with DAG(
     start_date=datetime.datetime(2020, 2, 2),
     schedule="@once",
     catchup=False,
-    default_args={"conn_id": "teradata_default"},
+    default_args={"conn_id": "teradata_sp_call"},
 ) as dag:
 
     # [START teradata_operator_howto_guide_sp_call]
