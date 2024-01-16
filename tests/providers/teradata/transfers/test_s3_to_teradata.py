@@ -87,5 +87,5 @@ class TestS3ToTeradataTransfer:
             task_id="task_id",
             dag=None,
         )
-        op.execute(None)  
+        op.execute(None)
         assert mock_run.call_count == 1
