@@ -38,7 +38,7 @@ class S3ToTeradataOperator(BaseOperator):
     :param s3_source_key: The path to the file (S3 key) that will be loaded into Teradata.
     :param teradata_table: destination table to insert rows.
     :param aws_conn_id: The S3 connection that contains the credentials to the S3 Bucket.
-    :param teradata_conn_id: Reference to :ref:`teradata connection id <howto/connection:teradata>
+    :param teradata_conn_id: Reference to :ref:`teradata connection id <howto/connection:teradata>.
     :param aws_access_key: S3 bucket access key.
     :param aws_access_secret: S3 bucket access secret.
     """
