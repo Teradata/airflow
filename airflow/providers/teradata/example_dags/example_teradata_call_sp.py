@@ -52,19 +52,18 @@ with DAG(
         task_id="sp_call",
         conn_id=CONN_ID,
         sql="""
-            CALL EAS48_HVR_QLIK_BX_STG_E01.SP_BASE_COMPANY
-            (
-                'JOB_COMPANY',
-                'WF_COMPANY01',
-                'WF_COMPANY',
-                CAST('02022023' AS DATE FORMAT 'MMDDYYYY'),
-                'E01-800',
-                CAST('01011900' AS DATE FORMAT 'MMDDYYYY'),
-                'init'
-            );
-        """,
+            CALL space_report();
+            """,
     )
 
-    chain(sp_call)
+    call_sp_param = TeradataOperator(
+        task_id="call_sp_param",
+        sql="""
+                    CALL get_data('');
+                """,
+        trigger_rule="all_done",
+    )
+
+    chain(sp_call, call_sp_param)
 
     # [END howto_teradata_operator_for_sp_call]
