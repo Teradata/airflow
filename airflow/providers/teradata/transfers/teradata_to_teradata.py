@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 
 
 class TeradataToTeradataOperator(BaseOperator):
+
     """
     Moves data from Teradata source database to Teradata destination database.
     .. seealso::
