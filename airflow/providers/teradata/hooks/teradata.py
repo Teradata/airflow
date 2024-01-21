@@ -18,7 +18,6 @@
 """A Airflow Hook for interacting with Teradata SQL Server."""
 from __future__ import annotations
 
-import logging as log
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import sqlalchemy
