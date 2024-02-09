@@ -174,7 +174,7 @@ class TeradataHook(DbApiHook):
         return conn_config
 
     def get_sqlalchemy_engine(self, engine_kwargs=None):
-        """Returns a connection object using sqlalchemy."""
+        """Return a connection object using sqlalchemy."""
         conn: Connection = self.get_connection(getattr(self, self.conn_name_attr))
         link = f"teradatasql://{conn.login}:{conn.password}@{conn.host}"
         connection = sqlalchemy.create_engine(link)
