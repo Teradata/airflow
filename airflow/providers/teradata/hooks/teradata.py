@@ -18,8 +18,6 @@
 """An Airflow Hook for interacting with Teradata SQL Server."""
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from airflow.providers.common.sql.hooks.sql import DbApiHook
 
 
