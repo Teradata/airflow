@@ -15,13 +15,12 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+"""An Airflow Hook for interacting with Teradata SQL Server."""
 from __future__ import annotations
 
-from typing import TypeVar
+from typing import TYPE_CHECKING
 
 from airflow.providers.common.sql.hooks.sql import DbApiHook
-
-T = TypeVar("T")
 
 
 class TeradataHook(DbApiHook):
@@ -32,17 +31,14 @@ class TeradataHook(DbApiHook):
     Teradata DB Server URL, username, password and database name are fetched from the predefined connection
     config connection_id. It raises an airflow error if the given connection id doesn't exist.
 
-    See :doc:` docs/apache-airflow-providers-teradata/connections/teradata.rst` for full documentation.
+    You can also specify ssl parameters in the extra field of your connection
+    as ``{"sslmode": "require", "sslcert": "/path/to/cert.pem", etc}``.
+
+    .. seealso::
+        - :ref:`Teradata API connection <howto/connection:teradata>`
 
     :param args: passed to DbApiHook
+    :param database: The Teradata database to connect to.
     :param kwargs: passed to DbApiHook
-
-
-    Usage Help:
-
-    >>> tdh = TeradataHook()
-    >>> sql = "SELECT top 1 _airbyte_ab_id from airbyte_td._airbyte_raw_Sales;"
-    >>> tdh.get_records(sql)
-    [[61ad1d63-3efd-4da4-9904-a4489cc3a520]]
 
     """
