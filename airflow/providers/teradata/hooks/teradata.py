@@ -18,6 +18,11 @@
 """An Airflow Hook for interacting with Teradata SQL Server."""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+import teradatasql
+from teradatasql import TeradataConnection
+
 from airflow.providers.common.sql.hooks.sql import DbApiHook
 
 
@@ -69,3 +74,14 @@ class TeradataHook(DbApiHook):
         **kwargs,
     ) -> None:
         super().__init__(*args, schema=database, **kwargs)
+
+    def get_conn(self) -> TeradataConnection:
+        """Creates and returns a Teradata Connection object using teradatasql client.
+
+        Establishes connection to a Teradata SQL database using config corresponding to teradata_conn_id.
+
+        :return: a Teradata connection object
+        """
+        teradata_conn_config: dict = self._get_conn_config_teradatasql()
+        teradata_conn = teradatasql.connect(**teradata_conn_config)
+        return teradata_conn
