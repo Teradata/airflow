@@ -40,3 +40,32 @@ class TeradataHook(DbApiHook):
     :param kwargs: passed to DbApiHook
 
     """
+
+    # Override to provide the connection name.
+    conn_name_attr = "teradata_conn_id"
+
+    # Override to have a default connection id for a particular dbHook
+    default_conn_name = "teradata_default"
+
+    # Override if this db supports autocommit.
+    supports_autocommit = True
+
+    # Override this for hook to have a custom name in the UI selection
+    conn_type = "teradata"
+
+    # Override hook name to give descriptive name for hook
+    hook_name = "Teradata"
+
+    # Override with the Teradata specific placeholder parameter string used for insert queries
+    placeholder: str = "?"
+
+    # Override SQL query to be used for testing database connection
+    _test_connection_sql = "select 1"
+
+    def __init__(
+        self,
+        *args,
+        database: str | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(*args, schema=database, **kwargs)
