@@ -25,7 +25,9 @@ from airflow.providers.teradata.transfers.teradata_to_teradata import TeradataTo
 
 
 class TestTeradataToTeradataTransfer:
-    def test_execute(self):
+    @mock.patch("airflow.providers.teradata.transfers.teradata_to_teradata.TeradataHook")
+    @mock.patch("airflow.providers.teradata.transfers.teradata_to_teradata.TeradataHook")
+    def test_execute(self, mock_src_hook, mock_dest_hook):
         dest_teradata_conn_id = "dest_teradata_conn_id"
         destination_table = "destination_table"
         source_teradata_conn_id = "source_teradata_conn_id"
@@ -39,14 +41,12 @@ class TestTeradataToTeradataTransfer:
 
         cursor_rows = [[Decimal("1"), "User1"], [Decimal("2"), "User2"], [Decimal("3"), "User3"]]
 
-        mock_dest_hook = MagicMock()
-        mock_src_hook = MagicMock()
         mock_src_conn = mock_src_hook.get_conn.return_value.__enter__.return_value
         mock_cursor = mock_src_conn.cursor.return_value
         mock_cursor.description.__iter__.return_value = cursor_description
         mock_cursor.fetchmany.side_effect = [cursor_rows, []]
 
-        TeradataToTeradataOperator(
+        td_transfer_op = TeradataToTeradataOperator(
             task_id="transfer_data",
             dest_teradata_conn_id=dest_teradata_conn_id,
             destination_table=destination_table,
@@ -54,7 +54,9 @@ class TestTeradataToTeradataTransfer:
             sql=sql,
             sql_params=sql_params,
             rows_chunk=rows_chunk,
-        ).execute(None)
+        )
+
+        td_transfer_op.execute(None)
 
         assert mock_src_hook.get_conn.called
         assert mock_src_conn.cursor.called
