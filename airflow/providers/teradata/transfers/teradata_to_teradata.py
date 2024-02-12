@@ -70,14 +70,18 @@ class TeradataToTeradataOperator(BaseOperator):
         self.sql = sql
         self.sql_params = sql_params
         self.rows_chunk = rows_chunk
+
     def execute(self, context: Context) -> None:
         src_hook = TeradataHook(teradata_conn_id=self.source_teradata_conn_id)
         dest_hook = TeradataHook(teradata_conn_id=self.dest_teradata_conn_id)
         with src_hook.get_conn() as src_conn:
             cursor = src_conn.cursor()
+            self.log.info("SQL - %s ---- Params - %s", self.sql, self.sql_params)
             cursor.execute(self.sql, self.sql_params)
+            self.log.info("Cursor row count - %s", cursor.rowcount.real)
             target_fields = [field[0] for field in cursor.description]
             rows_total = 0
+
             for rows in iter(lambda: cursor.fetchmany(self.rows_chunk), []):
                 dest_hook.bulk_insert_rows(
                     self.destination_table, rows, target_fields=target_fields, commit_every=self.rows_chunk

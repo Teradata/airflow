@@ -21,6 +21,8 @@ from decimal import Decimal
 from unittest import mock
 from unittest.mock import MagicMock
 
+import logging
+
 from airflow.providers.teradata.transfers.teradata_to_teradata import TeradataToTeradataOperator
 
 
@@ -31,8 +33,8 @@ class TestTeradataToTeradataTransfer:
         dest_teradata_conn_id = "dest_teradata_conn_id"
         destination_table = "destination_table"
         source_teradata_conn_id = "source_teradata_conn_id"
-        sql = (r"""select DATE where DATE > {{ source_sql_params.ref_date }};""",)
-        sql_params = {"ref_date": "2018-01-01"}
+        sql = (r"""select DATE where DATE > {{ sql_params.ref_date }};""",)
+        sql_params = {"ref_date": "2024-01-01"}
         rows_chunk = 5000
         cursor_description = [
             ["user_id", Decimal, None, 8, 10, 0, False],
@@ -45,7 +47,6 @@ class TestTeradataToTeradataTransfer:
         mock_cursor = mock_src_conn.cursor.return_value
         mock_cursor.description.__iter__.return_value = cursor_description
         mock_cursor.fetchmany.side_effect = [cursor_rows, []]
-
         td_transfer_op = TeradataToTeradataOperator(
             task_id="transfer_data",
             dest_teradata_conn_id=dest_teradata_conn_id,
