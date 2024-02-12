@@ -70,8 +70,9 @@ class TeradataToTeradataOperator(BaseOperator):
         self.sql = sql
         self.sql_params = sql_params
         self.rows_chunk = rows_chunk
-
-    def _execute(self, src_hook, dest_hook, context) -> None:
+    def execute(self, context: Context) -> None:
+        src_hook = TeradataHook(teradata_conn_id=self.source_teradata_conn_id)
+        dest_hook = TeradataHook(teradata_conn_id=self.dest_teradata_conn_id)
         with src_hook.get_conn() as src_conn:
             cursor = src_conn.cursor()
             cursor.execute(self.sql, self.sql_params)
@@ -84,8 +85,3 @@ class TeradataToTeradataOperator(BaseOperator):
                 rows_total += len(rows)
             self.log.info("Finished data transfer. Total number of rows transferred - %s", rows_total)
             cursor.close()
-
-    def execute(self, context: Context) -> None:
-        src_hook = TeradataHook(teradata_conn_id=self.source_teradata_conn_id)
-        dest_hook = TeradataHook(teradata_conn_id=self.dest_teradata_conn_id)
-        self._execute(src_hook, dest_hook, context)
