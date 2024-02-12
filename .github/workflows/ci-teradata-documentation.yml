@@ -20,8 +20,10 @@
     on:
       push:
         branches:
-          - td_develop
+          - teradata_release_*
       workflow_dispatch:
+      schedule:
+      - cron: "0 6 * * *"
     permissions:
       contents: write
       pages: write
