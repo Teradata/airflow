@@ -46,7 +46,7 @@ class TestTeradataToTeradataTransfer:
         mock_cursor.description.__iter__.return_value = cursor_description
         mock_cursor.fetchmany.side_effect = [cursor_rows, []]
 
-        td_transfer_op = TeradataToTeradataOperator(
+        TeradataToTeradataOperator(
             task_id="transfer_data",
             dest_teradata_conn_id=dest_teradata_conn_id,
             destination_table=destination_table,
@@ -54,9 +54,7 @@ class TestTeradataToTeradataTransfer:
             sql=sql,
             sql_params=sql_params,
             rows_chunk=rows_chunk,
-        )
-
-        td_transfer_op._execute(mock_src_hook, mock_dest_hook, None)
+        ).execute(None)
 
         assert mock_src_hook.get_conn.called
         assert mock_src_conn.cursor.called
