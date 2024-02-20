@@ -22,8 +22,9 @@ name: Internet Message Access Protocol (IMAP)
 description: |
     `Internet Message Access Protocol (IMAP) <https://tools.ietf.org/html/rfc3501>`__
 
-suspended: false
-source-date-epoch: 1701983388
+state: ready
+source-date-epoch: 1705912137
+# note that those versions are maintained by release manager - do not update them manually
 versions:
   - 3.5.0
   - 3.4.0

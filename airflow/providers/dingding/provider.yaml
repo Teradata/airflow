@@ -21,8 +21,9 @@ name: Dingding
 description: |
     `DingTalk <https://www.dingtalk.com/>`__
 
-suspended: false
-source-date-epoch: 1701983374
+state: ready
+source-date-epoch: 1703288128
+# note that those versions are maintained by release manager - do not update them manually
 versions:
   - 3.4.0
   - 3.3.0

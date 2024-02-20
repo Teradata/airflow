@@ -29,12 +29,17 @@ from airflow.configuration import conf
 from airflow.exceptions import AirflowException, AirflowProviderDeprecationWarning
 from airflow.models import BaseOperator
 from airflow.providers.amazon.aws.hooks.base_aws import AwsBaseHook
-from airflow.providers.amazon.aws.hooks.sagemaker import SageMakerHook
+from airflow.providers.amazon.aws.hooks.sagemaker import (
+    LogState,
+    SageMakerHook,
+    secondary_training_status_message,
+)
 from airflow.providers.amazon.aws.triggers.sagemaker import (
     SageMakerPipelineTrigger,
+    SageMakerTrainingPrintLogTrigger,
     SageMakerTrigger,
 )
-from airflow.providers.amazon.aws.utils import trim_none_values
+from airflow.providers.amazon.aws.utils import trim_none_values, validate_execute_complete_event
 from airflow.providers.amazon.aws.utils.sagemaker import ApprovalStatus
 from airflow.providers.amazon.aws.utils.tags import format_tags
 from airflow.utils.helpers import prune_dict
@@ -283,8 +288,20 @@ class SageMakerProcessingOperator(SageMakerBaseOperator):
             raise AirflowException(f"Sagemaker Processing Job creation failed: {response}")
 
         if self.deferrable and self.wait_for_completion:
+            response = self.hook.describe_processing_job(self.config["ProcessingJobName"])
+            status = response["ProcessingJobStatus"]
+            if status in self.hook.failed_states:
+                raise AirflowException(f"SageMaker job failed because {response['FailureReason']}")
+            elif status == "Completed":
+                self.log.info("%s completed successfully.", self.task_id)
+                return {"Processing": serialize(response)}
+
+            timeout = self.execution_timeout
+            if self.max_ingestion_time:
+                timeout = datetime.timedelta(seconds=self.max_ingestion_time)
+
             self.defer(
-                timeout=self.execution_timeout,
+                timeout=timeout,
                 trigger=SageMakerTrigger(
                     job_name=self.config["ProcessingJobName"],
                     job_type="Processing",
@@ -298,12 +315,15 @@ class SageMakerProcessingOperator(SageMakerBaseOperator):
         self.serialized_job = serialize(self.hook.describe_processing_job(self.config["ProcessingJobName"]))
         return {"Processing": self.serialized_job}
 
-    def execute_complete(self, context, event=None):
+    def execute_complete(self, context: Context, event: dict[str, Any] | None = None) -> dict[str, dict]:
+        event = validate_execute_complete_event(event)
+
         if event["status"] != "success":
             raise AirflowException(f"Error while running job: {event}")
-        else:
-            self.log.info(event["message"])
+
+        self.log.info(event["message"])
         self.serialized_job = serialize(self.hook.describe_processing_job(self.config["ProcessingJobName"]))
+        self.log.info("%s completed successfully.", self.task_id)
         return {"Processing": self.serialized_job}
 
     def get_openlineage_facets_on_complete(self, task_instance) -> OperatorLineage:
@@ -548,7 +568,9 @@ class SageMakerEndpointOperator(SageMakerBaseOperator):
             "Endpoint": serialize(self.hook.describe_endpoint(endpoint_info["EndpointName"])),
         }
 
-    def execute_complete(self, context, event=None):
+    def execute_complete(self, context: Context, event: dict[str, Any] | None = None) -> dict[str, dict]:
+        event = validate_execute_complete_event(event)
+
         if event["status"] != "success":
             raise AirflowException(f"Error while running job: {event}")
         endpoint_info = self.config.get("Endpoint", self.config)
@@ -700,8 +722,24 @@ class SageMakerTransformOperator(SageMakerBaseOperator):
             raise AirflowException(f"Sagemaker transform Job creation failed: {response}")
 
         if self.deferrable and self.wait_for_completion:
+            response = self.hook.describe_transform_job(transform_config["TransformJobName"])
+            status = response["TransformJobStatus"]
+            if status in self.hook.failed_states:
+                raise AirflowException(f"SageMaker job failed because {response['FailureReason']}")
+
+            if status == "Completed":
+                self.log.info("%s completed successfully.", self.task_id)
+                return {
+                    "Model": serialize(self.hook.describe_model(transform_config["ModelName"])),
+                    "Transform": serialize(response),
+                }
+
+            timeout = self.execution_timeout
+            if self.max_ingestion_time:
+                timeout = datetime.timedelta(seconds=self.max_ingestion_time)
+
             self.defer(
-                timeout=self.execution_timeout,
+                timeout=timeout,
                 trigger=SageMakerTrigger(
                     job_name=transform_config["TransformJobName"],
                     job_type="Transform",
@@ -712,17 +750,15 @@ class SageMakerTransformOperator(SageMakerBaseOperator):
                 method_name="execute_complete",
             )
 
-        self.serialized_model = serialize(self.hook.describe_model(transform_config["ModelName"]))
-        self.serialized_transform = serialize(
-            self.hook.describe_transform_job(transform_config["TransformJobName"])
-        )
-        return {"Model": self.serialized_model, "Transform": self.serialized_transform}
+        return self.serialize_result()
 
-    def execute_complete(self, context, event=None):
-        if event["status"] != "success":
-            raise AirflowException(f"Error while running job: {event}")
-        else:
-            self.log.info(event["message"])
+    def execute_complete(self, context: Context, event: dict[str, Any] | None = None) -> dict[str, dict]:
+        event = validate_execute_complete_event(event)
+
+        self.log.info(event["message"])
+        return self.serialize_result()
+
+    def serialize_result(self) -> dict[str, dict]:
         transform_config = self.config.get("Transform", self.config)
         self.serialized_model = serialize(self.hook.describe_model(transform_config["ModelName"]))
         self.serialized_transform = serialize(
@@ -869,9 +905,11 @@ class SageMakerTuningOperator(SageMakerBaseOperator):
                     aws_conn_id=self.aws_conn_id,
                 ),
                 method_name="execute_complete",
-                timeout=datetime.timedelta(seconds=self.max_ingestion_time)
-                if self.max_ingestion_time is not None
-                else None,
+                timeout=(
+                    datetime.timedelta(seconds=self.max_ingestion_time)
+                    if self.max_ingestion_time is not None
+                    else None
+                ),
             )
             description = {}  # never executed but makes static checkers happy
         elif self.wait_for_completion:
@@ -887,7 +925,9 @@ class SageMakerTuningOperator(SageMakerBaseOperator):
 
         return {"Tuning": serialize(description)}
 
-    def execute_complete(self, context, event=None):
+    def execute_complete(self, context: Context, event: dict[str, Any] | None = None) -> dict[str, dict]:
+        event = validate_execute_complete_event(event)
+
         if event["status"] != "success":
             raise AirflowException(f"Error while running job: {event}")
         return {
@@ -1055,28 +1095,77 @@ class SageMakerTrainingOperator(SageMakerBaseOperator):
             raise AirflowException(f"Sagemaker Training Job creation failed: {response}")
 
         if self.deferrable and self.wait_for_completion:
-            self.defer(
-                timeout=self.execution_timeout,
-                trigger=SageMakerTrigger(
+            description = self.hook.describe_training_job(self.config["TrainingJobName"])
+            status = description["TrainingJobStatus"]
+
+            if self.print_log:
+                instance_count = description["ResourceConfig"]["InstanceCount"]
+                last_describe_job_call = time.monotonic()
+                job_already_completed = status not in self.hook.non_terminal_states
+                _, description, last_describe_job_call = self.hook.describe_training_job_with_log(
+                    self.config["TrainingJobName"],
+                    {},
+                    [],
+                    instance_count,
+                    LogState.COMPLETE if job_already_completed else LogState.TAILING,
+                    description,
+                    last_describe_job_call,
+                )
+                self.log.info(secondary_training_status_message(description, None))
+
+            if status in self.hook.failed_states:
+                reason = description.get("FailureReason", "(No reason provided)")
+                raise AirflowException(f"SageMaker job failed because {reason}")
+            elif status == "Completed":
+                log_message = f"{self.task_id} completed successfully."
+                if self.print_log:
+                    billable_seconds = SageMakerHook.count_billable_seconds(
+                        training_start_time=description["TrainingStartTime"],
+                        training_end_time=description["TrainingEndTime"],
+                        instance_count=instance_count,
+                    )
+                    log_message = f"Billable seconds: {billable_seconds}\n{log_message}"
+                self.log.info(log_message)
+                return {"Training": serialize(description)}
+
+            timeout = self.execution_timeout
+            if self.max_ingestion_time:
+                timeout = datetime.timedelta(seconds=self.max_ingestion_time)
+
+            trigger: SageMakerTrainingPrintLogTrigger | SageMakerTrigger
+            if self.print_log:
+                trigger = SageMakerTrainingPrintLogTrigger(
+                    job_name=self.config["TrainingJobName"],
+                    poke_interval=self.check_interval,
+                    aws_conn_id=self.aws_conn_id,
+                )
+            else:
+                trigger = SageMakerTrigger(
                     job_name=self.config["TrainingJobName"],
                     job_type="Training",
                     poke_interval=self.check_interval,
                     max_attempts=self.max_attempts,
                     aws_conn_id=self.aws_conn_id,
-                ),
+                )
+
+            self.defer(
+                timeout=timeout,
+                trigger=trigger,
                 method_name="execute_complete",
             )
 
-        self.serialized_training_data = serialize(
-            self.hook.describe_training_job(self.config["TrainingJobName"])
-        )
-        return {"Training": self.serialized_training_data}
+        return self.serialize_result()
 
-    def execute_complete(self, context, event=None):
+    def execute_complete(self, context: Context, event: dict[str, Any] | None = None) -> dict[str, dict]:
+        event = validate_execute_complete_event(event)
+
         if event["status"] != "success":
             raise AirflowException(f"Error while running job: {event}")
-        else:
-            self.log.info(event["message"])
+
+        self.log.info(event["message"])
+        return self.serialize_result()
+
+    def serialize_result(self) -> dict[str, dict]:
         self.serialized_training_data = serialize(
             self.hook.describe_training_job(self.config["TrainingJobName"])
         )
@@ -1207,7 +1296,9 @@ class SageMakerStartPipelineOperator(SageMakerBaseOperator):
         return arn
 
     def execute_complete(self, context: Context, event: dict[str, Any] | None = None) -> str:
-        if event is None or event["status"] != "success":
+        event = validate_execute_complete_event(event)
+
+        if event["status"] != "success":
             raise AirflowException(f"Failure during pipeline execution: {event}")
         return event["value"]
 
@@ -1300,12 +1391,14 @@ class SageMakerStopPipelineOperator(SageMakerBaseOperator):
         return status
 
     def execute_complete(self, context: Context, event: dict[str, Any] | None = None) -> str:
-        if event is None or event["status"] != "success":
+        event = validate_execute_complete_event(event)
+
+        if event["status"] != "success":
             raise AirflowException(f"Failure during pipeline execution: {event}")
-        else:
-            # theoretically we should do a `describe` call to know this,
-            # but if we reach this point, this is the only possible status
-            return "Stopped"
+
+        # theoretically we should do a `describe` call to know this,
+        # but if we reach this point, this is the only possible status
+        return "Stopped"
 
 
 class SageMakerRegisterModelVersionOperator(SageMakerBaseOperator):
@@ -1591,7 +1684,7 @@ class SageMakerCreateNotebookOperator(BaseOperator):
         lifecycle_config_name: str | None = None,
         direct_internet_access: str | None = None,
         root_access: str | None = None,
-        create_instance_kwargs: dict[str, Any] = {},
+        create_instance_kwargs: dict[str, Any] | None = None,
         wait_for_completion: bool = True,
         aws_conn_id: str = "aws_default",
         **kwargs,
@@ -1607,7 +1700,7 @@ class SageMakerCreateNotebookOperator(BaseOperator):
         self.root_access = root_access
         self.wait_for_completion = wait_for_completion
         self.aws_conn_id = aws_conn_id
-        self.create_instance_kwargs = create_instance_kwargs
+        self.create_instance_kwargs = create_instance_kwargs or {}
 
         if self.create_instance_kwargs.get("tags") is not None:
             self.create_instance_kwargs["tags"] = format_tags(self.create_instance_kwargs["tags"])

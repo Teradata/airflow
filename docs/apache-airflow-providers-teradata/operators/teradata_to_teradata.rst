@@ -21,16 +21,28 @@ TeradataToTeradataOperator
 ==========================
 
 The purpose of TeradataToTeradataOperator is to define tasks involving data transfer between two Teradata instances.
+Use the :class:`TeradataToTeradataOperator <airflow.providers.teradata.transfers.teradata_to_teradata>`
+to transfer data between two Teradata instances.
 
-Using the Operator
-^^^^^^^^^^^^^^^^^^
+Transfer data between two Teradata instances
+-----------------------------------------------
 
-To execute arbitrary SQL in an Teradata, use the
+To transfer data between two Teradata instances, use the
 :class:`~airflow.providers.teradata.transfers.teradata_to_teradata.TeradataToTeradataOperator`.
 
-An example of executing a simple query is as follows:
+An example usage of the TeradataToTeradataOperator is as follows:
 
-.. exampleinclude:: /../../airflow/providers/teradata/example_dags/example_teradata_to_teradata_transfer_operator.py
+.. exampleinclude:: /../../tests/system/providers/teradata/example_teradata_to_teradata_transfer.py
     :language: python
-    :start-after: [START howto_transfer_operator_teradata_to_teradata]
-    :end-before: [END howto_transfer_operator_teradata_to_teradata]
+    :start-after: [START teradata_to_teradata_transfer_operator_howto_guide_transfer_data]
+    :end-before: [END teradata_to_teradata_transfer_operator_howto_guide_transfer_data]
+
+The complete TeradataToTeradata Transfer Operator DAG
+-----------------------------------------------------
+
+When we put everything together, our DAG should look like this:
+
+.. exampleinclude:: /../../tests/system/providers/teradata/example_teradata.py
+    :language: python
+    :start-after: [START teradata_operator_howto_guide]
+    :end-before: [END teradata_operator_howto_guide]

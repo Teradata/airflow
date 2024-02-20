@@ -23,13 +23,12 @@ import subprocess
 import sys
 import warnings
 from contextlib import ExitStack, suppress
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
 import time_machine
-from _pytest.recwarn import WarningsRecorder
 
 # We should set these before loading _any_ of the rest of airflow so that the
 # unit test mode config is set as early as possible.
@@ -72,6 +71,7 @@ if run_db_tests_only:
 AIRFLOW_TESTS_DIR = Path(os.path.dirname(os.path.realpath(__file__))).resolve()
 AIRFLOW_SOURCES_ROOT_DIR = AIRFLOW_TESTS_DIR.parent.parent
 
+os.environ["AIRFLOW__CORE__PLUGINS_FOLDER"] = os.fspath(AIRFLOW_TESTS_DIR / "plugins")
 os.environ["AIRFLOW__CORE__DAGS_FOLDER"] = os.fspath(AIRFLOW_TESTS_DIR / "dags")
 os.environ["AIRFLOW__CORE__UNIT_TEST_MODE"] = "True"
 os.environ["AWS_DEFAULT_REGION"] = os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
@@ -585,7 +585,7 @@ def frozen_sleep(monkeypatch):
 
     def fake_sleep(seconds):
         nonlocal traveller
-        utcnow = datetime.utcnow()
+        utcnow = datetime.now(tz=timezone.utc)
         if traveller is not None:
             traveller.stop()
         traveller = time_machine.travel(utcnow + timedelta(seconds=seconds))
@@ -602,7 +602,7 @@ def frozen_sleep(monkeypatch):
 def app():
     from tests.test_utils.config import conf_vars
 
-    with conf_vars({("webserver", "auth_rate_limited"): "False"}):
+    with conf_vars({("fab", "auth_rate_limited"): "False"}):
         from airflow.www import app
 
         yield app.create_app(testing=True)
@@ -867,7 +867,7 @@ def create_dummy_dag(dag_maker):
         max_active_tis_per_dag=16,
         max_active_tis_per_dagrun=None,
         pool="default_pool",
-        executor_config={},
+        executor_config=None,
         trigger_rule="all_done",
         on_success_callback=None,
         on_execute_callback=None,
@@ -882,7 +882,7 @@ def create_dummy_dag(dag_maker):
                 task_id=task_id,
                 max_active_tis_per_dag=max_active_tis_per_dag,
                 max_active_tis_per_dagrun=max_active_tis_per_dagrun,
-                executor_config=executor_config,
+                executor_config=executor_config or {},
                 on_success_callback=on_success_callback,
                 on_execute_callback=on_execute_callback,
                 on_failure_callback=on_failure_callback,
@@ -1120,6 +1120,18 @@ def close_all_sqlalchemy_sessions():
     close_all_sessions()
 
 
+@pytest.fixture()
+def cleanup_providers_manager():
+    from airflow.providers_manager import ProvidersManager
+
+    ProvidersManager()._cleanup()
+    ProvidersManager().initialize_providers_configuration()
+    try:
+        yield
+    finally:
+        ProvidersManager()._cleanup()
+
+
 # The code below is a modified version of capture-warning code from
 # https://github.com/athinkingape/pytest-capture-warnings
 
@@ -1148,7 +1160,9 @@ def close_all_sqlalchemy_sessions():
 
 captured_warnings: dict[tuple[str, int, type[Warning], str], warnings.WarningMessage] = {}
 captured_warnings_count: dict[tuple[str, int, type[Warning], str], int] = {}
-warnings_recorder = WarningsRecorder()
+# By set ``_ispytest=True`` in WarningsRecorder we suppress annoying warnings:
+# PytestDeprecationWarning: A private pytest class or function was used.
+warnings_recorder = pytest.WarningsRecorder(_ispytest=True)
 default_formatwarning = warnings_recorder._module.formatwarning  # type: ignore[attr-defined]
 default_showwarning = warnings_recorder._module.showwarning  # type: ignore[attr-defined]
 
@@ -1277,3 +1291,26 @@ def configure_warning_output(config):
 
 
 # End of modified code from  https://github.com/athinkingape/pytest-capture-warnings
+
+if TYPE_CHECKING:
+    # Static checkers do not know about pytest fixtures' types and return,
+    # In case if them distributed through third party packages.
+    # This hack should help with autosuggestion in IDEs.
+    from pytest_mock import MockerFixture
+    from requests_mock.contrib.fixture import Fixture as RequestsMockFixture
+    from time_machine import TimeMachineFixture
+
+    # pytest-mock
+    @pytest.fixture
+    def mocker() -> MockerFixture:
+        ...
+
+    # requests-mock
+    @pytest.fixture
+    def requests_mock() -> RequestsMockFixture:
+        ...
+
+    # time-machine
+    @pytest.fixture  # type: ignore[no-redef]
+    def time_machine() -> TimeMachineFixture:
+        ...

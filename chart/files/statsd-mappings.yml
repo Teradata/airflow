@@ -15,9 +15,15 @@
 # specific language governing permissions and limitations
 # under the License.
 ---
+# {{/*
+# WARNING: Be aware that most changes to these mappings will break backwards compatibility!
+# E.g. moving to labels will break existing dashboards.
+# instead utilize `statsd.extraMappings` or `statsd.overrideMappings` in your environment,
+# until we have version 2 of the helm chart.
+# */}}
 mappings:
   # Map dot separated stats to labels
-  - match: airflow.dagrun.dependency-check.*.*
+  - match: airflow.dagrun.dependency-check.*
     name: "airflow_dagrun_dependency_check"
     labels:
       dag_id: "$1"

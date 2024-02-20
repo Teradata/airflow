@@ -78,7 +78,7 @@ When writing a deferrable operators these are the main points to consider:
             self, deferrable: bool = conf.getboolean("operators", "default_deferrable", fallback=False), **kwargs
         ) -> None:
             super().__init__(**kwargs)
-            self.deferrable = deferable
+            self.deferrable = deferrable
 
         def execute(self, context: Context) -> None:
             if self.deferrable:
@@ -196,6 +196,33 @@ The code example shows several things:
 Triggers can be as complex or as simple as you want, provided they meet the design constraints. They can run in a highly-available fashion, and are auto-distributed among hosts running the triggerer. We encourage you to avoid any kind of persistent state in a trigger. Triggers should get everything they need from their ``__init__``, so they can be serialized and moved around freely.
 
 If you are new to writing asynchronous Python, be very careful when writing your ``run()`` method. Python's async model means that code can block the entire process if it does not correctly ``await`` when it does a blocking operation. Airflow attempts to detect process blocking code and warn you in the triggerer logs when it happens. You can enable extra checks by Python by setting the variable ``PYTHONASYNCIODEBUG=1`` when you are writing your trigger to make sure you're writing non-blocking code. Be especially careful when doing filesystem calls, because if the underlying filesystem is network-backed, it can be blocking.
+
+Sensitive information in triggers
+'''''''''''''''''''''''''''''''''
+
+Triggers are serialized and stored in the database, so they can be re-instantiated on any triggerer process. This means that any sensitive information you pass to a trigger will be stored in the database.
+If you want to pass sensitive information to a trigger, you can encrypt it before passing it to the trigger, and decrypt it inside the trigger, or update the argument name in the ``serialize`` method by adding ``encrypted__`` as a prefix, and Airflow will automatically encrypt the argument before storing it in the database, and decrypt it when it is read from the database.
+
+.. code-block:: python
+
+    class MyTrigger(BaseTrigger):
+        def __init__(self, param, secret):
+            super().__init__()
+            self.param = param
+            self.secret = secret
+
+        def serialize(self):
+            return (
+                "airflow.triggers.MyTrigger",
+                {
+                    "param": self.param,
+                    "encrypted__secret": self.secret,
+                },
+            )
+
+        async def run(self):
+            # self.my_secret will be decrypted here
+            ...
 
 High Availability
 -----------------

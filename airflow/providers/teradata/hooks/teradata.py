@@ -15,7 +15,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""A Airflow Hook for interacting with Teradata SQL Server."""
+"""An Airflow Hook for interacting with Teradata SQL Server."""
 from __future__ import annotations
 
 import logging as log
@@ -27,7 +27,6 @@ from teradatasql import TeradataConnection
 
 from airflow.providers.common.sql.hooks.sql import DbApiHook
 
-T = TypeVar("T")
 if TYPE_CHECKING:
     from airflow.models.connection import Connection
 
@@ -40,19 +39,15 @@ class TeradataHook(DbApiHook):
     Teradata DB Server URL, username, password and database name are fetched from the predefined connection
     config connection_id. It raises an airflow error if the given connection id doesn't exist.
 
-    See :doc:` docs/apache-airflow-providers-teradata/connections/teradata.rst` for full documentation.
+    You can also specify ssl parameters in the extra field of your connection
+    as ``{"sslmode": "require", "sslcert": "/path/to/cert.pem", etc}``.
+
+    .. seealso::
+        - :ref:`Teradata API connection <howto/connection:teradata>`
 
     :param args: passed to DbApiHook
+    :param database: The Teradata database to connect to.
     :param kwargs: passed to DbApiHook
-
-
-    Usage Help:
-
-    >>> tdh = TeradataHook()
-    >>> sql = "SELECT top 1 _airbyte_ab_id from airbyte_td._airbyte_raw_Sales;"
-    >>> tdh.get_records(sql)
-    [[61ad1d63-3efd-4da4-9904-a4489cc3a520]]
-
     """
 
     # Override to provide the connection name.
@@ -85,15 +80,11 @@ class TeradataHook(DbApiHook):
         super().__init__(*args, schema=database, **kwargs)
 
     def get_conn(self) -> TeradataConnection:
-        """Creates and returns a Teradata Connection object using teradatasql client.
+        """Create and return a Teradata Connection object using teradatasql client.
 
         Establishes connection to a Teradata SQL database using config corresponding to teradata_conn_id.
 
-        .. note:: By default it connects to the database via the teradatasql library.
-            But you can also choose the mysql-connector-python library which lets you connect through ssl
-            without any further ssl parameters required.
-
-        :return: a mysql connection object
+        :return: a Teradata connection object
         """
         teradata_conn_config: dict = self._get_conn_config_teradatasql()
         teradata_conn = teradatasql.connect(**teradata_conn_config)
@@ -106,7 +97,7 @@ class TeradataHook(DbApiHook):
         target_fields: list[str] | None = None,
         commit_every: int = 5000,
     ):
-        """A bulk insert of records for Teradata SQL Database.
+        """Insert bulk of records into Teradata SQL Database.
 
         This uses prepared statements via `executemany()`. For best performance,
         pass in `rows` as an iterator.
@@ -152,7 +143,7 @@ class TeradataHook(DbApiHook):
         conn.close()  # type: ignore[attr-defined]
 
     def _get_conn_config_teradatasql(self) -> dict[str, Any]:
-        """Returns set of config params required for connecting to Teradata DB using teradatasql client."""
+        """Return set of config params required for connecting to Teradata DB using teradatasql client."""
         conn: Connection = self.get_connection(getattr(self, self.conn_name_attr))
         conn_config = {
             "host": conn.host or "localhost",
@@ -166,6 +157,7 @@ class TeradataHook(DbApiHook):
             conn_config["tmode"] = conn.extra_dejson["tmode"]
 
         # Handling SSL connection parameters
+
         if conn.extra_dejson.get("sslmode", False):
             conn_config["sslmode"] = conn.extra_dejson["sslmode"]
             if "verify" in conn_config["sslmode"]:
@@ -183,7 +175,7 @@ class TeradataHook(DbApiHook):
         return conn_config
 
     def get_sqlalchemy_engine(self, engine_kwargs=None):
-        """Returns a connection object using sqlalchemy."""
+        """Return a connection object using sqlalchemy."""
         conn: Connection = self.get_connection(getattr(self, self.conn_name_attr))
         link = f"teradatasql://{conn.login}:{conn.password}@{conn.host}"
         connection = sqlalchemy.create_engine(link)
@@ -191,7 +183,7 @@ class TeradataHook(DbApiHook):
 
     @staticmethod
     def get_ui_field_behaviour() -> dict:
-        """Returns custom field behaviour."""
+        """Return custom field behaviour."""
         import json
 
         return {
@@ -200,10 +192,11 @@ class TeradataHook(DbApiHook):
                 "host": "Database Server URL",
                 "schema": "Database Name",
                 "login": "Username",
-                "password": "Password",
             },
             "placeholders": {
-                "extra": json.dumps({"example_parameter": "parameter"}, indent=4),
+                "extra": json.dumps(
+                    {"tmode": "TERA", "sslmode": "verify-ca", "sslca": "/tmp/server-ca.pem"}, indent=4
+                ),
                 "login": "dbc",
                 "password": "dbc",
             },

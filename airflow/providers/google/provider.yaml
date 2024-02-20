@@ -19,18 +19,22 @@
 package-name: apache-airflow-providers-google
 name: Google
 description: |
-    Google services including:
+  Google services including:
 
-      - `Google Ads <https://ads.google.com/>`__
-      - `Google Cloud (GCP) <https://cloud.google.com/>`__
-      - `Google Firebase <https://firebase.google.com/>`__
-      - `Google LevelDB <https://github.com/google/leveldb/>`__
-      - `Google Marketing Platform <https://marketingplatform.google.com/>`__
-      - `Google Workspace <https://workspace.google.com/>`__ (formerly Google Suite)
+    - `Google Ads <https://ads.google.com/>`__
+    - `Google Cloud (GCP) <https://cloud.google.com/>`__
+    - `Google Firebase <https://firebase.google.com/>`__
+    - `Google LevelDB <https://github.com/google/leveldb/>`__
+    - `Google Marketing Platform <https://marketingplatform.google.com/>`__
+    - `Google Workspace <https://workspace.google.com/>`__ (formerly Google Suite)
 
-suspended: false
-source-date-epoch: 1701983383
+state: ready
+source-date-epoch: 1707636385
+# note that those versions are maintained by release manager - do not update them manually
 versions:
+  - 10.15.0
+  - 10.14.0
+  - 10.13.1
   - 10.13.0
   - 10.12.0
   - 10.11.1
@@ -85,12 +89,20 @@ dependencies:
   - apache-airflow>=2.6.0
   - apache-airflow-providers-common-sql>=1.7.2
   - asgiref>=3.5.2
+  # When upgrading the major version of gcloud-aio-auth we want to make sure to
+  # 1. use at least version 5.2, which uses offset-aware datetime internally
+  # 2. override Token's new `refresh` method instead of `acquire_access_token`, which allows us to avoid
+  #    dealing with internals like `access_token_acquired_at`
+  # 3. continue to `subclass gcloud.aio.auth.token.Token` instead of `BaseToken`, since instances of
+  #    `_CredentialsToken` are instances of `Token` and used as such
   - gcloud-aio-auth>=4.0.0,<5.0.0
   - gcloud-aio-bigquery>=6.1.2
   - gcloud-aio-storage>=9.0.0
   - gcsfs>=2023.10.0
   - google-ads>=22.1.0
-  - google-api-core>=2.11.0
+  - google-analytics-admin
+  # Google-api-core 2.16.0 back-compat issue: https://github.com/googleapis/python-api-core/issues/576
+  - google-api-core>=2.11.0,!=2.16.0
   - google-api-python-client>=1.6.0
   - google-auth>=1.0.0
   - google-auth-httplib2>=0.0.1
@@ -135,7 +147,7 @@ dependencies:
   - json-merge-patch>=0.2
   - looker-sdk>=22.2.0
   - pandas-gbq
-  - pandas>=0.17.1
+  - pandas>=1.2.5
   # A transient dependency of google-cloud-bigquery-datatransfer, but we
   # further constrain it since older versions are buggy.
   - proto-plus>=1.19.6
@@ -143,7 +155,33 @@ dependencies:
   - sqlalchemy-bigquery>=1.2.1
   - sqlalchemy-spanner>=1.6.2
 
+additional-extras:
+  - name: apache.beam
+    dependencies:
+      - apache-beam[gcp]
+  - name: cncf.kubernetes
+    dependencies:
+      - apache-airflow-providers-cncf-kubernetes>=7.2.0
+  - name: leveldb
+    dependencies:
+      - plyvel
+  - name: oracle
+    dependencies:
+      - apache-airflow-providers-oracle>=3.1.0
+  - name: facebook
+    dependencies:
+      - apache-airflow-providers-facebook>=2.2.0
+  - name: amazon
+    dependencies:
+      - apache-airflow-providers-amazon>=2.6.0
+
 integrations:
+  - integration-name: Google Analytics (GA4)
+    external-doc-url: https://analytics.google.com/
+    logo: /integration-logos/gcp/Google-Analytics.png
+    how-to-guide:
+      - /docs/apache-airflow-providers-google/operators/marketing_platform/analytics_admin.rst
+    tags: [gmp]
   - integration-name: Google Analytics360
     external-doc-url: https://analytics.google.com/
     logo: /integration-logos/gcp/Google-Analytics.png
@@ -604,6 +642,9 @@ operators:
   - integration-name: Google Cloud Firestore
     python-modules:
       - airflow.providers.google.firebase.operators.firestore
+  - integration-name: Google Analytics (GA4)
+    python-modules:
+      - airflow.providers.google.marketing_platform.operators.analytics_admin
   - integration-name: Google Analytics360
     python-modules:
       - airflow.providers.google.marketing_platform.operators.analytics
@@ -641,7 +682,6 @@ operators:
   - integration-name: Google Cloud Batch
     python-modules:
       - airflow.providers.google.cloud.operators.cloud_batch
-
 
 sensors:
   - integration-name: Google BigQuery
@@ -848,6 +888,9 @@ hooks:
   - integration-name: Google Cloud Firestore
     python-modules:
       - airflow.providers.google.firebase.hooks.firestore
+  - integration-name: Google Analytics (GA4)
+    python-modules:
+      - airflow.providers.google.marketing_platform.hooks.analytics_admin
   - integration-name: Google Analytics360
     python-modules:
       - airflow.providers.google.marketing_platform.hooks.analytics
@@ -941,6 +984,9 @@ triggers:
   - integration-name: Google Cloud
     python-modules:
       - airflow.providers.google.cloud.triggers.cloud_batch
+  - integration-name: Google Vertex AI
+    python-modules:
+      - airflow.providers.google.cloud.triggers.vertex_ai
 
 transfers:
   - source-integration-name: Presto
@@ -1163,6 +1209,7 @@ extra-links:
   - airflow.providers.google.cloud.links.stackdriver.StackdriverPoliciesLink
   - airflow.providers.google.cloud.links.kubernetes_engine.KubernetesEngineClusterLink
   - airflow.providers.google.cloud.links.kubernetes_engine.KubernetesEnginePodLink
+  - airflow.providers.google.cloud.links.kubernetes_engine.KubernetesEngineJobLink
   - airflow.providers.google.cloud.links.pubsub.PubSubSubscriptionLink
   - airflow.providers.google.cloud.links.pubsub.PubSubTopicLink
   - airflow.providers.google.cloud.links.cloud_memorystore.MemcachedInstanceDetailsLink
@@ -1202,26 +1249,7 @@ extra-links:
   - airflow.providers.google.cloud.links.mlengine.MLEngineModelVersionDetailsLink
   - airflow.providers.google.common.links.storage.StorageLink
   - airflow.providers.google.common.links.storage.FileDetailsLink
-
-additional-extras:
-  - name: apache.beam
-    dependencies:
-      - apache-beam[gcp]
-  - name: cncf.kubernetes
-    dependencies:
-      - apache-airflow-providers-cncf-kubernetes>=7.2.0
-  - name: leveldb
-    dependencies:
-      - plyvel
-  - name: oracle
-    dependencies:
-      - apache-airflow-providers-oracle>=3.1.0
-  - name: facebook
-    dependencies:
-      - apache-airflow-providers-facebook>=2.2.0
-  - name: amazon
-    dependencies:
-      - apache-airflow-providers-amazon>=2.6.0
+  - airflow.providers.google.marketing_platform.links.analytics_admin.GoogleAnalyticsPropertyLink
 
 secrets-backends:
   - airflow.providers.google.cloud.secrets.secret_manager.CloudSecretManagerBackend

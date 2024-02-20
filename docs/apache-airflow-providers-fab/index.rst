@@ -34,7 +34,21 @@
     :maxdepth: 1
     :caption: Guides
 
-    Auth manager <auth-manager>
+    Auth manager <auth-manager/index>
+
+.. toctree::
+    :hidden:
+    :caption: References
+
+    Stable REST API <stable-rest-api-ref>
+
+.. toctree::
+    :hidden:
+    :maxdepth: 1
+    :caption: References
+
+    Configuration <configurations-ref>
+    CLI <cli-ref>
 
 .. toctree::
     :hidden:
@@ -45,9 +59,19 @@
     PyPI Repository <https://pypi.org/project/apache-airflow-providers-fab/>
     Installing from sources <installing-providers-from-sources>
 
+.. THE REMAINDER OF THE FILE IS AUTOMATICALLY GENERATED. IT WILL BE OVERWRITTEN AT RELEASE TIME!
+
+
+.. toctree::
+    :hidden:
+    :maxdepth: 1
+    :caption: Commits
+
+    Detailed list of commits <commits>
+
 
 Package apache-airflow-providers-fab
-------------------------------------
+------------------------------------------------------
 
 `Flask App Builder <https://flask-appbuilder.readthedocs.io/>`__
 
@@ -57,15 +81,15 @@ Release: 1.0.0
 Provider package
 ----------------
 
-This is a provider package for optional Airflow components using ``Flask App Builder``.
-All classes for this provider package are in the ``airflow.providers.fab`` python module.
+This is a provider package for ``fab`` provider. All classes for this provider package
+are in ``airflow.providers.fab`` python package.
 
 Installation
 ------------
 
-You can install this package on top of an existing Airflow 2 installation (see ``Requirements`` below
-for the minimum Airflow version supported) via ``pip install apache-airflow-providers-fab``
-
+You can install this package on top of an existing Airflow 2 installation (see ``Requirements`` below)
+for the minimum Airflow version supported) via
+``pip install apache-airflow-providers-fab``
 
 Requirements
 ------------
@@ -77,16 +101,7 @@ PIP package           Version required
 ====================  ==================
 ``apache-airflow``    ``>=2.9.0``
 ``flask``             ``>=2.2,<2.3``
-``flask-appbuilder``  ``==4.3.9``
+``flask-appbuilder``  ``==4.3.10``
 ``flask-login``       ``>=0.6.2``
+``google-re2``        ``>=1.0``
 ====================  ==================
-
-.. THE REMAINDER OF THE FILE IS AUTOMATICALLY GENERATED. IT WILL BE OVERWRITTEN AT RELEASE TIME!
-
-
-.. toctree::
-    :hidden:
-    :maxdepth: 1
-    :caption: Commits
-
-    Detailed list of commits <commits>

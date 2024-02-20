@@ -28,13 +28,16 @@ class TeradataOperator(SQLExecuteQueryOperator):
     General Teradata Operator to execute queries on Teradata Database.
 
     Executes sql statements in the Teradata SQL Database using teradatasql jdbc driver
+
     .. seealso::
-    For more information on how to use this operator, take a look at the guide:
-    :ref:`howto/operator:TeradataOperator`
+        For more information on how to use this operator, take a look at the guide:
+        :ref:`howto/operator:TeradataOperator`
+
     :param sql: the SQL query to be executed as a single string, or a list of str (sql statements)
     :param conn_id: reference to a predefined database
     :param autocommit: if True, each command is automatically committed.(default value: False)
     :param parameters: (optional) the parameters to render the SQL query with.
+    :param schema: The Teradata database to connect to.
     """
 
     template_fields: Sequence[str] = (
@@ -48,19 +51,13 @@ class TeradataOperator(SQLExecuteQueryOperator):
     def __init__(
         self,
         conn_id: str = TeradataHook.default_conn_name,
-        host: str | None = None,
         schema: str | None = None,
-        login: str | None = None,
-        password: str | None = None,
         **kwargs,
     ) -> None:
-        if any([host, schema, login, password]):
+        if schema:
             hook_params = kwargs.pop("hook_params", {})
             kwargs["hook_params"] = {
-                "host": host,
-                "schema": schema,
-                "login": login,
-                "password": password,
+                "database": schema,
                 **hook_params,
             }
         super().__init__(**kwargs)

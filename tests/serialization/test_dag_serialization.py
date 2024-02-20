@@ -1236,6 +1236,7 @@ class TestStringifiedDAGs:
             "on_execute_callback": None,
             "on_failure_callback": None,
             "on_retry_callback": None,
+            "on_skipped_callback": None,
             "on_success_callback": None,
             "outlets": [],
             "owner": "airflow",
@@ -1255,6 +1256,7 @@ class TestStringifiedDAGs:
             "wait_for_downstream": False,
             "wait_for_past_depends_before_skipping": False,
             "weight_rule": "downstream",
+            "multiple_outputs": False,
         }, """
 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 

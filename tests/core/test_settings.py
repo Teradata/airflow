@@ -17,15 +17,16 @@
 # under the License.
 from __future__ import annotations
 
+import contextlib
 import os
 import sys
 import tempfile
 from unittest import mock
-from unittest.mock import MagicMock, call
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from airflow.exceptions import AirflowClusterPolicyViolation
+from airflow.exceptions import AirflowClusterPolicyViolation, AirflowConfigException
 from tests.test_utils.config import conf_vars
 
 SETTINGS_FILE_POLICY = """
@@ -214,3 +215,24 @@ class TestUpdatedConfigNames:
         session_lifetime_config = settings.get_session_lifetime_config()
         default_timeout_minutes = 30 * 24 * 60
         assert session_lifetime_config == default_timeout_minutes
+
+
+@pytest.mark.parametrize(
+    ["value", "expectation"],
+    [
+        (
+            "sqlite:///./relative_path.db",
+            pytest.raises(AirflowConfigException, match=r"Cannot use relative path:"),
+        ),
+        # Should not raise an exception
+        ("sqlite://", contextlib.nullcontext()),
+    ],
+)
+def test_sqlite_relative_path(value, expectation):
+    from airflow import settings
+
+    with patch("os.environ", {"_AIRFLOW_SKIP_DB_TESTS": "true"}), patch(
+        "airflow.settings.SQL_ALCHEMY_CONN", value
+    ), patch("airflow.settings.Session"), patch("airflow.settings.engine"):
+        with expectation:
+            settings.configure_orm()

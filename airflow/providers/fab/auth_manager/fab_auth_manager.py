@@ -17,7 +17,7 @@
 # under the License.
 from __future__ import annotations
 
-import warnings
+import argparse
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING, Container
@@ -40,10 +40,11 @@ from airflow.auth.managers.models.resource_details import (
 )
 from airflow.auth.managers.utils.fab import get_fab_action_from_method_map, get_method_from_fab_action_map
 from airflow.cli.cli_config import (
+    DefaultHelpParser,
     GroupCommand,
 )
 from airflow.configuration import conf
-from airflow.exceptions import AirflowException, AirflowProviderDeprecationWarning
+from airflow.exceptions import AirflowException
 from airflow.models import DagModel
 from airflow.providers.fab.auth_manager.cli_commands.definition import (
     ROLES_COMMANDS,
@@ -83,6 +84,7 @@ from airflow.security.permissions import (
 )
 from airflow.utils.session import NEW_SESSION, provide_session
 from airflow.utils.yaml import safe_load
+from airflow.www.constants import SWAGGER_BUNDLE, SWAGGER_ENABLED
 from airflow.www.extensions.init_views import _CustomErrorRequestBodyValidator, _LazyResolver
 
 if TYPE_CHECKING:
@@ -96,7 +98,6 @@ _MAP_DAG_ACCESS_ENTITY_TO_FAB_RESOURCE_TYPE: dict[DagAccessEntity, tuple[str, ..
     DagAccessEntity.AUDIT_LOG: (RESOURCE_AUDIT_LOG,),
     DagAccessEntity.CODE: (RESOURCE_DAG_CODE,),
     DagAccessEntity.DEPENDENCIES: (RESOURCE_DAG_DEPENDENCIES,),
-    DagAccessEntity.IMPORT_ERRORS: (RESOURCE_IMPORT_ERROR,),
     DagAccessEntity.RUN: (RESOURCE_DAG_RUN,),
     DagAccessEntity.SLA_MISS: (RESOURCE_SLA_MISS,),
     # RESOURCE_TASK_INSTANCE has been originally misused. RESOURCE_TASK_INSTANCE referred to task definition
@@ -115,6 +116,7 @@ _MAP_DAG_ACCESS_ENTITY_TO_FAB_RESOURCE_TYPE: dict[DagAccessEntity, tuple[str, ..
 _MAP_ACCESS_VIEW_TO_FAB_RESOURCE_TYPE = {
     AccessView.CLUSTER_ACTIVITY: RESOURCE_CLUSTER_ACTIVITY,
     AccessView.DOCS: RESOURCE_DOCS,
+    AccessView.IMPORT_ERRORS: RESOURCE_IMPORT_ERROR,
     AccessView.JOBS: RESOURCE_JOB,
     AccessView.PLUGINS: RESOURCE_PLUGIN,
     AccessView.PROVIDERS: RESOURCE_PROVIDER,
@@ -155,9 +157,7 @@ class FabAuthManager(BaseAuthManager):
             specification=specification,
             resolver=_LazyResolver(),
             base_path="/auth/fab/v1",
-            options={
-                "swagger_ui": conf.getboolean("webserver", "enable_swagger_ui", fallback=True),
-            },
+            options={"swagger_ui": SWAGGER_ENABLED, "swagger_path": SWAGGER_BUNDLE.__fspath__()},
             strict_validation=True,
             validate_responses=True,
             validator_map={"body": _CustomErrorRequestBodyValidator},
@@ -334,20 +334,12 @@ class FabAuthManager(BaseAuthManager):
         from airflow.providers.fab.auth_manager.security_manager.override import (
             FabAirflowSecurityManagerOverride,
         )
-        from airflow.www.security import AirflowSecurityManager
 
         sm_from_config = self.appbuilder.get_app.config.get("SECURITY_MANAGER_CLASS")
         if sm_from_config:
-            if not issubclass(sm_from_config, AirflowSecurityManager):
-                raise Exception(
-                    """Your CUSTOM_SECURITY_MANAGER must extend FabAirflowSecurityManagerOverride,
-                     not FAB's own security manager."""
-                )
             if not issubclass(sm_from_config, FabAirflowSecurityManagerOverride):
-                warnings.warn(
-                    "Please make your custom security manager inherit from "
-                    "FabAirflowSecurityManagerOverride instead of AirflowSecurityManager.",
-                    AirflowProviderDeprecationWarning,
+                raise Exception(
+                    """Your CUSTOM_SECURITY_MANAGER must extend FabAirflowSecurityManagerOverride."""
                 )
             return sm_from_config(self.appbuilder)
 
@@ -358,7 +350,7 @@ class FabAuthManager(BaseAuthManager):
         if not self.security_manager.auth_view:
             raise AirflowException("`auth_view` not defined in the security manager.")
         if "next_url" in kwargs and kwargs["next_url"]:
-            return url_for(f"{self.security_manager.auth_view.endpoint}.login", next=kwargs["next_url"])
+            return url_for(f"{self.security_manager.auth_view.endpoint}.login", next_url=kwargs["next_url"])
         else:
             return url_for(f"{self.security_manager.auth_view.endpoint}.login")
 
@@ -453,7 +445,7 @@ class FabAuthManager(BaseAuthManager):
 
     def _resource_name_for_dag(self, dag_id: str) -> str:
         """
-        Returns the FAB resource name for a DAG id.
+        Return the FAB resource name for a DAG id.
 
         :param dag_id: the DAG id
 
@@ -508,5 +500,18 @@ class FabAuthManager(BaseAuthManager):
         # Otherwise, when the name of a view or menu is changed, the framework
         # will add the new Views and Menus names to the backend, but will not
         # delete the old ones.
-        if conf.getboolean("webserver", "UPDATE_FAB_PERMS"):
+        if conf.getboolean(
+            "fab", "UPDATE_FAB_PERMS", fallback=conf.getboolean("webserver", "UPDATE_FAB_PERMS")
+        ):
             self.security_manager.sync_roles()
+
+
+def get_parser() -> argparse.ArgumentParser:
+    """Generate documentation; used by Sphinx argparse."""
+    from airflow.cli.cli_parser import AirflowHelpFormatter, _add_command
+
+    parser = DefaultHelpParser(prog="airflow", formatter_class=AirflowHelpFormatter)
+    subparsers = parser.add_subparsers(dest="subcommand", metavar="GROUP_OR_COMMAND")
+    for group_command in FabAuthManager.get_cli_commands():
+        _add_command(subparsers, group_command)
+    return parser

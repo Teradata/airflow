@@ -21,8 +21,9 @@ name: Apache Pinot
 description: |
     `Apache Pinot <https://pinot.apache.org/>`__
 
-suspended: false
-source-date-epoch: 1701983359
+state: ready
+source-date-epoch: 1705911937
+# note that those versions are maintained by release manager - do not update them manually
 versions:
   - 4.3.0
   - 4.2.0

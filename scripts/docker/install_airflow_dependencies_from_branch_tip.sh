@@ -18,11 +18,11 @@
 # shellcheck shell=bash disable=SC2086
 
 # Installs Airflow from $AIRFLOW_BRANCH tip. This is pure optimisation. It is done because we do not want
-# to reinstall all dependencies from scratch when setup.py changes. Problem with Docker caching is that
+# to reinstall all dependencies from scratch when pyproject.toml changes. Problem with Docker caching is that
 # when a file is changed, when added to docker context, it invalidates the cache and it causes Docker
 # build to reinstall all dependencies from scratch. This can take a loooooot of time. Therefore we install
 # the dependencies first from main (and uninstall airflow right after) so that we can start installing
-# deps from those pre-installed dependencies. It saves few minutes of build time when setup.py changes.
+# deps from those pre-installed dependencies. It saves few minutes of build time when pyproject.toml changes.
 #
 # If INSTALL_MYSQL_CLIENT is set to false, mysql extra is removed
 # If INSTALL_POSTGRES_CLIENT is set to false, postgres extra is removed
@@ -46,14 +46,17 @@ function install_airflow_dependencies_from_branch_tip() {
     if [[ ${INSTALL_POSTGRES_CLIENT} != "true" ]]; then
        AIRFLOW_EXTRAS=${AIRFLOW_EXTRAS/postgres,}
     fi
-    # Install latest set of dependencies using constraints. In case constraints were upgraded and there
-    # are conflicts, this might fail, but it should be fixed in the following installation steps
+    # Install latest set of dependencies - without constraints. This is to download a "base" set of
+    # dependencies that we can cache and reuse when installing airflow using constraints and latest
+    # pyproject.toml in the next step (when we install regular airflow).
     set -x
     pip install --root-user-action ignore \
       ${ADDITIONAL_PIP_INSTALL_FLAGS} \
-      "https://github.com/${AIRFLOW_REPO}/archive/${AIRFLOW_BRANCH}.tar.gz#egg=apache-airflow[${AIRFLOW_EXTRAS}]" \
-      --constraint "${AIRFLOW_CONSTRAINTS_LOCATION}" || true
+      "apache-airflow[${AIRFLOW_EXTRAS}] @ https://github.com/${AIRFLOW_REPO}/archive/${AIRFLOW_BRANCH}.tar.gz"
     common::install_pip_version
+    # Uninstall airflow and providers to keep only the dependencies. In the future when
+    # planned https://github.com/pypa/pip/issues/11440 is implemented in pip we might be able to use this
+    # flag and skip the remove step.
     pip freeze | grep apache-airflow-providers | xargs pip uninstall --yes 2>/dev/null || true
     set +x
     echo

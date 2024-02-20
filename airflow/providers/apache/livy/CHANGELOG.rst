@@ -28,6 +28,28 @@
 Changelog
 ---------
 
+3.7.2
+.....
+
+Misc
+~~~~
+
+* ``Bump aiohttp min version to avoid CVE-2024-23829 and CVE-2024-23334 (#37110)``
+
+3.7.1
+.....
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fix assignment of template field in '__init__' in 'livy.py' (#36490)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Speed up autocompletion of Breeze by simplifying provider state (#36499)``
+   * ``Add documentation for 3rd wave of providers in Deember (#36464)``
+   * ``Re-apply updated version numbers to 2nd wave of providers in December (#36380)``
+
 3.7.0
 .....
 

@@ -21,14 +21,15 @@ name: Teradata
 description: |
     `Teradata <https://www.teradata.com/>`__
 
-suspended: false
+state: ready
 source-date-epoch: 1700148082
+# note that those versions are maintained by release manager - do not update them manually
 versions:
   - 1.2.0
 
 dependencies:
   - apache-airflow>=2.6.0
-  - apache-airflow-providers-common-sql>=1.9.0
+  - apache-airflow-providers-common-sql>=1.3.1
   - teradatasqlalchemy>=17.20.0.0
   - teradatasql>=17.20.0.28
 
@@ -36,7 +37,7 @@ integrations:
   - integration-name: Teradata
     external-doc-url: https://www.teradata.com/
     how-to-guide:
-      - /docs/apache-airflow-providers-teradata/operators/operators.rst
+      - /docs/apache-airflow-providers-teradata/operators/teradata.rst
     logo: /integration-logos/teradata/Teradata.png
     tags: [software]
 
@@ -54,6 +55,7 @@ transfers:
   - source-integration-name: Teradata
     target-integration-name: Teradata
     python-module: airflow.providers.teradata.transfers.teradata_to_teradata
+    how-to-guide: /docs/apache-airflow-providers-teradata/operators/teradata_to_teradata.rst
 
 connection-types:
   - hook-class-name: airflow.providers.teradata.hooks.teradata.TeradataHook

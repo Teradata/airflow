@@ -197,7 +197,7 @@ const Details = ({
       : group?.instances.find((ti) => ti.runId === runId);
 
   return (
-    <Flex flexDirection="column" pl={3} height="100%">
+    <Flex flexDirection="column" height="100%">
       <Flex
         alignItems="center"
         justifyContent="space-between"
@@ -227,7 +227,11 @@ const Details = ({
               <MarkInstanceAs
                 taskId={taskId}
                 runId={runId}
-                state={instance?.state}
+                state={
+                  !instance?.state || instance?.state === "none"
+                    ? undefined
+                    : instance.state
+                }
                 isGroup={isGroup}
                 isMapped={isMapped}
                 mapIndex={mapIndex}
@@ -301,7 +305,7 @@ const Details = ({
           <TabPanel height="100%">
             {isDag && <DagContent />}
             {isDagRun && <DagRunContent runId={runId} />}
-            {isTaskInstance && (
+            {!!runId && !!taskId && (
               <>
                 <BackToTaskSummary
                   isMapIndexDefined={mapIndex !== undefined && mapIndex > -1}
@@ -348,7 +352,11 @@ const Details = ({
                 mapIndex={mapIndex}
                 executionDate={run?.executionDate}
                 tryNumber={instance?.tryNumber}
-                state={instance?.state}
+                state={
+                  !instance?.state || instance?.state === "none"
+                    ? undefined
+                    : instance.state
+                }
               />
             </TabPanel>
           )}

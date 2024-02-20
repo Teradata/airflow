@@ -50,7 +50,6 @@ with DAG(
     catchup=False,
     default_args={"conn_id": "teradata_ssl_default"},
 ) as dag:
-
     # [START teradata_operator_howto_guide_create_country_table]
     create_country_table = TeradataOperator(
         task_id="create_country_table",
@@ -61,7 +60,7 @@ with DAG(
             continent CHAR(25)
         );
         """,
-        trigger_rule="all_done"
+        trigger_rule="all_done",
     )
     # [END teradata_operator_howto_guide_create_country_table]
     # [START teradata_operator_howto_guide_populate_country_table]

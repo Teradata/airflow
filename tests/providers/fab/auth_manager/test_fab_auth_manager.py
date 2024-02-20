@@ -63,8 +63,12 @@ def auth_manager():
 
 
 @pytest.fixture
-def auth_manager_with_appbuilder():
-    flask_app = Flask(__name__)
+def flask_app():
+    return Flask(__name__)
+
+
+@pytest.fixture
+def auth_manager_with_appbuilder(flask_app):
     appbuilder = init_appbuilder(flask_app)
     return FabAuthManager(appbuilder)
 
@@ -77,7 +81,6 @@ class TestFabAuthManager:
             (1, "First", "Last", None, None, "First Last"),
             (1, "First", None, "user", None, "First"),
             (1, None, "Last", "user", "email", "Last"),
-            (1, None, None, None, "email", ""),
             (1, None, None, None, "email", ""),
         ],
     )
@@ -356,6 +359,28 @@ class TestFabAuthManager:
         assert isinstance(auth_manager_with_appbuilder.security_manager, FabAirflowSecurityManagerOverride)
 
     @pytest.mark.db_test
+    def test_security_manager_return_custom_provided(self, flask_app, auth_manager_with_appbuilder):
+        class TestSecurityManager(FabAirflowSecurityManagerOverride):
+            pass
+
+        flask_app.config["SECURITY_MANAGER_CLASS"] = TestSecurityManager
+        assert isinstance(auth_manager_with_appbuilder.security_manager, TestSecurityManager)
+
+    @pytest.mark.db_test
+    def test_security_manager_wrong_inheritance_raise_exception(
+        self, flask_app, auth_manager_with_appbuilder
+    ):
+        class TestSecurityManager:
+            pass
+
+        flask_app.config["SECURITY_MANAGER_CLASS"] = TestSecurityManager
+
+        with pytest.raises(
+            Exception, match="Your CUSTOM_SECURITY_MANAGER must extend FabAirflowSecurityManagerOverride."
+        ):
+            auth_manager_with_appbuilder.security_manager
+
+    @pytest.mark.db_test
     def test_get_url_login_when_auth_view_not_defined(self, auth_manager_with_appbuilder):
         with pytest.raises(AirflowException, match="`auth_view` not defined in the security manager."):
             auth_manager_with_appbuilder.get_url_login()
@@ -374,7 +399,7 @@ class TestFabAuthManager:
         auth_manager_with_appbuilder.security_manager.auth_view = Mock()
         auth_manager_with_appbuilder.security_manager.auth_view.endpoint = "test_endpoint"
         auth_manager_with_appbuilder.get_url_login(next_url="next_url")
-        mock_url_for.assert_called_once_with("test_endpoint.login", next="next_url")
+        mock_url_for.assert_called_once_with("test_endpoint.login", next_url="next_url")
 
     @pytest.mark.db_test
     def test_get_url_logout_when_auth_view_not_defined(self, auth_manager_with_appbuilder):

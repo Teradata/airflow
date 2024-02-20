@@ -21,8 +21,9 @@ name: Segment
 description: |
     `Segment <https://segment.com/>`__
 
-suspended: false
-source-date-epoch: 1701983414
+state: ready
+source-date-epoch: 1705912247
+# note that those versions are maintained by release manager - do not update them manually
 versions:
   - 3.4.0
   - 3.3.0

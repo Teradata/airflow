@@ -17,24 +17,14 @@
 # under the License.
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from unittest import mock
 
-import json
 import pytest
 
 from airflow.models import Connection
-
-try:
-    from airflow.providers.teradata.hooks.teradata import TeradataHook
-
-    # from airflow.providers.teradata.hooks.teradata import TeradataHook
-except ImportError:
-    pytest.skip(
-        "Airflow Provider for Teradata not available, unable to import dependency "
-        "airflow.providers.teradata.hooks.teradata.TeradataHook",
-        allow_module_level=True,
-    )
+from airflow.providers.teradata.hooks.teradata import TeradataHook
 
 
 class TestTeradataHook:
@@ -73,6 +63,7 @@ class TestTeradataHook:
         assert kwargs["dbs_port"] == "1025"
         assert kwargs["user"] == "login"
         assert kwargs["password"] == "password"
+
     @mock.patch("teradatasql.connect")
     def test_get_tmode_conn(self, mock_connect):
         tmode_name = {"tmode": "tera"}
@@ -87,6 +78,7 @@ class TestTeradataHook:
         assert kwargs["user"] == "login"
         assert kwargs["password"] == "password"
         assert kwargs["tmode"] == "tera"
+
     @mock.patch("teradatasql.connect")
     def test_get_sslmode_conn(self, mock_connect):
         tmode_name = {"sslmode": "require"}
@@ -163,6 +155,7 @@ class TestTeradataHook:
         assert kwargs["user"] == "login"
         assert kwargs["password"] == "password"
         assert kwargs["sslprotocol"] == "protocol"
+
     @mock.patch("teradatasql.connect")
     def test_get_sslcipher_conn(self, mock_connect):
         extravalues = {"sslcipher": "cipher"}
@@ -177,6 +170,7 @@ class TestTeradataHook:
         assert kwargs["user"] == "login"
         assert kwargs["password"] == "password"
         assert kwargs["sslcipher"] == "cipher"
+
     @mock.patch("sqlalchemy.create_engine")
     def test_get_sqlalchemy_conn(self, mock_connect):
         self.db_hook.get_sqlalchemy_engine()
