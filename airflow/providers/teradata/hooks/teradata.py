@@ -30,6 +30,17 @@ from airflow.providers.common.sql.hooks.sql import DbApiHook
 if TYPE_CHECKING:
     from airflow.models.connection import Connection
 
+PARAM_TYPES = {bool, float, int, str}
+
+
+def _map_param(value):
+    if value in PARAM_TYPES:
+        # In this branch, value is a Python type; calling it produces
+        # an instance of the type which is understood by the Oracle driver
+        # in the out parameter mapping mechanism.
+        value = value()
+    return value
+
 
 class TeradataHook(DbApiHook):
     """General hook for interacting with Teradata SQL Database.
@@ -201,3 +212,55 @@ class TeradataHook(DbApiHook):
                 "password": "dbc",
             },
         }
+
+    def callproc(
+        self,
+        identifier: str,
+        autocommit: bool = False,
+        parameters: list | dict | None = None,
+    ) -> list | dict | tuple | None:
+        """
+        Call the stored procedure identified by the provided string.
+
+        Any OUT parameters must be provided with a value of either the
+        expected Python type (e.g., `int`) or an instance of that type.
+
+        The return value is a list or mapping that includes parameters in
+        both directions; the actual return type depends on the type of the
+        provided `parameters` argument.
+
+        """
+        if parameters is None:
+            parameters = []
+
+        args = ",".join(
+            f":{name}"
+            for name in (parameters if isinstance(parameters, dict) else range(1, len(parameters) + 1))
+        )
+
+        sql = f"CALL {identifier}({args});"
+
+        def handler(cursor):
+            if cursor.bindvars is None:
+                return
+
+            if isinstance(cursor.bindvars, list):
+                return [v.getvalue() for v in cursor.bindvars]
+
+            if isinstance(cursor.bindvars, dict):
+                return {n: v.getvalue() for (n, v) in cursor.bindvars.items()}
+
+            raise TypeError(f"Unexpected bindvars: {cursor.bindvars!r}")
+
+        result = self.run(
+            sql,
+            autocommit=autocommit,
+            parameters=(
+                {name: _map_param(value) for (name, value) in parameters.items()}
+                if isinstance(parameters, dict)
+                else [_map_param(value) for value in parameters]
+            ),
+            handler=handler,
+        )
+
+        return result
