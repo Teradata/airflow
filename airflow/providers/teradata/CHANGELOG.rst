@@ -25,6 +25,19 @@
 Changelog
 ---------
 
+2.2.0
+.....
+
+Updated documentation and readme files.
+
+Features
+~~~~~~~~
+
+* ``Added HTTPS/TLS connections support``
+* ``Added Stored Procedure Operator``
+
+
+
 2.0.0
 .....
 
