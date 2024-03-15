@@ -38,7 +38,7 @@ jobs:
       - name: "Checkout Teradata Airflow Source Code"
         uses: actions/checkout@v4
         with:
-          ref: ${{ vars.BRANCH }}
+          ref: ${{ vars.TERADATA_BRANCH }}
           persist-credentials: false
       - name: "Install Python"
         uses: actions/setup-python@v4
