@@ -51,11 +51,11 @@ jobs:
         if: ${{vars.TERADATA_BRANCH != 'teradata_main'}}
         run: |
             git fetch
-            git checkout ${{ vars.TERADATA_BRANCH }} -- .github/workflows/scripts/createTestEnvironments.sh
-            git checkout ${{ vars.TERADATA_BRANCH }} -- .github/workflows/scripts/deleteTestEnvironments.sh
-            git checkout ${{ vars.TERADATA_BRANCH }} -- .github/workflows/system-tests-files/report_generate_index_html.py
-            git checkout ${{ vars.TERADATA_BRANCH }} -- .github/workflows/system-tests-files/report_index_template.html
-            git checkout ${{ vars.TERADATA_BRANCH }} -- .github/workflows/system-tests-files/report_parse_xml.py
+            git checkout origin/teradata_main -- .github/workflows/scripts/createTestEnvironments.sh
+            git checkout origin/teradata_main -- .github/workflows/scripts/deleteTestEnvironments.sh
+            git checkout origin/teradata_main -- .github/workflows/system-tests-files/report_generate_index_html.py
+            git checkout origin/teradata_main -- .github/workflows/system-tests-files/report_index_template.html
+            git checkout origin/teradata_main -- .github/workflows/system-tests-files/report_parse_xml.py
             cp .github/workflows/system-tests-files/report_generate_index_html.py .
             cp .github/workflows/system-tests-files/report_index_template.html .
             cp .github/workflows/system-tests-files/report_parse_xml.py .
