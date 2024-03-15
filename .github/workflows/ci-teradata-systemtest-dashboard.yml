@@ -20,7 +20,7 @@ name: airflow-teradata-system-test-dashboard
 on:
   push:
     branches:
-      - teradata_main
+      - main
   workflow_dispatch:
   schedule:
   - cron: "0 6 * * *"
@@ -38,7 +38,7 @@ jobs:
       - name: "Checkout Teradata Airflow Source Code"
         uses: actions/checkout@v4
         with:
-          ref: ${{ vars.TERADATA_BRANCH }}
+          ref: ${{ vars.BRANCH }}
           persist-credentials: false
       - name: "Install Python"
         uses: actions/setup-python@v4
@@ -46,9 +46,9 @@ jobs:
           python-version: 3.8
           cache: 'pip'
       - name: "Branch Name"
-        run: echo running on branch ${{ vars.TERADATA_BRANCH }}
+        run: echo running on branch ${{ vars.BRANCH }}
       - name: "Checkout ClearScape Scripts and Report Generation supported files"
-        if: ${{vars.TERADATA_BRANCH != 'teradata_main'}}
+        if: ${{vars.BRANCH != 'teradata_main'}}
         run: |
             git fetch
             git checkout origin/teradata_main -- .github/workflows/scripts/createTestEnvironments.sh
