@@ -147,6 +147,7 @@ class GKEStartPodTrigger(KubernetesPodTrigger):
             ssl_ca_cert=self._ssl_ca_cert,
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
+            enable_tcp_keepalive=True,
         )
 
 
@@ -211,7 +212,6 @@ class GKEOperationTrigger(BaseTrigger):
                     self.log.info("Operation is still running.")
                     self.log.info("Sleeping for %ss...", self.poll_interval)
                     await asyncio.sleep(self.poll_interval)
-
                 else:
                     yield TriggerEvent(
                         {

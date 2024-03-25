@@ -274,7 +274,7 @@ class KubernetesPodOperator(BaseOperator):
         labels: dict | None = None,
         reattach_on_restart: bool = True,
         startup_timeout_seconds: int = 120,
-        startup_check_interval_seconds: int = 1,
+        startup_check_interval_seconds: int = 5,
         get_logs: bool = True,
         container_logs: Iterable[str] | str | Literal[True] = BASE_CONTAINER_NAME,
         image_pull_policy: str | None = None,
@@ -771,7 +771,7 @@ class KubernetesPodOperator(BaseOperator):
 
     @deprecated(reason="use `trigger_reentry` instead.", category=AirflowProviderDeprecationWarning)
     def execute_complete(self, context: Context, event: dict, **kwargs):
-        self.trigger_reentry(context=context, event=event)
+        return self.trigger_reentry(context=context, event=event)
 
     def write_logs(self, pod: k8s.V1Pod):
         try:

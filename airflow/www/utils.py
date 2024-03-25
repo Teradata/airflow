@@ -435,6 +435,7 @@ def task_instance_link(attr):
         "Airflow.grid",
         dag_id=dag_id,
         task_id=task_id,
+        root=task_id,
         dag_run_id=run_id,
         tab="graph",
         map_index=attr.get("map_index", -1),
@@ -789,7 +790,7 @@ class AirflowFilterConverter(fab_sqlafilters.SQLAFilterConverter):
     def __init__(self, datamodel):
         super().__init__(datamodel)
 
-        for method, filters in self.conversion_table:
+        for _, filters in self.conversion_table:
             if FilterIsNull not in filters:
                 filters.append(FilterIsNull)
             if FilterIsNotNull not in filters:

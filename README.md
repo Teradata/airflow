@@ -98,14 +98,14 @@ Airflow is not a streaming solution, but it is often used to process real-time d
 
 Apache Airflow is tested with:
 
-|             | Main version (dev)           | Stable version (2.8.3)      |
-|-------------|------------------------------|-----------------------------|
-| Python      | 3.8, 3.9, 3.10, 3.11, 3.12   | 3.8, 3.9, 3.10, 3.11        |
-| Platform    | AMD64/ARM64(\*)              | AMD64/ARM64(\*)             |
-| Kubernetes  | 1.25, 1.26, 1.27, 1.28, 1.29 | 1.25, 1.26, 1.27, 1.28, 1.29|
-| PostgreSQL  | 12, 13, 14, 15, 16           | 12, 13, 14, 15, 16          |
-| MySQL       | 8.0, Innovation              | 8.0, Innovation             |
-| SQLite      | 3.15.0+                      | 3.15.0+                     |
+|             | Main version (dev)         | Stable version (2.8.3)      |
+|-------------|----------------------------|-----------------------------|
+| Python      | 3.8, 3.9, 3.10, 3.11, 3.12 | 3.8, 3.9, 3.10, 3.11        |
+| Platform    | AMD64/ARM64(\*)            | AMD64/ARM64(\*)             |
+| Kubernetes  | 1.26, 1.27, 1.28, 1.29     | 1.25, 1.26, 1.27, 1.28, 1.29|
+| PostgreSQL  | 12, 13, 14, 15, 16         | 12, 13, 14, 15, 16          |
+| MySQL       | 8.0, Innovation            | 8.0, Innovation             |
+| SQLite      | 3.15.0+                    | 3.15.0+                     |
 
 \* Experimental
 
@@ -506,7 +506,7 @@ fixed in time for the current release. Therefore, the milestone for issue is mor
 looked at, than promise it will be fixed in the version.
 
 More context and **FAQ** about the patchlevel release can be found in the
-[What goes into the next release](dev/WHAT_GOES_INTO_NEXT_RELEASE.md) document in the `dev` folder of the
+[What goes into the next release](dev/WHAT_GOES_INTO_THE_NEXT_RELEASE.md) document in the `dev` folder of the
 repository.
 
 ## Can I use the Apache Airflow logo in my presentation?
