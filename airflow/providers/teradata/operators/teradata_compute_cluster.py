@@ -155,6 +155,18 @@ def compute_cluster_execute(self, opr):
         self.log.info("Invalid compute cluster profile name")
         raise AirflowException(Constants.CC_OPR_EMPTY_PROFILE_ERROR_MSG)
 
+    sql = "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'"
+    result = hook.run(sql, handler=__handler)
+    if int(result) == 0:
+        raise AirflowException(Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG)
+
+    sql = "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE   InfoKey = 'VERSION'"
+    result = hook.run(sql, handler=__handler)
+    db_version = result.split(".")[0]
+    if int(db_version) < 20:
+        raise AirflowException(Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG)
+
+
     sql = "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '" + self.compute_profile_name + "'"
     if self.computer_group_name:
         sql += " AND ComputeGroupName = '" + self.computer_group_name + "'"
