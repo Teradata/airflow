@@ -47,6 +47,7 @@ with DAG(
     schedule="@once",
     catchup=False,
     default_args={"conn_id": "teradata_lake"},
+    render_template_as_native_obj=True,
     params={
         "computer_group_name": Param(
             "compute_group_test",
@@ -65,6 +66,12 @@ with DAG(
             type="string",
             title="Teradata ConnectionId:",
             description="Enter Teradata connection id.",
+        ),
+        "timeout": Param(
+            1,
+            type="integer",
+            title="Timeout:",
+            description="Timeout value for compute cluster profile.",
         )
     }
 ) as dag:
@@ -72,7 +79,9 @@ with DAG(
     compute_cluster_resume_operation = TeradataComputeClusterResumeOperator(
         task_id="compute_cluster_resume_operation",
         compute_profile_name="{{ params.compute_profile_name }}",
-        computer_group_name="{{ params.computer_group_name }}"
+        computer_group_name="{{ params.computer_group_name }}",
+        conn_id="{{ params.conn_id }}",
+        timeout="{{ params.timeout }}"
     )
     # [END teradata_compute_cluster_resume_operator_howto_guide]
     (

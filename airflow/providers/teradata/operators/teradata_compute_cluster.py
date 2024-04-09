@@ -57,6 +57,8 @@ class TeradataComputeClusterSuspendOperator(BaseOperator):
     template_fields: Sequence[str] = (
         "compute_profile_name",
         "computer_group_name",
+        "conn_id",
+        "timeout"
     )
 
     ui_color = "#e07c24"
@@ -76,6 +78,9 @@ class TeradataComputeClusterSuspendOperator(BaseOperator):
         self.timeout = timeout
 
     def execute(self, context: Context):
+        self.log.info(" profile name: %s, group name: %s, conn_id: %s, timeout: %s",
+                      self.compute_profile_name,
+                      self.computer_group_name, self.conn_id, self.timeout)
         return compute_cluster_execute(self, Constants.CC_SUSPEND_OPR)
 
     def execute_complete(self, context: Context, event: dict[str, Any]) -> None:
@@ -107,9 +112,10 @@ class TeradataComputeClusterResumeOperator(BaseOperator):
     template_fields: Sequence[str] = (
         "compute_profile_name",
         "computer_group_name",
+        "conn_id",
+        "timeout"
     )
-    template_ext: Sequence[str] = (".sql",)
-    template_fields_renderers = {"sql": "sql"}
+
     ui_color = "#e07c24"
 
     def __init__(
@@ -126,9 +132,11 @@ class TeradataComputeClusterResumeOperator(BaseOperator):
         self.conn_id = conn_id
         self.timeout = timeout
 
+
     def execute(self, context: Context):
-        self.log.info("Compute Cluster Resume Operation - Profile Name : %s and Group Name : %s",
-                      self.compute_profile_name, self.computer_group_name)
+        self.log.info(" profile name: %s, group name: %s, conn_id: %s, timeout: %s",
+                      self.compute_profile_name,
+                      self.computer_group_name, self.conn_id, self.timeout)
         return compute_cluster_execute(self, Constants.CC_RESUME_OPR)
 
     def execute_complete(self, context: Context, event: dict[str, Any]) -> None:
@@ -151,6 +159,10 @@ def compute_cluster_execute(self, opr):
     if self.computer_group_name:
         sql += " AND ComputeGroupName = '" + self.computer_group_name + "'"
     result = hook.run(sql, handler=__handler)
+    if result is None:
+        self.log.info(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
+        raise AirflowException(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
+
     if result == Constants.CC_INITIALIZE_DB_STATUS:
         self.log.info(Constants.CC_OPR_INITIALIZING_STATUS_MSG)
         raise AirflowException(Constants.CC_OPR_INITIALIZING_STATUS_MSG)
@@ -176,7 +188,7 @@ def compute_cluster_execute(self, opr):
                                    Constants.CC_SUSPEND_DB_STATUS, sql, result, hook)
         else:
             self.log.info("Compute Cluster %s already %s", self.compute_profile_name,
-                          Constants.CC_SUSPEND_OPR)
+                          Constants.CC_RESUME_OPR)
 
 
 def compute_cluster_execute_complete(self, event: dict[str, Any]) -> None:
@@ -196,6 +208,9 @@ def __handle_result(self, opr_type, db_status, check_opp_db_status, sql, result,
             self.log.info(f"A {opr_type} operation is already underway. Kindly check the status.")
             self.ignored = True
             return False
+        if f"[Error 4824]" in str(ex):
+            self.log.info(Constants.CC_GRP_PRP_UN_AUTHORIZED_MSG, opr_type)
+            raise AirflowException(Constants.CC_GRP_PRP_UN_AUTHORIZED_MSG, opr_type)
         if not ignored:
             raise  # rethrow
     self.log.info(f"{opr_type} query ran successfully. Differing to trigger to check status in db")
@@ -216,4 +231,6 @@ def __handler(cursor):
     records = cursor.fetchone()
     if isinstance(records, list):
         return records[0]
+    if records is None:
+        return records
     raise TypeError(f"Unexpected results: {cursor.fetchone()!r}")

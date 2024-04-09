@@ -19,6 +19,8 @@ from __future__ import annotations
 import asyncio
 import time
 from typing import Any, AsyncIterator
+
+from airflow.exceptions import AirflowException
 from airflow.providers.teradata.hooks.teradata import TeradataHook
 from airflow.providers.teradata.utils.constants import Constants
 from airflow.triggers.base import BaseTrigger, TriggerEvent
@@ -58,6 +60,9 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
         try:
             while True:
                 status = await self.get_status(hook)
+                if status is None:
+                    self.log.info(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
+                    raise AirflowException(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
                 if self.opr_type == Constants.CC_SUSPEND_OPR:
                     if status == Constants.CC_SUSPEND_DB_STATUS:
                         break
@@ -102,6 +107,8 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
         except Exception as e:
             self.log.info(" custom message %s", str(e))
             yield TriggerEvent({"status": "error", "message": str(e)})
+        except asyncio.CancelledError as err:
+            self.log.info(" Cancelled Error %s", str(err))
 
     async def get_status(self, hook: TeradataHook) -> str:
 
@@ -113,6 +120,8 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
             records = cursor.fetchone()
             if isinstance(records, list):
                 return records[0]
+            if records is None:
+                return records
             raise TypeError(f"Unexpected results: {cursor.fetchone()!r}")
 
         return hook.run(sql, handler=handler)
