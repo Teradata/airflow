@@ -24,13 +24,11 @@ from boto3.session import Session
 
 from airflow.models.connection import Connection
 from airflow.providers.teradata.transfers.s3_to_teradata import S3ToTeradataOperator
-from tests.test_utils.asserts import assert_equal_ignore_multiple_spaces
 
 DEFAULT_DATE = datetime(2024, 1, 1)
 
 
 class TestS3ToTeradataTransfer:
-
     @mock.patch("airflow.providers.amazon.aws.hooks.s3.S3Hook.get_connection")
     @mock.patch("airflow.models.connection.Connection")
     @mock.patch("boto3.session.Session")

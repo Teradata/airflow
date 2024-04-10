@@ -161,7 +161,7 @@ class TeradataHook(DbApiHook):
             "dbs_port": conn.port or "1025",
             "database": conn.schema or "",
             "user": conn.login or "dbc",
-            "password": conn.password or "dbc"
+            "password": conn.password or "dbc",
         }
 
         if conn.extra_dejson.get("tmode", False):
@@ -233,10 +233,7 @@ class TeradataHook(DbApiHook):
         if parameters is None:
             parameters = []
 
-        args = ",".join(
-            f"?"
-            for name in parameters
-        )
+        args = ",".join("?" for name in parameters)
 
         sql = f"{{CALL {identifier}({(args)})}}"
 

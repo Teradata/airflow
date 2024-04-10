@@ -16,7 +16,7 @@
 # specific language governing permissions and limitations
 # under the License.
 """
-Example use of Teradata related operators.
+Example use of Teradata Compute Cluster Suspend Operator
 """
 
 from __future__ import annotations
@@ -30,8 +30,9 @@ from airflow import DAG
 from airflow.models import Param
 
 try:
-    from airflow.providers.teradata.operators.teradata_compute_cluster import \
-        TeradataComputeClusterSuspendOperator
+    from airflow.providers.teradata.operators.teradata_compute_cluster import (
+        TeradataComputeClusterSuspendOperator,
+    )
 except ImportError:
     pytest.skip("TERADATA provider not available", allow_module_level=True)
 
@@ -68,26 +69,23 @@ with DAG(
             description="Enter Teradata connection id.",
         ),
         "timeout": Param(
-            1,
+            20,
             type="integer",
             title="Timeout:",
-            description="Timeout value for compute cluster profile.",
+            description="Time elapsed before the task times out and fails.",
         ),
-
-    }
+    },
 ) as dag:
-    # [START teradata_compute_cluster_resume_operator_howto_guide]
+    # [START teradata_compute_cluster_suspend_operator_howto_guide]
     compute_cluster_suspend_operation = TeradataComputeClusterSuspendOperator(
         task_id="compute_cluster_suspend_operation",
         compute_profile_name="{{ params.compute_profile_name }}",
         computer_group_name="{{ params.computer_group_name }}",
         conn_id="{{ params.conn_id }}",
-        timeout="{{ params.timeout }}"
+        timeout="{{ params.timeout }}",
     )
-    # [END teradata_compute_cluster_resume_operator_howto_guide]
-    (
-        compute_cluster_suspend_operation
-    )
+    # [END teradata_compute_cluster_suspend_operator_howto_guide]
+    (compute_cluster_suspend_operation)
 
     # [END teradata_vantage_lake_compute_cluster_manage_howto_guide]
 

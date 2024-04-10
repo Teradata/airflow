@@ -63,7 +63,7 @@ with DAG(
     )
 
     t1 >> t2 >> example_trigger
-    
+
         from tests.system.utils.watcher import watcher
 
     # This test needs watcher in order to properly mark success/failure

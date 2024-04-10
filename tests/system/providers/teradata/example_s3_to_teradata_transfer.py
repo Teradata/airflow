@@ -23,6 +23,7 @@ The example DAG below assumes Airflow Connections with connection ids `teradata_
 and `aws_default` exists already. It creates tables with data from AWS S3 location, returns
 numbers of rows inserted into table and then drops this table.
 """
+
 from __future__ import annotations
 
 import datetime
@@ -30,9 +31,8 @@ import os
 
 import pytest
 
-from airflow.providers.teradata.transfers.s3_to_teradata import S3ToTeradataOperator
-
 from airflow import DAG
+from airflow.providers.teradata.transfers.s3_to_teradata import S3ToTeradataOperator
 
 try:
     from airflow.providers.teradata.operators.teradata import TeradataOperator
@@ -179,7 +179,7 @@ with DAG(
         drop_table_csv,
         drop_table_json,
         drop_table_parquet,
-        drop_table_access
+        drop_table_access,
     )
     # [END s3_to_teradata_transfer_operator_howto_guide]
 

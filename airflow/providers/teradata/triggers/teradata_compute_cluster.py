@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import Any, AsyncIterator
 
 from airflow.exceptions import AirflowException
@@ -27,6 +26,16 @@ from airflow.triggers.base import BaseTrigger, TriggerEvent
 
 
 class TeradataComputeClusterSyncTrigger(BaseTrigger):
+    """
+    Fetch the status of the suspend or resume operation for the specified compute cluster.
+
+    :param conn_id:  The :ref:`Teradata connection id <howto/connection:teradata>`
+        reference to a specific Teradata database.
+    :param compute_profile_name:  Name of the Compute Profile to manage.
+    :param computer_group_name: Name of compute group to which compute profile belongs.
+    :param opr_type: Compute cluster operation - SUSPEND/RESUME
+    :param poll_interval: polling period in minutes to check for the status
+    """
 
     def __init__(
         self,
@@ -34,7 +43,7 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
         compute_profile_name: str,
         computer_group_name: str | None = None,
         opr_type: str | None = None,
-        poll_interval: float | None = None
+        poll_interval: float | None = None,
     ):
         super().__init__()
         self.conn_id = conn_id
@@ -44,6 +53,7 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
         self.poll_interval = poll_interval
 
     def serialize(self) -> tuple[str, dict[str, Any]]:
+        """Serialize TeradataComputeClusterSyncTrigger arguments and classpath."""
         return (
             "airflow.providers.teradata.triggers.teradata_compute_cluster.TeradataComputeClusterSyncTrigger",
             {
@@ -56,6 +66,7 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
         )
 
     async def run(self) -> AsyncIterator[TriggerEvent]:
+        """Wait for SUSPEND or RESUME operation to complete"""
         hook = TeradataHook(teradata_conn_id=self.conn_id)
         try:
             while True:
@@ -75,16 +86,16 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
                     yield TriggerEvent(
                         {
                             "status": "success",
-                            "message": Constants.CC_OPR_SUCCESS_STATUS_MSG % (
-                            self.compute_profile_name, {self.opr_type})
+                            "message": Constants.CC_OPR_SUCCESS_STATUS_MSG
+                            % (self.compute_profile_name, {self.opr_type}),
                         }
                     )
                 else:
                     yield TriggerEvent(
                         {
                             "status": "error",
-                            "message": Constants.CC_OPR_FAILURE_STATUS_MSG % (
-                            self.compute_profile_name, {self.opr_type})
+                            "message": Constants.CC_OPR_FAILURE_STATUS_MSG
+                            % (self.compute_profile_name, {self.opr_type}),
                         }
                     )
             elif self.opr_type == Constants.CC_RESUME_OPR:
@@ -92,16 +103,16 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
                     yield TriggerEvent(
                         {
                             "status": "success",
-                            "message": Constants.CC_OPR_SUCCESS_STATUS_MSG % (
-                            self.compute_profile_name, {self.opr_type})
+                            "message": Constants.CC_OPR_SUCCESS_STATUS_MSG
+                            % (self.compute_profile_name, {self.opr_type}),
                         }
                     )
                 else:
                     yield TriggerEvent(
                         {
                             "status": "error",
-                            "message": Constants.CC_OPR_FAILURE_STATUS_MSG % (
-                            self.compute_profile_name, {self.opr_type})
+                            "message": Constants.CC_OPR_FAILURE_STATUS_MSG
+                            % (self.compute_profile_name, {self.opr_type}),
                         }
                     )
         except Exception as e:
@@ -111,8 +122,12 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
             self.log.info(" Cancelled Error %s", str(err))
 
     async def get_status(self, hook: TeradataHook) -> str:
-
-        sql = "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '" + self.compute_profile_name + "'"
+        """Return compute cluster SUSPEND/RESUME operation status"""
+        sql = (
+            "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '"
+            + self.compute_profile_name
+            + "'"
+        )
         if self.computer_group_name:
             sql += " AND ComputeGroupName = '" + self.computer_group_name + "'"
 

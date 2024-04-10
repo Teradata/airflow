@@ -23,8 +23,6 @@ from airflow.models import BaseOperator
 from airflow.providers.microsoft.azure.hooks.wasb import WasbHook
 from airflow.providers.teradata.hooks.teradata import TeradataHook
 
-import os
-
 if TYPE_CHECKING:
     from airflow.utils.context import Context
 
