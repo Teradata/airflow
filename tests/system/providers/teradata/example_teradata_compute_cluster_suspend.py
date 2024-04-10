@@ -72,7 +72,7 @@ with DAG(
             20,
             type="integer",
             title="Timeout:",
-            description="Time elapsed before the task times out and fails.",
+            description="Time elapsed before the task times out and fails. Timeout is in minutes.",
         ),
     },
 ) as dag:

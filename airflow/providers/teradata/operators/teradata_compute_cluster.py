@@ -107,7 +107,7 @@ class TeradataComputeClusterResumeOperator(BaseOperator):
     :param computer_group_name: Name of compute group to which compute profile belongs.
     :param conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
         reference to a specific Teradata database.
-    :param timeout: Time elapsed before the task times out and fails.
+    :param timeout: Time elapsed before the task times out and fails. Time is in minutes.
     """
 
     template_fields: Sequence[str] = ("compute_profile_name", "computer_group_name", "conn_id", "timeout")
@@ -207,7 +207,7 @@ def compute_cluster_execute(self, opr):
             )
         else:
             self.log.info(
-                "Compute Cluster %s already %s", self.compute_profile_name, Constants.CC_SUSPEND_OPR
+                "Compute Cluster %s already %s", self.compute_profile_name, Constants.CC_SUSPEND_DB_STATUS
             )
     # RESUME operation
     elif opr == Constants.CC_RESUME_OPR:
@@ -227,7 +227,7 @@ def compute_cluster_execute(self, opr):
                 hook,
             )
         else:
-            self.log.info("Compute Cluster %s already %s", self.compute_profile_name, Constants.CC_RESUME_OPR)
+            self.log.info("Compute Cluster %s already %s", self.compute_profile_name, Constants.CC_RESUME_DB_STATUS)
 
 
 def compute_cluster_execute_complete(self, event: dict[str, Any]) -> None:
@@ -255,7 +255,7 @@ def __handle_result(self, opr_type, db_status, check_opp_db_status, sql, result,
             raise  # rethrow
     self.log.info(f"{opr_type} query ran successfully. Differing to trigger to check status in db")
     self.defer(
-        timeout=timedelta(seconds=self.timeout),
+        timeout=timedelta(minutes=self.timeout),
         trigger=TeradataComputeClusterSyncTrigger(
             conn_id=cast(str, self.conn_id),
             compute_profile_name=self.compute_profile_name,

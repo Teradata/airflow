@@ -87,7 +87,7 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
                         {
                             "status": "success",
                             "message": Constants.CC_OPR_SUCCESS_STATUS_MSG
-                            % (self.compute_profile_name, {self.opr_type}),
+                                       % (self.compute_profile_name, self.opr_type),
                         }
                     )
                 else:
@@ -95,7 +95,7 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
                         {
                             "status": "error",
                             "message": Constants.CC_OPR_FAILURE_STATUS_MSG
-                            % (self.compute_profile_name, {self.opr_type}),
+                                       % (self.compute_profile_name, self.opr_type),
                         }
                     )
             elif self.opr_type == Constants.CC_RESUME_OPR:
@@ -104,7 +104,7 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
                         {
                             "status": "success",
                             "message": Constants.CC_OPR_SUCCESS_STATUS_MSG
-                            % (self.compute_profile_name, {self.opr_type}),
+                                       % (self.compute_profile_name, self.opr_type),
                         }
                     )
                 else:
@@ -112,14 +112,20 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
                         {
                             "status": "error",
                             "message": Constants.CC_OPR_FAILURE_STATUS_MSG
-                            % (self.compute_profile_name, {self.opr_type}),
+                                       % (self.compute_profile_name, self.opr_type),
                         }
                     )
         except Exception as e:
-            self.log.info(" custom message %s", str(e))
             yield TriggerEvent({"status": "error", "message": str(e)})
         except asyncio.CancelledError as err:
-            self.log.info(" Cancelled Error %s", str(err))
+            self.log.info(Constants.CC_OPR_TIMEOUT_ERROR % self.opr_type)
+            yield TriggerEvent(
+                {
+                    "status": "error",
+                    "message": Constants.CC_OPR_TIMEOUT_ERROR
+                               % self.opr_type
+                }
+            )
 
     async def get_status(self, hook: TeradataHook) -> str:
         """Return compute cluster SUSPEND/RESUME operation status"""
