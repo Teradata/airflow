@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
 class S3ToTeradataOperator(BaseOperator):
     """
+
     Loads CSV, JSON and Parquet format data from Amazon S3 to Teradata.
     .. seealso::
     For more information on how to use this operator, take a look at the guide:
@@ -39,6 +40,7 @@ class S3ToTeradataOperator(BaseOperator):
     :param teradata_conn_id: :ref:`Teradata connection <howto/connection:Teradata>`.
     :param aws_access_key: S3 bucket access key.
     :param aws_access_secret: S3 bucket access secret.
+
     """
 
     template_fields: Sequence[str] = ("s3_source_key", "teradata_table")
@@ -66,8 +68,10 @@ class S3ToTeradataOperator(BaseOperator):
 
     def execute(self, context: Context) -> None:
         """
-        Executes the transfer operation from S3 to Teradata.
+
+        Execute the transfer operation from S3 to Teradata.
         :param context: The context that is being provided when executing.
+
         """
         self.log.info("Loading %s to Teradata table %s...", self.s3_source_key, self.teradata_table)
 

@@ -66,7 +66,7 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
         )
 
     async def run(self) -> AsyncIterator[TriggerEvent]:
-        """Wait for SUSPEND or RESUME operation to complete"""
+        """Wait for SUSPEND or RESUME operation to complete."""
         hook = TeradataHook(teradata_conn_id=self.conn_id)
         try:
             while True:
@@ -118,11 +118,10 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
         except Exception as e:
             yield TriggerEvent({"status": "error", "message": str(e)})
         except asyncio.CancelledError:
-            self.log.info(Constants.CC_OPR_TIMEOUT_ERROR % self.opr_type)
-            yield TriggerEvent({"status": "error", "message": Constants.CC_OPR_TIMEOUT_ERROR % self.opr_type})
+            self.log.info(Constants.CC_OPR_TIMEOUT_ERROR, self.opr_type)
 
     async def get_status(self, hook: TeradataHook) -> str:
-        """Return compute cluster SUSPEND/RESUME operation status"""
+        """Return compute cluster SUSPEND/RESUME operation status."""
         sql = (
             "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '"
             + self.compute_profile_name

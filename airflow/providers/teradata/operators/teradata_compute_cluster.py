@@ -195,7 +195,7 @@ def compute_cluster_execute(self, opr):
             sql = f"SUSPEND COMPUTE FOR COMPUTE PROFILE {self.compute_profile_name}"
             if self.computer_group_name:
                 sql = f"{sql} IN COMPUTE GROUP {self.computer_group_name}"
-            self.log.info(f"Compute Cluster {opr} Operation - SQL : %s", sql)
+            self.log.info("Compute Cluster %s Operation - SQL : %s", opr, sql)
             return __handle_result(
                 self,
                 Constants.CC_SUSPEND_OPR,
@@ -216,7 +216,7 @@ def compute_cluster_execute(self, opr):
             sql = f"RESUME COMPUTE FOR COMPUTE PROFILE {self.compute_profile_name}"
             if self.computer_group_name:
                 sql = f"{sql} IN COMPUTE GROUP {self.computer_group_name}"
-            self.log.info(f"Compute Cluster {opr} Operation - SQL : %s", sql)
+            self.log.info("Compute Cluster %s Operation - SQL : %s", opr, sql)
             return __handle_result(
                 self,
                 Constants.CC_RESUME_OPR,
@@ -246,7 +246,7 @@ def __handle_result(self, opr_type, db_status, check_opp_db_status, sql, result,
         ignored = False
         # Handling if operation is already in progress
         if "[Error 4825]" in str(ex) and result == check_opp_db_status:
-            self.log.info(f"A {opr_type} operation is already underway. Kindly check the status.")
+            self.log.info("A %s operation is already underway. Kindly check the status.", opr_type)
             self.ignored = True
             return False
         # Handling permission issue errors
@@ -255,7 +255,7 @@ def __handle_result(self, opr_type, db_status, check_opp_db_status, sql, result,
             raise AirflowException(Constants.CC_GRP_PRP_UN_AUTHORIZED_MSG, opr_type)
         if not ignored:
             raise  # rethrow
-    self.log.info(f"{opr_type} query ran successfully. Differing to trigger to check status in db")
+    self.log.info("%s query ran successfully. Differing to trigger to check status in db", opr_type)
     self.defer(
         timeout=timedelta(minutes=self.timeout),
         trigger=TeradataComputeClusterSyncTrigger(

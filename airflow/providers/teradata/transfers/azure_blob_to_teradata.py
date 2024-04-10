@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
 class AzureBlobStorageToTeradataOperator(BaseOperator):
     """
+
     Loads CSV, JSON and Parquet format data from Azure Blob Storage to Teradata.
     .. seealso::
     For more information on how to use this operator, take a look at the guide:
@@ -37,6 +38,7 @@ class AzureBlobStorageToTeradataOperator(BaseOperator):
     :param wasb_conn_id: Reference to the wasb connection.
     :param teradata_table: destination table to insert rows.
     :param teradata_conn_id: :ref:`Teradata connection <howto/connection:Teradata>`.
+
     """
 
     template_fields: Sequence[str] = ("blob_source_key", "teradata_table")
@@ -62,8 +64,10 @@ class AzureBlobStorageToTeradataOperator(BaseOperator):
 
     def execute(self, context: Context) -> None:
         """
-        Executes the transfer operation from Azure Blob Storage to Teradata.
+
+        Execute the transfer operation from Azure Blob Storage to Teradata.
         :param context: The context that is being provided when executing.
+
         """
         self.log.info("Loading %s to Teradata table %s...", self.blob_source_key, self.teradata_table)
 

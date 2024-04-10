@@ -18,6 +18,10 @@ from __future__ import annotations
 
 
 class Constants:
+    """
+
+    Define constants for Teradata
+    """
     CC_SUSPEND_OPR = "SUSPEND"
     CC_RESUME_OPR = "RESUME"
     CC_INITIALIZE_DB_STATUS = "Initializing"
