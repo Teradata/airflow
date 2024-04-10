@@ -30,6 +30,8 @@ class Constants:
     CC_GRP_PRP_NON_EXISTS_MSG = "The specified Compute cluster is not present or The user doesn't have permission to access compute cluster."
     CC_GRP_PRP_UN_AUTHORIZED_MSG = "The %s operation is not authorized for the user."
     CC_GRP_LAKE_SUPPORT_ONLY_MSG = "Compute Groups is supported only on Vantage Cloud Lake."
-    CC_OPR_TIMEOUT_ERROR = "There is an issue with the %s operation. Kindly consult the administrator for assistance."
+    CC_OPR_TIMEOUT_ERROR = (
+        "There is an issue with the %s operation. Kindly consult the administrator for assistance."
+    )
     CC_OPR_TIME_OUT = 1200
     CC_POLL_INTERVAL = 60

@@ -227,7 +227,9 @@ def compute_cluster_execute(self, opr):
                 hook,
             )
         else:
-            self.log.info("Compute Cluster %s already %s", self.compute_profile_name, Constants.CC_RESUME_DB_STATUS)
+            self.log.info(
+                "Compute Cluster %s already %s", self.compute_profile_name, Constants.CC_RESUME_DB_STATUS
+            )
 
 
 def compute_cluster_execute_complete(self, event: dict[str, Any]) -> None:
