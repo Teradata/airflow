@@ -75,7 +75,7 @@ class TeradataComputeClusterSuspendOperator(BaseOperator):
 
     def execute(self, context: Context):
         """
-        Initiates the execution of the SQL statement for resuming the compute cluster within Teradata Vantage
+        Initiate the execution of the SQL statement for resuming the compute cluster within Teradata Vantage
         Lake, effectively resuming the compute cluster.
 
         Airflow runs this method on the worker and defers using the trigger.
@@ -130,7 +130,7 @@ class TeradataComputeClusterResumeOperator(BaseOperator):
 
     def execute(self, context: Context):
         """
-        Initiates the execution of the SQL statement for resuming the compute cluster within Teradata Vantage
+        Initiate the execution of the SQL statement for resuming the compute cluster within Teradata Vantage
         Lake, effectively resuming the compute cluster.
 
         Airflow runs this method on the worker and defers using the trigger.
