@@ -31,6 +31,7 @@ class S3ToTeradataOperator(BaseOperator):
     """
 
     Loads CSV, JSON and Parquet format data from Amazon S3 to Teradata.
+
     .. seealso::
     For more information on how to use this operator, take a look at the guide:
     :ref:`howto/operator:S3ToTeradataOperator`
@@ -70,6 +71,7 @@ class S3ToTeradataOperator(BaseOperator):
         """
 
         Execute the transfer operation from S3 to Teradata.
+
         :param context: The context that is being provided when executing.
 
         """

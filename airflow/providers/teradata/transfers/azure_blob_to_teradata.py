@@ -31,6 +31,7 @@ class AzureBlobStorageToTeradataOperator(BaseOperator):
     """
 
     Loads CSV, JSON and Parquet format data from Azure Blob Storage to Teradata.
+
     .. seealso::
     For more information on how to use this operator, take a look at the guide:
     :ref:`howto/operator:AzureBlobStorageToTeradataOperator`
@@ -66,6 +67,7 @@ class AzureBlobStorageToTeradataOperator(BaseOperator):
         """
 
         Execute the transfer operation from Azure Blob Storage to Teradata.
+
         :param context: The context that is being provided when executing.
 
         """
