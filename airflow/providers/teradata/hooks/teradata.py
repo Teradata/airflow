@@ -214,7 +214,7 @@ class TeradataHook(DbApiHook):
         :param identifier: stored procedure name
         :param autocommit: What to set the connection's autocommit setting to
             before executing the query.
-        :param parameters: The IN, OUT and INOUT parameters for Teradata
+        :param parameters: The `IN`, `OUT` and `INOUT` parameters for Teradata
             stored procedure
 
         The return value is a list or mapping that includes parameters in

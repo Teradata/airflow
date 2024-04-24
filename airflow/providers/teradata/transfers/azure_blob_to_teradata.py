@@ -37,7 +37,7 @@ class AzureBlobStorageToTeradataOperator(BaseOperator):
         :ref:`howto/operator:AzureBlobStorageToTeradataOperator`
 
     :param blob_source_key: The URI format specifying the location of the Azure blob object store.(templated)
-        The URI format is /az/YOUR-STORAGE-ACCOUNT.blob.core.windows.net/YOUR-CONTAINER/YOUR-BLOB-LOCATION.
+        The URI format is `/az/YOUR-STORAGE-ACCOUNT.blob.core.windows.net/YOUR-CONTAINER/YOUR-BLOB-LOCATION`.
         Refer to
         https://docs.teradata.com/search/documents?query=native+object+store&sort=last_update&virtual-field=title_only&content-lang=en-US
     :param azure_conn_id: The Airflow WASB connection used for azure blob credentials.
