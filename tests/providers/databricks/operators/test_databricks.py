@@ -63,6 +63,7 @@ RUN_ID = 1
 RUN_PAGE_URL = "run-page-url"
 JOB_ID = "42"
 JOB_NAME = "job-name"
+JOB_DESCRIPTION = "job-description"
 NOTEBOOK_PARAMS = {"dry-run": "true", "oldest-time-to-consider": "1457570074236"}
 JAR_PARAMS = ["param1", "param2"]
 RENDERED_TEMPLATED_JAR_PARAMS = [f"/test-{DATE}"]
@@ -202,6 +203,7 @@ WEBHOOK_NOTIFICATIONS = {
         }
     ],
 }
+NOTIFICATION_SETTINGS = {"no_alert_for_canceled_runs": True, "no_alert_for_skipped_runs": True}
 TIMEOUT_SECONDS = 86400
 SCHEDULE = {
     "quartz_cron_expression": "20 30 * * * ?",
@@ -409,11 +411,13 @@ class TestDatabricksCreateJobsOperator:
         """
         json = {
             "name": JOB_NAME,
+            "description": JOB_DESCRIPTION,
             "tags": TAGS,
             "tasks": TASKS,
             "job_clusters": JOB_CLUSTERS,
             "email_notifications": EMAIL_NOTIFICATIONS,
             "webhook_notifications": WEBHOOK_NOTIFICATIONS,
+            "notification_settings": NOTIFICATION_SETTINGS,
             "timeout_seconds": TIMEOUT_SECONDS,
             "schedule": SCHEDULE,
             "max_concurrent_runs": MAX_CONCURRENT_RUNS,
@@ -431,11 +435,13 @@ class TestDatabricksCreateJobsOperator:
         expected = utils.normalise_json_content(
             {
                 "name": JOB_NAME,
+                "description": JOB_DESCRIPTION,
                 "tags": TAGS,
                 "tasks": TASKS,
                 "job_clusters": JOB_CLUSTERS,
                 "email_notifications": EMAIL_NOTIFICATIONS,
                 "webhook_notifications": WEBHOOK_NOTIFICATIONS,
+                "notification_settings": NOTIFICATION_SETTINGS,
                 "timeout_seconds": TIMEOUT_SECONDS,
                 "schedule": SCHEDULE,
                 "max_concurrent_runs": MAX_CONCURRENT_RUNS,
@@ -461,11 +467,13 @@ class TestDatabricksCreateJobsOperator:
         """
         json = {
             "name": JOB_NAME,
+            "description": JOB_DESCRIPTION,
             "tags": TAGS,
             "tasks": TASKS,
             "job_clusters": JOB_CLUSTERS,
             "email_notifications": EMAIL_NOTIFICATIONS,
             "webhook_notifications": WEBHOOK_NOTIFICATIONS,
+            "notification_settings": NOTIFICATION_SETTINGS,
             "timeout_seconds": TIMEOUT_SECONDS,
             "schedule": SCHEDULE,
             "max_concurrent_runs": MAX_CONCURRENT_RUNS,
@@ -481,11 +489,13 @@ class TestDatabricksCreateJobsOperator:
         expected = utils.normalise_json_content(
             {
                 "name": JOB_NAME,
+                "description": JOB_DESCRIPTION,
                 "tags": TAGS,
                 "tasks": TASKS,
                 "job_clusters": JOB_CLUSTERS,
                 "email_notifications": EMAIL_NOTIFICATIONS,
                 "webhook_notifications": WEBHOOK_NOTIFICATIONS,
+                "notification_settings": NOTIFICATION_SETTINGS,
                 "timeout_seconds": TIMEOUT_SECONDS,
                 "schedule": SCHEDULE,
                 "max_concurrent_runs": MAX_CONCURRENT_RUNS,
@@ -503,6 +513,75 @@ class TestDatabricksCreateJobsOperator:
 
         db_mock.reset_job.assert_called_once_with(JOB_ID, expected)
         assert JOB_ID == return_result
+
+    @mock.patch("airflow.providers.databricks.operators.databricks.DatabricksHook")
+    def test_exec_update_job_permission(self, db_mock_class):
+        """
+        Test job permission update.
+        """
+        json = {
+            "name": JOB_NAME,
+            "tags": TAGS,
+            "tasks": TASKS,
+            "job_clusters": JOB_CLUSTERS,
+            "email_notifications": EMAIL_NOTIFICATIONS,
+            "webhook_notifications": WEBHOOK_NOTIFICATIONS,
+            "timeout_seconds": TIMEOUT_SECONDS,
+            "schedule": SCHEDULE,
+            "max_concurrent_runs": MAX_CONCURRENT_RUNS,
+            "git_source": GIT_SOURCE,
+            "access_control_list": ACCESS_CONTROL_LIST,
+        }
+        op = DatabricksCreateJobsOperator(task_id=TASK_ID, json=json)
+        db_mock = db_mock_class.return_value
+        db_mock.find_job_id_by_name.return_value = JOB_ID
+
+        op.execute({})
+
+        expected = utils.normalise_json_content({"access_control_list": ACCESS_CONTROL_LIST})
+
+        db_mock_class.assert_called_once_with(
+            DEFAULT_CONN_ID,
+            retry_limit=op.databricks_retry_limit,
+            retry_delay=op.databricks_retry_delay,
+            retry_args=None,
+            caller="DatabricksCreateJobsOperator",
+        )
+
+        db_mock.update_job_permission.assert_called_once_with(JOB_ID, expected)
+
+    @mock.patch("airflow.providers.databricks.operators.databricks.DatabricksHook")
+    def test_exec_update_job_permission_with_empty_acl(self, db_mock_class):
+        """
+        Test job permission update.
+        """
+        json = {
+            "name": JOB_NAME,
+            "tags": TAGS,
+            "tasks": TASKS,
+            "job_clusters": JOB_CLUSTERS,
+            "email_notifications": EMAIL_NOTIFICATIONS,
+            "webhook_notifications": WEBHOOK_NOTIFICATIONS,
+            "timeout_seconds": TIMEOUT_SECONDS,
+            "schedule": SCHEDULE,
+            "max_concurrent_runs": MAX_CONCURRENT_RUNS,
+            "git_source": GIT_SOURCE,
+        }
+        op = DatabricksCreateJobsOperator(task_id=TASK_ID, json=json)
+        db_mock = db_mock_class.return_value
+        db_mock.find_job_id_by_name.return_value = JOB_ID
+
+        op.execute({})
+
+        db_mock_class.assert_called_once_with(
+            DEFAULT_CONN_ID,
+            retry_limit=op.databricks_retry_limit,
+            retry_delay=op.databricks_retry_delay,
+            retry_args=None,
+            caller="DatabricksCreateJobsOperator",
+        )
+
+        db_mock.update_job_permission.assert_not_called()
 
 
 class TestDatabricksSubmitRunOperator:
