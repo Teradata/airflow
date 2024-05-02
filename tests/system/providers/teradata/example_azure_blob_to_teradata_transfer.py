@@ -56,7 +56,7 @@ with DAG(
     # [START azure_blob_to_teradata_transfer_operator_howto_guide_transfer_data_blob_to_teradata_csv]
     transfer_data_csv = AzureBlobStorageToTeradataOperator(
         task_id="transfer_data_blob_to_teradata_csv",
-        blob_source_key="/az/akiaxox5jikeotfww4ul.blob.core.windows.net/td-usgs/CSVDATA/",
+        blob_source_key="/az/akiaxox5jikeotfww4ul.blob.core.windows.net/td-usgs/CSVDATA/09380000/2018/",
         teradata_table="example_blob_teradata_csv",
         azure_conn_id="wasb_default",
         teradata_conn_id="teradata_default",
@@ -84,7 +84,7 @@ with DAG(
     # [START azure_blob_to_teradata_transfer_operator_howto_guide_transfer_data_blob_to_teradata_json]
     transfer_data_json = AzureBlobStorageToTeradataOperator(
         task_id="transfer_data_blob_to_teradata_json",
-        blob_source_key="/az/akiaxox5jikeotfww4ul.blob.core.windows.net/td-usgs/JSONDATA/",
+        blob_source_key="/az/akiaxox5jikeotfww4ul.blob.core.windows.net/td-usgs/JSONDATA/09380000/2018/",
         teradata_table="example_blob_teradata_json",
         azure_conn_id="wasb_default",
         teradata_conn_id="teradata_default",
@@ -112,7 +112,7 @@ with DAG(
     # [START azure_blob_to_teradata_transfer_operator_howto_guide_transfer_data_blob_to_teradata_parquet]
     transfer_data_parquet = AzureBlobStorageToTeradataOperator(
         task_id="transfer_data_blob_to_teradata_parquet",
-        blob_source_key="/az/akiaxox5jikeotfww4ul.blob.core.windows.net/td-usgs/PARQUETDATA/",
+        blob_source_key="/az/akiaxox5jikeotfww4ul.blob.core.windows.net/td-usgs/PARQUETDATA/09394500/2018/",
         teradata_table="example_blob_teradata_parquet",
         azure_conn_id="wasb_default",
         teradata_conn_id="teradata_default",
