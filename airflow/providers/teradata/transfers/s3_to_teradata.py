@@ -29,7 +29,6 @@ if TYPE_CHECKING:
 
 class S3ToTeradataOperator(BaseOperator):
     """
-
     Loads CSV, JSON and Parquet format data from Amazon S3 to Teradata.
 
     .. seealso::

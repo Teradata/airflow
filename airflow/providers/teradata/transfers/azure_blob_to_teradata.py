@@ -21,14 +21,13 @@ from typing import TYPE_CHECKING, Sequence
 
 from airflow.models import BaseOperator
 from airflow.providers.microsoft.azure.hooks.base_azure import AzureBaseHook
+
 from airflow.providers.microsoft.azure.hooks.wasb import WasbHook
 from airflow.providers.teradata.hooks.teradata import TeradataHook
 
 if TYPE_CHECKING:
     from airflow.utils.context import Context
-
 from airflow.exceptions import AirflowException
-
 
 class AzureBlobStorageToTeradataOperator(BaseOperator):
     """

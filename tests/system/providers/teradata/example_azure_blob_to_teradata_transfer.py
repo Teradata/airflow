@@ -140,6 +140,8 @@ with DAG(
 
     (
         transfer_data_csv,
+        transfer_data_json,
+        transfer_data_parquet,
         read_data_table_csv,
         read_data_table_json,
         read_data_table_parquet,
