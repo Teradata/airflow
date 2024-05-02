@@ -37,6 +37,68 @@ if TYPE_CHECKING:
 from airflow.exceptions import AirflowException
 
 
+class TeradataComputeClusterProvisionOperator(BaseOperator):
+    """
+    Teradata Compute Cluster Operator to provision the new Teradata Vantage Cloud Lake Compute Cluster
+    with specified Compute Group Name and Compute Profile Name.
+
+    Creates the new Teradata Vantage Lake Computer Cluster with specified Compute Group Name and
+    Compute Profile Name by employing the CREATE COMPUTE GROUP SQL statement within the
+    Teradata Vantage Lake Compute Cluster SQL Interface.
+
+    .. seealso::
+        For more information on how to use this operator, take a look at the guide:
+        :ref:`howto/operator:TeradataComputeClusterOperator`
+
+    :param compute_profile_name: Name of the Compute Profile to manage.
+    :param computer_group_name: Name of compute group to which compute profile belongs.
+    :param query_strategy: Query strategy to use. Refers to the approach or method used by the
+        Teradata Optimizer to execute SQL queries efficiently within a Teradata computer cluster.
+        Valid query_strategy value is either 'STANDARD' or 'ANALYTIC'. Default at database level is STANDARD.
+    :param conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
+        reference to a specific Teradata database.
+    :param timeout: Time elapsed before the task times out and fails.
+    """
+
+    template_fields: Sequence[str] = (
+    "compute_profile_name", "computer_group_name", "query_strategy", "conn_id", "timeout")
+
+    ui_color = "#e07c24"
+
+    def __init__(
+        self,
+        compute_profile_name: str,
+        computer_group_name: str | None = None,
+        query_strategy: str | None = None,
+        conn_id: str = TeradataHook.default_conn_name,
+        timeout: int = Constants.CC_OPR_TIME_OUT,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.compute_profile_name = compute_profile_name
+        self.computer_group_name = computer_group_name
+        self.query_strategy = query_strategy
+        self.conn_id = conn_id
+        self.timeout = timeout
+
+    def execute(self, context: Context):
+        """
+        Initiate the execution of CREATE COMPUTE CLUSTER statement.
+
+        Initiate the execution of the SQL statement for creating the compute cluster within Teradata Vantage
+        Lake. Airflow runs this method on the worker and defers using the trigger.
+        """
+        return compute_cluster_execute(self, Constants.CC_CREATE_OPR)
+
+    def execute_complete(self, context: Context, event: dict[str, Any]) -> None:
+        """
+        Execute when the trigger fires - returns immediately.
+
+        Relies on trigger to throw an exception, otherwise it assumes execution was successful.
+        """
+        compute_cluster_execute_complete(self, event)
+
+
 class TeradataComputeClusterSuspendOperator(BaseOperator):
     """
     Teradata Compute Cluster Operator to suspend the specified Teradata Vantage Cloud Lake Compute Cluster.
@@ -148,6 +210,12 @@ class TeradataComputeClusterResumeOperator(BaseOperator):
         """
         self.log.info("Response came after trigger execute ")
         compute_cluster_execute_complete(self, event)
+
+
+def _isCDOperation(opr):
+    if opr == Constants.CC_CREATE_OPR or opr == Constants.CC_DROP_OPR:
+        return True
+    return False
 
 
 def compute_cluster_execute(self, opr):
