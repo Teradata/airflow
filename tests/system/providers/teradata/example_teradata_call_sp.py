@@ -94,8 +94,7 @@ with DAG(
     # [START howto_teradata_stored_procedure_operator_drop]
     drop_sp = TeradataOperator(
         task_id="drop_sp",
-        sql=r"""drop procedure examplestoredproc;
-               """,
+        sql=r"drop procedure examplestoredproc;",
     )
     # [END howto_teradata_stored_procedure_operator_drop]
     (create_sp_in_inout >> opr_sp_in_inout >> create_sp_param_dr >> opr_sp_param_dr >> drop_sp)
