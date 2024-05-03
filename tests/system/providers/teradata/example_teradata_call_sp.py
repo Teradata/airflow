@@ -80,7 +80,7 @@ with DAG(
     opr_sp_place_holder = TeradataStoredProcedureOperator(
         task_id="opr_sp_place_holder",
         procedure="TEST_PROCEDURE",
-        parameters=[3, 1, '?', '?'],
+        parameters=[3, 1, "?", "?"],
     )
     # [END howto_call_teradata_stored_procedure_operator_with_place_holder]
     # [START howto_call_teradata_stored_procedure_operator_with_dict_input]
@@ -106,7 +106,7 @@ with DAG(
     opr_sp_timestamp = TeradataStoredProcedureOperator(
         task_id="opr_sp_timestamp",
         procedure="GetTimestampOutParameter",
-        parameters=['?'],
+        parameters=["?"],
     )
     # [END howto_call_teradata_stored_procedure_operator_timestamp]
     # [START howto_teradata_stored_procedure_operator_with_in_out_dynamic_result]
