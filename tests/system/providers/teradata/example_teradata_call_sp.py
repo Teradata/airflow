@@ -155,6 +155,8 @@ with DAG(
         >> opr_sp_param_dr
         >> drop_sp
         >> drop_sp_test
+        >> create_sp_timestamp
+        >> opr_sp_timestamp
         >> drop_sp_timestamp
     )
 
