@@ -21,10 +21,12 @@ from textwrap import dedent
 from typing import TYPE_CHECKING, Sequence
 
 from airflow.models import BaseOperator
+
 try:
     from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 except ModuleNotFoundError as e:
     from airflow.exceptions import AirflowOptionalProviderFeatureException
+
     raise AirflowOptionalProviderFeatureException(e)
 from airflow.providers.teradata.hooks.teradata import TeradataHook
 

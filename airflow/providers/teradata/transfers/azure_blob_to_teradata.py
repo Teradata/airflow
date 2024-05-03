@@ -26,9 +26,11 @@ try:
     from airflow.providers.microsoft.azure.hooks.wasb import WasbHook
 except ModuleNotFoundError as e:
     from airflow.exceptions import AirflowOptionalProviderFeatureException
+
     raise AirflowOptionalProviderFeatureException(e)
 
 from airflow.providers.teradata.hooks.teradata import TeradataHook
+
 if TYPE_CHECKING:
     from airflow.utils.context import Context
 
