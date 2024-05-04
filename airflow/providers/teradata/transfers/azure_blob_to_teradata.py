@@ -17,12 +17,18 @@
 # under the License.
 from __future__ import annotations
 
+from textwrap import dedent
 from typing import TYPE_CHECKING, Sequence
 
 from airflow.models import BaseOperator
-from airflow.providers.microsoft.azure.hooks.base_azure import AzureBaseHook
 
-from airflow.providers.microsoft.azure.hooks.wasb import WasbHook
+try:
+    from airflow.providers.microsoft.azure.hooks.wasb import WasbHook
+except ModuleNotFoundError as e:
+    from airflow.exceptions import AirflowOptionalProviderFeatureException
+
+    raise AirflowOptionalProviderFeatureException(e)
+
 from airflow.providers.teradata.hooks.teradata import TeradataHook
 
 if TYPE_CHECKING:
@@ -79,7 +85,7 @@ class AzureBlobStorageToTeradataOperator(BaseOperator):
         access_id = conn.login if conn.login is not None else ""
         access_secret = conn.password if conn.password is not None else ""
         teradata_hook = TeradataHook(teradata_conn_id=self.teradata_conn_id)
-        sql = f"""
+        sql = dedent(f"""
                     CREATE MULTISET TABLE {self.teradata_table}  AS
                     (
                         SELECT * FROM (
@@ -88,20 +94,10 @@ class AzureBlobStorageToTeradataOperator(BaseOperator):
                             ACCESS_KEY= '{access_secret}'
                     ) AS d
                     ) WITH DATA
-                """
+                """).rstrip()
         try:
             teradata_hook.run(sql, True)
         except Exception as ex:
-            # Handling permission issue errors
-            if "Error 3524" in str(ex):
-                self.log.error("The user does not have CREATE TABLE access in teradata")
-                raise
-            if "Error 9134" in str(ex):
-                self.log.error(
-                    "There is an issue with the transfer operation. Please validate azure and "
-                    "teradata connection details."
-                )
-                raise
-            self.log.error("Issue occurred at Teradata: %s", str(ex))
+            self.log.error(str(ex))
             raise
         self.log.info("The transfer of data from Azure Blob to Teradata was successful")
