@@ -32,7 +32,7 @@ from airflow.models import Param
 try:
     from airflow.providers.teradata.operators.teradata_compute_cluster import (
         TeradataComputeClusterDecommissionOperator,
-)
+    )
 except ImportError:
     pytest.skip("TERADATA provider not available", allow_module_level=True)
 
@@ -86,7 +86,7 @@ with DAG(
         task_id="compute_cluster_decommission_operation",
         compute_profile_name="{{ params.compute_profile_name }}",
         compute_group_name="{{ params.compute_group_name }}",
-        delete_compute_group="{{ params.delete_compute_group }}",
+        delete_compute_group=bool("{{ params.delete_compute_group }}"),
         conn_id="{{ params.conn_id }}",
         timeout="{{ params.timeout }}",
     )

@@ -23,9 +23,10 @@ from unittest.mock import MagicMock, Mock
 from airflow.exceptions import AirflowException
 from airflow.providers.common.sql.hooks.sql import fetch_all_handler
 from airflow.providers.teradata.hooks.teradata import TeradataHook
-from airflow.providers.teradata.operators.teradata import TeradataOperator, TeradataStoredProcedureOperator
-from airflow.providers.teradata.operators.teradata_compute_cluster import \
-    TeradataComputeClusterProvisionOperator
+from airflow.providers.teradata.operators.teradata import TeradataOperator
+from airflow.providers.teradata.operators.teradata_compute_cluster import (
+    TeradataComputeClusterProvisionOperator,
+)
 
 
 class TestTeradataOperator:
@@ -127,8 +128,11 @@ class TestTeradataComputeClusterProvisionOperator:
         operator.execute(context=context)
         mock_hook.assert_called_once_with(teradata_conn_id=conn_id)
 
-        @mock.patch.object(TeradataComputeClusterProvisionOperator, "compute_cluster_execute",
-                           autospec=TeradataComputeClusterProvisionOperator.compute_cluster_execute)
+        @mock.patch.object(
+            TeradataComputeClusterProvisionOperator,
+            "compute_cluster_execute",
+            autospec=TeradataComputeClusterProvisionOperator.compute_cluster_execute,
+        )
         def test_mock_compute_cluster_execute(self, mock_compute_cluster_execute):
             compute_profile_name = "test"
             computer_group_name = "test"
@@ -156,5 +160,3 @@ class TestTeradataComputeClusterProvisionOperator:
                 mock.ANY,
                 "CREATE",
             )
-
-

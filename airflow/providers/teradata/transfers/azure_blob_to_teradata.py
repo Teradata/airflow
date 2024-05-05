@@ -33,7 +33,7 @@ from airflow.providers.teradata.hooks.teradata import TeradataHook
 
 if TYPE_CHECKING:
     from airflow.utils.context import Context
-from airflow.exceptions import AirflowException
+
 
 class AzureBlobStorageToTeradataOperator(BaseOperator):
     """

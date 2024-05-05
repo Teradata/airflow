@@ -71,17 +71,23 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
         try:
             while True:
                 status = await self.get_status(hook)
-                self.log.info(f"Status : %s ", status)
-                if status is None:
+                self.log.info("Status : %s ", status)
+                if status is None or len(status) == 0:
                     self.log.info(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
                     raise AirflowException(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
                 if self.operation_type == Constants.CC_SUSPEND_OPR:
                     if status == Constants.CC_SUSPEND_DB_STATUS:
                         break
-                elif (self.operation_type == Constants.CC_RESUME_OPR or
-                        self.operation_type == Constants.CC_CREATE_OPR):
+                elif (
+                    self.operation_type == Constants.CC_RESUME_OPR
+                    or self.operation_type == Constants.CC_CREATE_OPR
+                ):
                     if status == Constants.CC_RESUME_DB_STATUS:
                         break
+                if self.poll_interval is not None:
+                    self.poll_interval = float(self.poll_interval)
+                else:
+                    self.poll_interval = float(Constants.CC_POLL_INTERVAL)
                 await asyncio.sleep(self.poll_interval)
             if self.operation_type == Constants.CC_SUSPEND_OPR:
                 if status == Constants.CC_SUSPEND_DB_STATUS:
@@ -100,8 +106,10 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
                             % (self.compute_profile_name, self.operation_type),
                         }
                     )
-            elif (self.operation_type == Constants.CC_RESUME_OPR
-                  or self.operation_type == Constants.CC_CREATE_OPR):
+            elif (
+                self.operation_type == Constants.CC_RESUME_OPR
+                or self.operation_type == Constants.CC_CREATE_OPR
+            ):
                 if status == Constants.CC_RESUME_DB_STATUS:
                     yield TriggerEvent(
                         {
@@ -135,12 +143,11 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
         if self.compute_group_name:
             sql += " AND ComputeGroupName = '" + self.compute_group_name + "'"
 
-        def handler(cursor):
-            records = cursor.fetchone()
-            if isinstance(records, list):
-                return records[0]
-            if records is None:
-                return records
-            raise TypeError(f"Unexpected results: {cursor.fetchone()!r}")
+        def _handler(cursor):
+            return cursor.fetchone()
 
-        return hook.run(sql, handler=handler)
+        result_set = hook.run(sql, handler=_handler)
+        status = ""
+        if isinstance(result_set, list) and isinstance(result_set[0], str):
+            status = str(result_set[0])
+        return status

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from enum import Enum
+from functools import cached_property
 from typing import TYPE_CHECKING
 
 from airflow.models import BaseOperator
@@ -39,14 +40,13 @@ if TYPE_CHECKING:
 from airflow.exceptions import AirflowException
 
 
-class Operation(Enum):
+class _Operation(Enum):
     SETUP = 1
     STATE = 2
 
 
 def _single_result_row_handler(cursor):
     records = cursor.fetchone()
-    print(records)
     if isinstance(records, list):
         return records[0]
     if records is None:
@@ -56,13 +56,13 @@ def _single_result_row_handler(cursor):
 
 def _determine_operation_context(operation):
     if operation == Constants.CC_CREATE_OPR or operation == Constants.CC_DROP_OPR:
-        return Operation.SETUP
-    return Operation.STATE
+        return _Operation.SETUP
+    return _Operation.STATE
 
 
 class _TeradataComputeClusterOperator(BaseOperator):
     """
-    Teradata Compute Cluster Base Operator to set up and status operations of compute cluster
+    Teradata Compute Cluster Base Operator to set up and status operations of compute cluster.
 
     :param compute_profile_name: Name of the Compute Profile to manage.
     :param compute_group_name: Name of compute group to which compute profile belongs.
@@ -88,11 +88,13 @@ class _TeradataComputeClusterOperator(BaseOperator):
         self.compute_group_name = compute_group_name
         self.conn_id = conn_id
         self.timeout = timeout
-        self.hook = None
+
+    @cached_property
+    def hook(self) -> TeradataHook:
+        return TeradataHook(teradata_conn_id=self.conn_id)
 
     @abstractmethod
     def execute(self, context: Context):
-        self.hook = TeradataHook(teradata_conn_id=self.conn_id)
         pass
 
     def execute_complete(self, context: Context, event: dict[str, Any]) -> None:
@@ -122,12 +124,14 @@ class _TeradataComputeClusterOperator(BaseOperator):
         db_version_get_sql = "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'"
         try:
             db_version_result = self.hook.run(db_version_get_sql, handler=_single_result_row_handler)
-            db_version = db_version_result.split(".")[0]
-            self.log.info("DBC version %s ", db_version)
-            if int(db_version) < 20:
-                raise AirflowException(Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG)
+            if db_version_result is not None:
+                db_version_result = str(db_version_result)
+                db_version = db_version_result.split(".")[0]
+                self.log.info("DBC version %s ", db_version)
+                if int(db_version) < 20:
+                    raise AirflowException(Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG)
         except Exception as ex:
-            self.log.error('Error occurred while getting teradata database version: ' + str(ex))
+            self.log.error("Error occurred while getting teradata database version: %s ", str(ex))
             raise
 
     def compute_cluster_execute_complete(self, event: dict[str, Any]) -> None:
@@ -164,12 +168,8 @@ class _TeradataComputeClusterOperator(BaseOperator):
 
 class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
     """
-    Teradata Compute Cluster Operator to provision the new Teradata Vantage Cloud Lake Compute Cluster
-    with specified Compute Group Name and Compute Profile Name.
 
-    Creates the new Teradata Vantage Lake Computer Cluster with specified Compute Group Name and
-    Compute Profile Name by employing the CREATE COMPUTE GROUP SQL statement within the
-    Teradata Vantage Lake Compute Cluster SQL Interface.
+    Creates the new Computer Cluster with specified Compute Group Name and Compute Profile Name.
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
@@ -190,7 +190,12 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
     """
 
     template_fields: Sequence[str] = (
-        "compute_profile_name", "compute_group_name", "query_strategy", "conn_id", "timeout")
+        "compute_profile_name",
+        "compute_group_name",
+        "query_strategy",
+        "conn_id",
+        "timeout",
+    )
 
     ui_color = "#e07c24"
 
@@ -209,17 +214,16 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
     def _build_ccp_setup_query(self):
         create_cp_query = "CREATE COMPUTE PROFILE " + self.compute_profile_name
         if self.compute_group_name:
-            create_cp_query = create_cp_query + ' IN ' + self.compute_group_name
+            create_cp_query = create_cp_query + " IN " + self.compute_group_name
         if self.compute_map is not None:
-            create_cp_query = create_cp_query + ', INSTANCE = ' + self.compute_map
+            create_cp_query = create_cp_query + ", INSTANCE = " + self.compute_map
         if self.query_strategy is not None:
             create_cp_query = create_cp_query + ", INSTANCE TYPE = " + self.query_strategy
         if self.compute_attribute is not None:
-            create_cp_query = create_cp_query + ' USING ' + self.compute_attribute
+            create_cp_query = create_cp_query + " USING " + self.compute_attribute
         return create_cp_query
 
     def execute(self, context: Context):
-
         """
         Initiate the execution of CREATE COMPUTE SQL statement.
 
@@ -233,15 +237,24 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
     def compute_cluster_execute(self):
         super().compute_cluster_execute()
         if self.compute_group_name:
-            cg_status_query = ("SELECT  count(1) FROM DBC.ComputeGroupStatusV WHERE ComputeGroupName = '"
-                               + self.compute_group_name + "'")
+            cg_status_query = (
+                "SELECT  count(1) FROM DBC.ComputeGroupStatusV WHERE ComputeGroupName = '"
+                + self.compute_group_name
+                + "'"
+            )
             cg_status_result = self._hook_run(cg_status_query, _single_result_row_handler)
-            self.log.debug(f"cg_status_result - %s", cg_status_result)
+            if cg_status_result is not None:
+                cg_status_result = str(cg_status_result)
+            else:
+                cg_status_result = 0
+            self.log.debug("cg_status_result - %s", cg_status_result)
             if int(cg_status_result) == 0:
-                self.log.info(f"Compute Group %s not exists. Creating it", self.compute_group_name)
+                self.log.info("Compute Group %s not exists. Creating it", self.compute_group_name)
                 create_cg_query = "CREATE COMPUTE GROUP " + self.compute_group_name
                 if self.query_strategy is not None:
-                    create_cg_query = create_cg_query + " USING QUERY_STRATEGY ('" + self.query_strategy + "')"
+                    create_cg_query = (
+                        create_cg_query + " USING QUERY_STRATEGY ('" + self.query_strategy + "')"
+                    )
                 self._hook_run(create_cg_query, _single_result_row_handler)
         create_cp_query = self._build_ccp_setup_query()
         return self._handle_cc_status(Constants.CC_CREATE_OPR, create_cp_query)
@@ -249,12 +262,7 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
 
 class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator):
     """
-    Teradata Compute Cluster Operator to de-provision the Teradata Vantage Cloud Lake Compute Cluster
-    with specified Compute Group Name and Compute Profile Name.
-
-    Drops the Teradata Vantage Lake Computer Cluster with specified Compute Group Name and
-    Compute Profile Name by employing the DROP COMPUTE GROUP SQL statement within the
-    Teradata Vantage Lake Compute Cluster SQL Interface.
+    Drops the compute cluster with specified Compute Group Name and Compute Profile Name.
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
@@ -271,7 +279,12 @@ class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator
     """
 
     template_fields: Sequence[str] = (
-        "compute_profile_name", "compute_group_name", "delete_compute_group", "conn_id", "timeout")
+        "compute_profile_name",
+        "compute_group_name",
+        "delete_compute_group",
+        "conn_id",
+        "timeout",
+    )
 
     ui_color = "#e07c24"
 
@@ -284,7 +297,6 @@ class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator
         self.delete_compute_group = delete_compute_group
 
     def execute(self, context: Context):
-
         """
         Initiate the execution of DROP COMPUTE SQL statement.
 
@@ -297,16 +309,19 @@ class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator
 
     def compute_cluster_execute(self):
         super().compute_cluster_execute()
-        cp_drop_query = 'DROP COMPUTE PROFILE ' + self.compute_profile_name
+        cp_drop_query = "DROP COMPUTE PROFILE " + self.compute_profile_name
         if self.compute_group_name:
-            cp_drop_query = cp_drop_query + ' IN COMPUTE GROUP ' + self.compute_group_name
+            cp_drop_query = cp_drop_query + " IN COMPUTE GROUP " + self.compute_group_name
         self._hook_run(cp_drop_query, handler=_single_result_row_handler)
-        self.log.info(f"Compute Profile %s IN Compute Group %s is successfully dropped",
-                      self.compute_profile_name, self.compute_group_name)
+        self.log.info(
+            "Compute Profile %s IN Compute Group %s is successfully dropped",
+            self.compute_profile_name,
+            self.compute_group_name,
+        )
         if self.delete_compute_group:
-            cg_drop_query = 'DROP COMPUTE GROUP ' + self.compute_group_name
+            cg_drop_query = "DROP COMPUTE GROUP " + self.compute_group_name
             self._hook_run(cg_drop_query, handler=_single_result_row_handler)
-            self.log.info(f"Compute Group %s is successfully dropped", self.compute_group_name)
+            self.log.info("Compute Group %s is successfully dropped", self.compute_group_name)
 
 
 class TeradataComputeClusterResumeOperator(_TeradataComputeClusterOperator):
