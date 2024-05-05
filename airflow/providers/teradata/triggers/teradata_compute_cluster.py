@@ -32,7 +32,7 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
     :param conn_id:  The :ref:`Teradata connection id <howto/connection:teradata>`
         reference to a specific Teradata database.
     :param compute_profile_name:  Name of the Compute Profile to manage.
-    :param computer_group_name: Name of compute group to which compute profile belongs.
+    :param compute_group_name: Name of compute group to which compute profile belongs.
     :param opr_type: Compute cluster operation - SUSPEND/RESUME
     :param poll_interval: polling period in minutes to check for the status
     """
@@ -41,15 +41,15 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
         self,
         conn_id: str,
         compute_profile_name: str,
-        computer_group_name: str | None = None,
-        opr_type: str | None = None,
+        compute_group_name: str | None = None,
+        operation_type: str | None = None,
         poll_interval: float | None = None,
     ):
         super().__init__()
         self.conn_id = conn_id
         self.compute_profile_name = compute_profile_name
-        self.computer_group_name = computer_group_name
-        self.opr_type = opr_type
+        self.compute_group_name = compute_group_name
+        self.operation_type = operation_type
         self.poll_interval = poll_interval
 
     def serialize(self) -> tuple[str, dict[str, Any]]:
@@ -59,35 +59,37 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
             {
                 "conn_id": self.conn_id,
                 "compute_profile_name": self.compute_profile_name,
-                "computer_group_name": self.computer_group_name,
-                "opr_type": self.opr_type,
+                "compute_group_name": self.compute_group_name,
+                "operation_type": self.operation_type,
                 "poll_interval": self.poll_interval,
             },
         )
 
     async def run(self) -> AsyncIterator[TriggerEvent]:
-        """Wait for SUSPEND or RESUME operation to complete."""
+        """Wait for Compute Cluster operation to complete."""
         hook = TeradataHook(teradata_conn_id=self.conn_id)
         try:
             while True:
                 status = await self.get_status(hook)
+                self.log.info(f"Status : %s ", status)
                 if status is None:
                     self.log.info(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
                     raise AirflowException(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
-                if self.opr_type == Constants.CC_SUSPEND_OPR:
+                if self.operation_type == Constants.CC_SUSPEND_OPR:
                     if status == Constants.CC_SUSPEND_DB_STATUS:
                         break
-                elif self.opr_type == Constants.CC_RESUME_OPR:
+                elif (self.operation_type == Constants.CC_RESUME_OPR or
+                        self.operation_type == Constants.CC_CREATE_OPR):
                     if status == Constants.CC_RESUME_DB_STATUS:
                         break
                 await asyncio.sleep(self.poll_interval)
-            if self.opr_type == Constants.CC_SUSPEND_OPR:
+            if self.operation_type == Constants.CC_SUSPEND_OPR:
                 if status == Constants.CC_SUSPEND_DB_STATUS:
                     yield TriggerEvent(
                         {
                             "status": "success",
                             "message": Constants.CC_OPR_SUCCESS_STATUS_MSG
-                            % (self.compute_profile_name, self.opr_type),
+                            % (self.compute_profile_name, self.operation_type),
                         }
                     )
                 else:
@@ -95,16 +97,17 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
                         {
                             "status": "error",
                             "message": Constants.CC_OPR_FAILURE_STATUS_MSG
-                            % (self.compute_profile_name, self.opr_type),
+                            % (self.compute_profile_name, self.operation_type),
                         }
                     )
-            elif self.opr_type == Constants.CC_RESUME_OPR:
+            elif (self.operation_type == Constants.CC_RESUME_OPR
+                  or self.operation_type == Constants.CC_CREATE_OPR):
                 if status == Constants.CC_RESUME_DB_STATUS:
                     yield TriggerEvent(
                         {
                             "status": "success",
                             "message": Constants.CC_OPR_SUCCESS_STATUS_MSG
-                            % (self.compute_profile_name, self.opr_type),
+                            % (self.compute_profile_name, self.operation_type),
                         }
                     )
                 else:
@@ -112,13 +115,15 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
                         {
                             "status": "error",
                             "message": Constants.CC_OPR_FAILURE_STATUS_MSG
-                            % (self.compute_profile_name, self.opr_type),
+                            % (self.compute_profile_name, self.operation_type),
                         }
                     )
+            else:
+                yield TriggerEvent({"status": "error", "message": "Invalid operation"})
         except Exception as e:
             yield TriggerEvent({"status": "error", "message": str(e)})
         except asyncio.CancelledError:
-            self.log.info(Constants.CC_OPR_TIMEOUT_ERROR, self.opr_type)
+            self.log.info(Constants.CC_OPR_TIMEOUT_ERROR, self.operation_type)
 
     async def get_status(self, hook: TeradataHook) -> str:
         """Return compute cluster SUSPEND/RESUME operation status."""
@@ -127,8 +132,8 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
             + self.compute_profile_name
             + "'"
         )
-        if self.computer_group_name:
-            sql += " AND ComputeGroupName = '" + self.computer_group_name + "'"
+        if self.compute_group_name:
+            sql += " AND ComputeGroupName = '" + self.compute_group_name + "'"
 
         def handler(cursor):
             records = cursor.fetchone()

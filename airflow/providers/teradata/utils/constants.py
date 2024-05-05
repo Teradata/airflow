@@ -37,5 +37,6 @@ class Constants:
     CC_OPR_TIMEOUT_ERROR = (
         "There is an issue with the %s operation. Kindly consult the administrator for assistance."
     )
+    CC_GRP_PRP_EXISTS_MSG = "The specified Compute cluster is already exists."
     CC_OPR_TIME_OUT = 1200
     CC_POLL_INTERVAL = 60

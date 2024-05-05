@@ -17,6 +17,8 @@
 # under the License.
 from __future__ import annotations
 
+from abc import abstractmethod
+from enum import Enum
 from typing import TYPE_CHECKING
 
 from airflow.models import BaseOperator
@@ -37,7 +39,130 @@ if TYPE_CHECKING:
 from airflow.exceptions import AirflowException
 
 
-class TeradataComputeClusterProvisionOperator(BaseOperator):
+class Operation(Enum):
+    SETUP = 1
+    STATE = 2
+
+
+def _single_result_row_handler(cursor):
+    records = cursor.fetchone()
+    print(records)
+    if isinstance(records, list):
+        return records[0]
+    if records is None:
+        return records
+    raise TypeError(f"Unexpected results: {cursor.fetchone()!r}")
+
+
+def _determine_operation_context(operation):
+    if operation == Constants.CC_CREATE_OPR or operation == Constants.CC_DROP_OPR:
+        return Operation.SETUP
+    return Operation.STATE
+
+
+class _TeradataComputeClusterOperator(BaseOperator):
+    """
+    Teradata Compute Cluster Base Operator to set up and status operations of compute cluster
+
+    :param compute_profile_name: Name of the Compute Profile to manage.
+    :param compute_group_name: Name of compute group to which compute profile belongs.
+    :param conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
+        reference to a specific Teradata database.
+    :param timeout: Time elapsed before the task times out and fails.
+    """
+
+    template_fields: Sequence[str] = ("compute_profile_name", "compute_group_name", "conn_id", "timeout")
+
+    ui_color = "#e07c24"
+
+    def __init__(
+        self,
+        compute_profile_name: str,
+        compute_group_name: str | None = None,
+        conn_id: str = TeradataHook.default_conn_name,
+        timeout: int = Constants.CC_OPR_TIME_OUT,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self.compute_profile_name = compute_profile_name
+        self.compute_group_name = compute_group_name
+        self.conn_id = conn_id
+        self.timeout = timeout
+        self.hook = None
+
+    @abstractmethod
+    def execute(self, context: Context):
+        self.hook = TeradataHook(teradata_conn_id=self.conn_id)
+        pass
+
+    def execute_complete(self, context: Context, event: dict[str, Any]) -> None:
+        """
+        Execute when the trigger fires - returns immediately.
+
+        Relies on trigger to throw an exception, otherwise it assumes execution was successful.
+        """
+        self.compute_cluster_execute_complete(event)
+
+    def compute_cluster_execute(self):
+        # Verifies the provided compute profile name.
+        if (
+            self.compute_profile_name is None
+            or self.compute_profile_name == "None"
+            or self.compute_profile_name == ""
+        ):
+            self.log.info("Invalid compute cluster profile name")
+            raise AirflowException(Constants.CC_OPR_EMPTY_PROFILE_ERROR_MSG)
+        # Verifies if the provided Teradata instance belongs to Vantage Cloud Lake.
+        lake_support_find_sql = "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'"
+        lake_support_result = self.hook.run(lake_support_find_sql, handler=_single_result_row_handler)
+        self.log.info("OFS available - %s ", lake_support_result)
+        if lake_support_result is None:
+            raise AirflowException(Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG)
+        # Getting teradata db version. Considering teradata instance is Lake when db version is 20 or above
+        db_version_get_sql = "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'"
+        try:
+            db_version_result = self.hook.run(db_version_get_sql, handler=_single_result_row_handler)
+            db_version = db_version_result.split(".")[0]
+            self.log.info("DBC version %s ", db_version)
+            if int(db_version) < 20:
+                raise AirflowException(Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG)
+        except Exception as ex:
+            self.log.error('Error occurred while getting teradata database version: ' + str(ex))
+            raise
+
+    def compute_cluster_execute_complete(self, event: dict[str, Any]) -> None:
+        if event["status"] == "success":
+            self.log.info("Operation Status %s", event["message"])
+        elif event["status"] == "error":
+            raise AirflowException(event["message"])
+
+    def _handle_cc_status(self, operation_type, sql):
+        self._hook_run(sql)
+        self.log.info("%s query ran successfully. Differing to trigger to check status in db", operation_type)
+        self.defer(
+            timeout=timedelta(minutes=self.timeout),
+            trigger=TeradataComputeClusterSyncTrigger(
+                conn_id=cast(str, self.conn_id),
+                compute_profile_name=self.compute_profile_name,
+                compute_group_name=self.compute_group_name,
+                operation_type=operation_type,
+                poll_interval=Constants.CC_POLL_INTERVAL,
+            ),
+            method_name="execute_complete",
+        )
+
+    def _hook_run(self, query, handler=None):
+        try:
+            if handler is not None:
+                return self.hook.run(query, handler=handler)
+            else:
+                return self.hook.run(query)
+        except Exception as ex:
+            self.log.info(str(ex))
+            raise
+
+
+class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
     """
     Teradata Compute Cluster Operator to provision the new Teradata Vantage Cloud Lake Compute Cluster
     with specified Compute Group Name and Compute Profile Name.
@@ -48,113 +173,143 @@ class TeradataComputeClusterProvisionOperator(BaseOperator):
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
-        :ref:`howto/operator:TeradataComputeClusterOperator`
+        :ref:`howto/operator:TeradataComputeClusterProvisionOperator`
 
     :param compute_profile_name: Name of the Compute Profile to manage.
-    :param computer_group_name: Name of compute group to which compute profile belongs.
+    :param compute_group_name: Name of compute group to which compute profile belongs.
     :param query_strategy: Query strategy to use. Refers to the approach or method used by the
         Teradata Optimizer to execute SQL queries efficiently within a Teradata computer cluster.
         Valid query_strategy value is either 'STANDARD' or 'ANALYTIC'. Default at database level is STANDARD.
+    :param compute_map: ComputeMapName of the compute map. The compute_map in a compute cluster profile refers
+        to the mapping of compute resources to a specific node or set of nodes within the cluster.
+    :param compute_attribute: Optional attributes of compute profile. Example compute attribute
+        MIN_COMPUTE_COUNT(1) MAX_COMPUTE_COUNT(5) INITIALLY_SUSPENDED('FALSE')
     :param conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
         reference to a specific Teradata database.
     :param timeout: Time elapsed before the task times out and fails.
     """
 
     template_fields: Sequence[str] = (
-    "compute_profile_name", "computer_group_name", "query_strategy", "conn_id", "timeout")
+        "compute_profile_name", "compute_group_name", "query_strategy", "conn_id", "timeout")
 
     ui_color = "#e07c24"
 
     def __init__(
         self,
-        compute_profile_name: str,
-        computer_group_name: str | None = None,
         query_strategy: str | None = None,
-        conn_id: str = TeradataHook.default_conn_name,
-        timeout: int = Constants.CC_OPR_TIME_OUT,
+        compute_map: str | None = None,
+        compute_attribute: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
-        self.compute_profile_name = compute_profile_name
-        self.computer_group_name = computer_group_name
         self.query_strategy = query_strategy
-        self.conn_id = conn_id
-        self.timeout = timeout
+        self.compute_map = compute_map
+        self.compute_attribute = compute_attribute
+
+    def _build_ccp_setup_query(self):
+        create_cp_query = "CREATE COMPUTE PROFILE " + self.compute_profile_name
+        if self.compute_group_name:
+            create_cp_query = create_cp_query + ' IN ' + self.compute_group_name
+        if self.compute_map is not None:
+            create_cp_query = create_cp_query + ', INSTANCE = ' + self.compute_map
+        if self.query_strategy is not None:
+            create_cp_query = create_cp_query + ", INSTANCE TYPE = " + self.query_strategy
+        if self.compute_attribute is not None:
+            create_cp_query = create_cp_query + ' USING ' + self.compute_attribute
+        return create_cp_query
 
     def execute(self, context: Context):
+
         """
-        Initiate the execution of CREATE COMPUTE CLUSTER statement.
+        Initiate the execution of CREATE COMPUTE SQL statement.
 
-        Initiate the execution of the SQL statement for creating the compute cluster within Teradata Vantage
-        Lake. Airflow runs this method on the worker and defers using the trigger.
+        Initiate the execution of the SQL statement for provisioning the compute cluster within Teradata Vantage
+        Lake, effectively creates the compute cluster.
+        Airflow runs this method on the worker and defers using the trigger.
         """
-        return compute_cluster_execute(self, Constants.CC_CREATE_OPR)
+        super().execute(context)
+        return self.compute_cluster_execute()
 
-    def execute_complete(self, context: Context, event: dict[str, Any]) -> None:
-        """
-        Execute when the trigger fires - returns immediately.
+    def compute_cluster_execute(self):
+        super().compute_cluster_execute()
+        if self.compute_group_name:
+            cg_status_query = ("SELECT  count(1) FROM DBC.ComputeGroupStatusV WHERE ComputeGroupName = '"
+                               + self.compute_group_name + "'")
+            cg_status_result = self._hook_run(cg_status_query, _single_result_row_handler)
+            self.log.debug(f"cg_status_result - %s", cg_status_result)
+            if int(cg_status_result) == 0:
+                self.log.info(f"Compute Group %s not exists. Creating it", self.compute_group_name)
+                create_cg_query = "CREATE COMPUTE GROUP " + self.compute_group_name
+                if self.query_strategy is not None:
+                    create_cg_query = create_cg_query + " USING QUERY_STRATEGY ('" + self.query_strategy + "')"
+                self._hook_run(create_cg_query, _single_result_row_handler)
+        create_cp_query = self._build_ccp_setup_query()
+        return self._handle_cc_status(Constants.CC_CREATE_OPR, create_cp_query)
 
-        Relies on trigger to throw an exception, otherwise it assumes execution was successful.
-        """
-        compute_cluster_execute_complete(self, event)
 
-
-class TeradataComputeClusterSuspendOperator(BaseOperator):
+class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator):
     """
-    Teradata Compute Cluster Operator to suspend the specified Teradata Vantage Cloud Lake Compute Cluster.
+    Teradata Compute Cluster Operator to de-provision the Teradata Vantage Cloud Lake Compute Cluster
+    with specified Compute Group Name and Compute Profile Name.
 
-    Suspends the Teradata Vantage Lake Computer Cluster by employing the SUSPEND SQL statement within the
+    Drops the Teradata Vantage Lake Computer Cluster with specified Compute Group Name and
+    Compute Profile Name by employing the DROP COMPUTE GROUP SQL statement within the
     Teradata Vantage Lake Compute Cluster SQL Interface.
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
-        :ref:`howto/operator:TeradataComputeClusterOperator`
+        :ref:`howto/operator:TeradataComputeClusterDecommissionOperator`
 
     :param compute_profile_name: Name of the Compute Profile to manage.
-    :param computer_group_name: Name of compute group to which compute profile belongs.
+    :param compute_group_name: Name of compute group to which compute profile belongs.
+    :param delete_compute_group: Indicates whether the compute group should be deleted.
+        When set to True, it signals the system to remove the specified compute group.
+        Conversely, when set to False, no action is taken on the compute group.
     :param conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
         reference to a specific Teradata database.
     :param timeout: Time elapsed before the task times out and fails.
     """
 
-    template_fields: Sequence[str] = ("compute_profile_name", "computer_group_name", "conn_id", "timeout")
+    template_fields: Sequence[str] = (
+        "compute_profile_name", "compute_group_name", "delete_compute_group", "conn_id", "timeout")
 
     ui_color = "#e07c24"
 
     def __init__(
         self,
-        compute_profile_name: str,
-        computer_group_name: str | None = None,
-        conn_id: str = TeradataHook.default_conn_name,
-        timeout: int = Constants.CC_OPR_TIME_OUT,
+        delete_compute_group: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
-        self.compute_profile_name = compute_profile_name
-        self.computer_group_name = computer_group_name
-        self.conn_id = conn_id
-        self.timeout = timeout
+        self.delete_compute_group = delete_compute_group
 
     def execute(self, context: Context):
-        """
-        Initiate the execution of SUSPEND SQL statement.
 
-        Initiate the execution of the SQL statement for resuming the compute cluster within Teradata Vantage
-        Lake, effectively suspend the compute cluster.
+        """
+        Initiate the execution of DROP COMPUTE SQL statement.
+
+        Initiate the execution of the SQL statement for decommissioning the compute cluster within Teradata Vantage
+        Lake, effectively drops the compute cluster.
         Airflow runs this method on the worker and defers using the trigger.
         """
-        return compute_cluster_execute(self, Constants.CC_SUSPEND_OPR)
+        super().execute(context)
+        return self.compute_cluster_execute()
 
-    def execute_complete(self, context: Context, event: dict[str, Any]) -> None:
-        """
-        Execute when the trigger fires - returns immediately.
+    def compute_cluster_execute(self):
+        super().compute_cluster_execute()
+        cp_drop_query = 'DROP COMPUTE PROFILE ' + self.compute_profile_name
+        if self.compute_group_name:
+            cp_drop_query = cp_drop_query + ' IN COMPUTE GROUP ' + self.compute_group_name
+        self._hook_run(cp_drop_query, handler=_single_result_row_handler)
+        self.log.info(f"Compute Profile %s IN Compute Group %s is successfully dropped",
+                      self.compute_profile_name, self.compute_group_name)
+        if self.delete_compute_group:
+            cg_drop_query = 'DROP COMPUTE GROUP ' + self.compute_group_name
+            self._hook_run(cg_drop_query, handler=_single_result_row_handler)
+            self.log.info(f"Compute Group %s is successfully dropped", self.compute_group_name)
 
-        Relies on trigger to throw an exception, otherwise it assumes execution was successful.
-        """
-        compute_cluster_execute_complete(self, event)
 
-
-class TeradataComputeClusterResumeOperator(BaseOperator):
+class TeradataComputeClusterResumeOperator(_TeradataComputeClusterOperator):
     """
     Teradata Compute Cluster Operator to Resume the specified Teradata Vantage Cloud Lake Compute Cluster.
 
@@ -163,186 +318,86 @@ class TeradataComputeClusterResumeOperator(BaseOperator):
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
-        :ref:`howto/operator:TeradataComputeClusterOperator`
+        :ref:`howto/operator:TeradataComputeClusterResumeOperator`
 
     :param compute_profile_name: Name of the Compute Profile to manage.
-    :param computer_group_name: Name of compute group to which compute profile belongs.
+    :param compute_group_name: Name of compute group to which compute profile belongs.
     :param conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
         reference to a specific Teradata database.
     :param timeout: Time elapsed before the task times out and fails. Time is in minutes.
     """
 
-    template_fields: Sequence[str] = ("compute_profile_name", "computer_group_name", "conn_id", "timeout")
+    template_fields: Sequence[str] = ("compute_profile_name", "compute_group_name", "conn_id", "timeout")
 
     ui_color = "#e07c24"
 
     def __init__(
         self,
-        compute_profile_name: str,
-        computer_group_name: str | None = None,
-        conn_id: str = TeradataHook.default_conn_name,
-        timeout: int = Constants.CC_OPR_TIME_OUT,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
-        self.compute_profile_name = compute_profile_name
-        self.computer_group_name = computer_group_name
-        self.conn_id = conn_id
-        self.timeout = timeout
 
     def execute(self, context: Context):
         """
-        Initiate the execution of RESUME SQL statement.
+        Initiate the execution of RESUME COMPUTE SQL statement.
 
         Initiate the execution of the SQL statement for resuming the compute cluster within Teradata Vantage
-        Lake, effectively resuming the compute cluster.
-
+        Lake, effectively resumes the compute cluster.
         Airflow runs this method on the worker and defers using the trigger.
-
         """
-        return compute_cluster_execute(self, Constants.CC_RESUME_OPR)
+        super().execute(context)
+        return self.compute_cluster_execute()
 
-    def execute_complete(self, context: Context, event: dict[str, Any]) -> None:
+    def compute_cluster_execute(self):
+        super().compute_cluster_execute()
+        sql = f"RESUME COMPUTE FOR COMPUTE PROFILE {self.compute_profile_name}"
+        if self.compute_group_name:
+            sql = f"{sql} IN COMPUTE GROUP {self.compute_group_name}"
+        return self._handle_cc_status(Constants.CC_RESUME_OPR, sql)
+
+
+class TeradataComputeClusterSuspendOperator(_TeradataComputeClusterOperator):
+    """
+    Teradata Compute Cluster Operator to suspend the specified Teradata Vantage Cloud Lake Compute Cluster.
+
+    Suspends the Teradata Vantage Lake Computer Cluster by employing the SUSPEND SQL statement within the
+    Teradata Vantage Lake Compute Cluster SQL Interface.
+
+    .. seealso::
+        For more information on how to use this operator, take a look at the guide:
+        :ref:`howto/operator:TeradataComputeClusterSuspendOperator`
+
+    :param compute_profile_name: Name of the Compute Profile to manage.
+    :param compute_group_name: Name of compute group to which compute profile belongs.
+    :param conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
+        reference to a specific Teradata database.
+    :param timeout: Time elapsed before the task times out and fails.
+    """
+
+    template_fields: Sequence[str] = ("compute_profile_name", "compute_group_name", "conn_id", "timeout")
+
+    ui_color = "#e07c24"
+
+    def __init__(
+        self,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+
+    def execute(self, context: Context):
         """
-        Execute when the trigger fires - returns immediately.
+        Initiate the execution of SUSPEND COMPUTE SQL statement.
 
-        Relies on trigger to throw an exception, otherwise it assumes execution was successful.
+        Initiate the execution of the SQL statement for suspending the compute cluster within Teradata Vantage
+        Lake, effectively suspends the compute cluster.
+        Airflow runs this method on the worker and defers using the trigger.
         """
-        self.log.info("Response came after trigger execute ")
-        compute_cluster_execute_complete(self, event)
+        super().execute(context)
+        return self.compute_cluster_execute()
 
-
-def _isCDOperation(opr):
-    if opr == Constants.CC_CREATE_OPR or opr == Constants.CC_DROP_OPR:
-        return True
-    return False
-
-
-def compute_cluster_execute(self, opr):
-    hook = TeradataHook(teradata_conn_id=self.conn_id)
-    # Verifies the provided compute profile name.
-    if (
-        self.compute_profile_name is None
-        or self.compute_profile_name == "None"
-        or self.compute_profile_name == ""
-    ):
-        self.log.info("Invalid compute cluster profile name")
-        raise AirflowException(Constants.CC_OPR_EMPTY_PROFILE_ERROR_MSG)
-    # Verifies if the provided Teradata instance belongs to Vantage Cloud Lake.
-    sql = "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'"
-    result = hook.run(sql, handler=__handler)
-    self.log.info("OFS available - %s ", result)
-    if int(result) == 0:
-        raise AirflowException(Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG)
-
-    sql = "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'"
-    result = hook.run(sql, handler=__handler)
-    db_version = result.split(".")[0]
-    self.log.info("DBC version %s ", db_version)
-    if int(db_version) < 20:
-        raise AirflowException(Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG)
-
-    sql = (
-        "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '"
-        + self.compute_profile_name
-        + "'"
-    )
-    if self.computer_group_name:
-        sql += " AND ComputeGroupName = '" + self.computer_group_name + "'"
-    result = hook.run(sql, handler=__handler)
-    # Generates an error message if the compute cluster does not exist for the specified compute profile and compute group.
-    if result is None:
-        self.log.info(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
-        raise AirflowException(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
-    # Generates an error message if the compute cluster initializing
-    if result == Constants.CC_INITIALIZE_DB_STATUS:
-        self.log.info(Constants.CC_OPR_INITIALIZING_STATUS_MSG)
-        raise AirflowException(Constants.CC_OPR_INITIALIZING_STATUS_MSG)
-    # SUSPEND operation
-    if opr == Constants.CC_SUSPEND_OPR:
-        # If status is not in SUSPEND
-        if result != Constants.CC_SUSPEND_DB_STATUS:
-            sql = f"SUSPEND COMPUTE FOR COMPUTE PROFILE {self.compute_profile_name}"
-            if self.computer_group_name:
-                sql = f"{sql} IN COMPUTE GROUP {self.computer_group_name}"
-            self.log.info("Compute Cluster %s Operation - SQL : %s", opr, sql)
-            return __handle_result(
-                self,
-                Constants.CC_SUSPEND_OPR,
-                Constants.CC_SUSPEND_DB_STATUS,
-                Constants.CC_RESUME_DB_STATUS,
-                sql,
-                result,
-                hook,
-            )
-        else:
-            self.log.info(
-                "Compute Cluster %s already %s", self.compute_profile_name, Constants.CC_SUSPEND_DB_STATUS
-            )
-    # RESUME operation
-    elif opr == Constants.CC_RESUME_OPR:
-        # If status is not in RESUME
-        if result != Constants.CC_RESUME_DB_STATUS:
-            sql = f"RESUME COMPUTE FOR COMPUTE PROFILE {self.compute_profile_name}"
-            if self.computer_group_name:
-                sql = f"{sql} IN COMPUTE GROUP {self.computer_group_name}"
-            self.log.info("Compute Cluster %s Operation - SQL : %s", opr, sql)
-            return __handle_result(
-                self,
-                Constants.CC_RESUME_OPR,
-                Constants.CC_RESUME_DB_STATUS,
-                Constants.CC_SUSPEND_DB_STATUS,
-                sql,
-                result,
-                hook,
-            )
-        else:
-            self.log.info(
-                "Compute Cluster %s already %s", self.compute_profile_name, Constants.CC_RESUME_DB_STATUS
-            )
-
-
-def compute_cluster_execute_complete(self, event: dict[str, Any]) -> None:
-    if event["status"] == "success":
-        self.log.info("Operation Status %s", event["message"])
-    elif event["status"] == "error":
-        raise AirflowException(event["message"])
-
-
-def __handle_result(self, opr_type, db_status, check_opp_db_status, sql, result, hook):
-    try:
-        hook.run(sql)
-    except Exception as ex:
-        ignored = False
-        # Handling if operation is already in progress
-        if "[Error 4825]" in str(ex) and result == check_opp_db_status:
-            self.log.info("A %s operation is already underway. Kindly check the status.", opr_type)
-            self.ignored = True
-            return False
-        # Handling permission issue errors
-        if "[Error 4824]" in str(ex):
-            self.log.info(Constants.CC_GRP_PRP_UN_AUTHORIZED_MSG, opr_type)
-            raise AirflowException(Constants.CC_GRP_PRP_UN_AUTHORIZED_MSG, opr_type)
-        if not ignored:
-            raise  # rethrow
-    self.log.info("%s query ran successfully. Differing to trigger to check status in db", opr_type)
-    self.defer(
-        timeout=timedelta(minutes=self.timeout),
-        trigger=TeradataComputeClusterSyncTrigger(
-            conn_id=cast(str, self.conn_id),
-            compute_profile_name=self.compute_profile_name,
-            computer_group_name=self.computer_group_name,
-            opr_type=opr_type,
-            poll_interval=Constants.CC_POLL_INTERVAL,
-        ),
-        method_name="execute_complete",
-    )
-
-
-def __handler(cursor):
-    records = cursor.fetchone()
-    if isinstance(records, list):
-        return records[0]
-    if records is None:
-        return records
-    raise TypeError(f"Unexpected results: {cursor.fetchone()!r}")
+    def compute_cluster_execute(self):
+        super().compute_cluster_execute()
+        sql = f"SUSPEND COMPUTE FOR COMPUTE PROFILE {self.compute_profile_name}"
+        if self.compute_group_name:
+            sql = f"{sql} IN COMPUTE GROUP {self.compute_group_name}"
+        return self._handle_cc_status(Constants.CC_SUSPEND_OPR, sql)

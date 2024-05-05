@@ -16,7 +16,7 @@
 # specific language governing permissions and limitations
 # under the License.
 """
-Example use of Teradata Compute Cluster Resume Operator
+Example use of Teradata Compute Cluster Provision Operator
 """
 
 from __future__ import annotations
@@ -31,17 +31,16 @@ from airflow.models import Param
 
 try:
     from airflow.providers.teradata.operators.teradata_compute_cluster import (
-        TeradataComputeClusterResumeOperator,
+        TeradataComputeClusterProvisionOperator,
     )
 except ImportError:
     pytest.skip("TERADATA provider not available", allow_module_level=True)
 
-# [START teradata_vantage_lake_compute_cluster_resume_howto_guide]
+# [START teradata_vantage_lake_compute_cluster_provision_howto_guide]
 
 
 ENV_ID = os.environ.get("SYSTEM_TESTS_ENV_ID")
-DAG_ID = "example_teradata_computer_cluster_resume"
-
+DAG_ID = "example_teradata_computer_cluster_provision"
 
 with DAG(
     dag_id=DAG_ID,
@@ -63,8 +62,26 @@ with DAG(
             title="Compute cluster profile Name:",
             description="Enter compute cluster profile name.",
         ),
+        "query_strategy": Param(
+            "STANDARD",
+            type="string",
+            title="Compute cluster instance type:",
+            description="Enter compute cluster instance type. Valid values are STANDARD, ANALYTIC",
+        ),
+        "compute_map": Param(
+            "TD_COMPUTE_XSMALL",
+            type="string",
+            title="Compute Map Name:",
+            description="Enter compute cluster compute map name.",
+        ),
+        "compute_attribute": Param(
+            "MIN_COMPUTE_COUNT(1) MAX_COMPUTE_COUNT(5) INITIALLY_SUSPENDED('FALSE')",
+            type="string",
+            title="Compute cluster compute attribute:",
+            description="Enter compute cluster compute attribute values.",
+        ),
         "conn_id": Param(
-            "teradata_lake",
+            "teradata_default",
             type="string",
             title="Teradata ConnectionId:",
             description="Enter Teradata connection id.",
@@ -77,16 +94,19 @@ with DAG(
         ),
     },
 ) as dag:
-    compute_cluster_resume_operation = TeradataComputeClusterResumeOperator(
-        task_id="compute_cluster_resume_operation",
+    compute_cluster_provision_operation = TeradataComputeClusterProvisionOperator(
+        task_id="compute_cluster_provision_operation",
         compute_profile_name="{{ params.compute_profile_name }}",
         compute_group_name="{{ params.compute_group_name }}",
         conn_id="{{ params.conn_id }}",
         timeout="{{ params.timeout }}",
+        query_strategy="{{ params.query_strategy }}",
+        compute_map="TD_COMPUTE_XSMALL",
+        compute_attribute="MIN_COMPUTE_COUNT(1) MAX_COMPUTE_COUNT(5) INITIALLY_SUSPENDED('FALSE')",
     )
-    (compute_cluster_resume_operation)
+    (compute_cluster_provision_operation)
 
-    # [END teradata_vantage_lake_compute_cluster_resume_howto_guide]
+    # [END teradata_vantage_lake_compute_cluster_provision_howto_guide]
 
     from tests.system.utils.watcher import watcher
 

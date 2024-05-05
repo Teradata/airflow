@@ -36,7 +36,7 @@ try:
 except ImportError:
     pytest.skip("TERADATA provider not available", allow_module_level=True)
 
-# [START teradata_vantage_lake_compute_cluster_manage_howto_guide]
+# [START teradata_vantage_lake_compute_cluster_suspend_howto_guide]
 
 
 ENV_ID = os.environ.get("SYSTEM_TESTS_ENV_ID")
@@ -50,7 +50,7 @@ with DAG(
     default_args={"conn_id": "teradata_lake"},
     render_template_as_native_obj=True,
     params={
-        "computer_group_name": Param(
+        "compute_group_name": Param(
             "compute_group_test",
             type="string",
             title="Compute cluster group Name:",
@@ -76,18 +76,16 @@ with DAG(
         ),
     },
 ) as dag:
-    # [START teradata_compute_cluster_suspend_operator_howto_guide]
     compute_cluster_suspend_operation = TeradataComputeClusterSuspendOperator(
         task_id="compute_cluster_suspend_operation",
         compute_profile_name="{{ params.compute_profile_name }}",
-        computer_group_name="{{ params.computer_group_name }}",
+        compute_group_name="{{ params.compute_group_name }}",
         conn_id="{{ params.conn_id }}",
         timeout="{{ params.timeout }}",
     )
-    # [END teradata_compute_cluster_suspend_operator_howto_guide]
     (compute_cluster_suspend_operation)
 
-    # [END teradata_vantage_lake_compute_cluster_manage_howto_guide]
+    # [END teradata_vantage_lake_compute_cluster_suspend_howto_guide]
 
     from tests.system.utils.watcher import watcher
 
