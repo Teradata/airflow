@@ -238,7 +238,7 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
         super().compute_cluster_execute()
         if self.compute_group_name:
             cg_status_query = (
-                "SELECT  count(1) FROM DBC.ComputeGroupStatusV WHERE ComputeGroupName = '"
+                "SELECT  count(1) FROM DBC.ComputeGroups WHERE ComputeGroupName = '"
                 + self.compute_group_name
                 + "'"
             )
