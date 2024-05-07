@@ -256,8 +256,23 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
                         create_cg_query + " USING QUERY_STRATEGY ('" + self.query_strategy + "')"
                     )
                 self._hook_run(create_cg_query, _single_result_row_handler)
-        create_cp_query = self._build_ccp_setup_query()
-        return self._handle_cc_status(Constants.CC_CREATE_OPR, create_cp_query)
+        cp_status_query = (
+            "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '"
+            + self.compute_profile_name
+            + "'"
+        )
+        if self.compute_group_name:
+            cp_status_query += " AND ComputeGroupName = '" + self.compute_group_name + "'"
+        cp_status_result = self._hook_run(cp_status_query, handler=_single_result_row_handler)
+        if cp_status_result is not None:
+            cp_status_result = str(cp_status_result)
+            self.log.info(
+                "Compute Profile %s is already exists under Compute Group %s. Status is %s",
+                self.compute_profile_name, self.compute_group_name, cp_status_result
+            )
+        else:
+            create_cp_query = self._build_ccp_setup_query()
+            return self._handle_cc_status(Constants.CC_CREATE_OPR, create_cp_query)
 
 
 class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator):
@@ -365,10 +380,30 @@ class TeradataComputeClusterResumeOperator(_TeradataComputeClusterOperator):
 
     def compute_cluster_execute(self):
         super().compute_cluster_execute()
-        sql = f"RESUME COMPUTE FOR COMPUTE PROFILE {self.compute_profile_name}"
+        cc_status_query = (
+            "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '"
+            + self.compute_profile_name
+            + "'"
+        )
         if self.compute_group_name:
-            sql = f"{sql} IN COMPUTE GROUP {self.compute_group_name}"
-        return self._handle_cc_status(Constants.CC_RESUME_OPR, sql)
+            cc_status_query += " AND ComputeGroupName = '" + self.compute_group_name + "'"
+        cc_status_result = self._hook_run(cc_status_query, handler=_single_result_row_handler)
+        if cc_status_result is not None:
+            cp_status_result = str(cc_status_result)
+        # Generates an error message if the compute cluster does not exist for the specified
+        # compute profile and compute group.
+        else:
+            self.log.info(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
+            raise AirflowException(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
+        if cp_status_result != Constants.CC_RESUME_DB_STATUS:
+            cp_resume_query = f"RESUME COMPUTE FOR COMPUTE PROFILE {self.compute_profile_name}"
+            if self.compute_group_name:
+                cp_resume_query = f"{cp_resume_query} IN COMPUTE GROUP {self.compute_group_name}"
+            return self._handle_cc_status(Constants.CC_RESUME_OPR, cp_resume_query)
+        else:
+            self.log.info(
+                "Compute Cluster %s already %s", self.compute_profile_name, Constants.CC_RESUME_DB_STATUS
+            )
 
 
 class TeradataComputeClusterSuspendOperator(_TeradataComputeClusterOperator):
@@ -412,7 +447,27 @@ class TeradataComputeClusterSuspendOperator(_TeradataComputeClusterOperator):
 
     def compute_cluster_execute(self):
         super().compute_cluster_execute()
-        sql = f"SUSPEND COMPUTE FOR COMPUTE PROFILE {self.compute_profile_name}"
+        sql = (
+            "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '"
+            + self.compute_profile_name
+            + "'"
+        )
         if self.compute_group_name:
-            sql = f"{sql} IN COMPUTE GROUP {self.compute_group_name}"
-        return self._handle_cc_status(Constants.CC_SUSPEND_OPR, sql)
+            sql += " AND ComputeGroupName = '" + self.compute_group_name + "'"
+        result = self._hook_run(sql, handler=_single_result_row_handler)
+        if result is not None:
+            result = str(result)
+        # Generates an error message if the compute cluster does not exist for the specified
+        # compute profile and compute group.
+        else:
+            self.log.info(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
+            raise AirflowException(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
+        if result != Constants.CC_SUSPEND_DB_STATUS:
+            sql = f"SUSPEND COMPUTE FOR COMPUTE PROFILE {self.compute_profile_name}"
+            if self.compute_group_name:
+                sql = f"{sql} IN COMPUTE GROUP {self.compute_group_name}"
+            return self._handle_cc_status(Constants.CC_SUSPEND_OPR, sql)
+        else:
+            self.log.info(
+                "Compute Cluster %s already %s", self.compute_profile_name, Constants.CC_SUSPEND_DB_STATUS
+            )
