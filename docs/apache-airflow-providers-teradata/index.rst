@@ -77,7 +77,7 @@ apache-airflow-providers-teradata package
 `Teradata <https://www.teradata.com/>`__
 
 
-Release: 2.1.0
+Release: 2.0.0
 
 Provider package
 ----------------
