@@ -17,146 +17,697 @@
 # under the License.
 from __future__ import annotations
 
-from unittest import mock
-from unittest.mock import MagicMock, Mock
+from unittest.mock import call, patch
+
+import pytest
 
 from airflow.exceptions import AirflowException
-from airflow.providers.common.sql.hooks.sql import fetch_all_handler
-from airflow.providers.teradata.hooks.teradata import TeradataHook
-from airflow.providers.teradata.operators.teradata import TeradataOperator
 from airflow.providers.teradata.operators.teradata_compute_cluster import (
+    TeradataComputeClusterDecommissionOperator,
     TeradataComputeClusterProvisionOperator,
+    TeradataComputeClusterResumeOperator,
+    TeradataComputeClusterSuspendOperator,
+    _single_result_row_handler,
 )
+from airflow.providers.teradata.triggers.teradata_compute_cluster import TeradataComputeClusterSyncTrigger
+from airflow.providers.teradata.utils.constants import Constants
 
 
-class TestTeradataOperator:
-    @mock.patch("airflow.providers.common.sql.operators.sql.SQLExecuteQueryOperator.get_db_hook")
-    def test_get_hook_from_conn(self, mock_get_db_hook):
-        """
-        :class:`~.TeradataOperator` should use the hook returned by :meth:`airflow.models.Connection.get_hook`
-        if one is returned.
+@pytest.fixture
+def compute_profile_name():
+    return "test_profile"
 
-        Specifically we verify here that :meth:`~.TeradataOperator.get_hook` returns the hook returned from a
-        call of ``get_hook`` on the object returned from :meth:`~.BaseHook.get_connection`.
-        """
-        mock_hook = MagicMock()
-        mock_get_db_hook.return_value = mock_hook
 
-        op = TeradataOperator(task_id="test", sql="")
-        assert op.get_db_hook() == mock_hook
+@pytest.fixture
+def compute_group_name():
+    return "test_group"
 
-    @mock.patch(
-        "airflow.providers.common.sql.operators.sql.SQLExecuteQueryOperator.get_db_hook",
-        autospec=TeradataHook,
+
+@pytest.fixture
+def query_strategy():
+    return "test_query_strategy"
+
+
+@pytest.fixture
+def compute_map():
+    return "test_compute_map"
+
+
+@pytest.fixture
+def compute_attribute():
+    return "test_compute_attribute"
+
+
+@pytest.fixture
+def compute_cluster_provision_instance(compute_profile_name):
+    return TeradataComputeClusterProvisionOperator(
+        task_id="test", compute_profile_name=compute_profile_name, conn_id="test_conn"
     )
-    def test_get_hook_default(self, mock_get_db_hook):
-        """
-        If :meth:`airflow.models.Connection.get_hook` does not return a hook (e.g. because of an invalid
-        conn type), then :class:`~.TeradataHook` should be used.
-        """
-        mock_get_db_hook.return_value.side_effect = Mock(side_effect=AirflowException())
-
-        op = TeradataOperator(task_id="test", sql="")
-        assert op.get_db_hook().__class__.__name__ == "TeradataHook"
-
-    @mock.patch("airflow.providers.common.sql.operators.sql.SQLExecuteQueryOperator.get_db_hook")
-    def test_execute(self, mock_get_db_hook):
-        sql = "SELECT * FROM test_table"
-        conn_id = "teradata_default"
-        parameters = {"parameter": "value"}
-        autocommit = False
-        context = "test_context"
-        task_id = "test_task_id"
-
-        operator = TeradataOperator(sql=sql, conn_id=conn_id, parameters=parameters, task_id=task_id)
-        operator.execute(context=context)
-        mock_get_db_hook.return_value.run.assert_called_once_with(
-            sql=sql,
-            autocommit=autocommit,
-            parameters=parameters,
-            handler=fetch_all_handler,
-            return_last=True,
-        )
-
-    @mock.patch("airflow.providers.common.sql.operators.sql.SQLExecuteQueryOperator.get_db_hook")
-    def test_teradata_operator_test_multi(self, mock_get_db_hook):
-        sql = [
-            "CREATE TABLE IF NOT EXISTS test_airflow (dummy VARCHAR(50))",
-            "TRUNCATE TABLE test_airflow",
-            "INSERT INTO test_airflow VALUES ('X')",
-        ]
-        conn_id = "teradata_default"
-        parameters = {"parameter": "value"}
-        autocommit = False
-        context = "test_context"
-        task_id = "test_task_id"
-
-        operator = TeradataOperator(sql=sql, conn_id=conn_id, parameters=parameters, task_id=task_id)
-        operator.execute(context=context)
-        mock_get_db_hook.return_value.run.assert_called_once_with(
-            sql=sql,
-            autocommit=autocommit,
-            parameters=parameters,
-            handler=fetch_all_handler,
-            return_last=True,
-        )
 
 
-class TestTeradataComputeClusterProvisionOperator:
-    @mock.patch("airflow.providers.teradata.transfers.azure_blob_to_teradata.TeradataHook")
-    def test_execute_hook(self, mock_hook):
-        compute_profile_name = "test"
-        computer_group_name = "test"
-        query_strategy = "test"
-        compute_map = "test"
-        compute_attribute = "test"
-        conn_id = "teradata_default"
-        timeout = 1
-        context = "test_context"
-        task_id = "test_task_id"
+@pytest.fixture
+def compute_cluster_decommission_instance(compute_profile_name):
+    return TeradataComputeClusterDecommissionOperator(
+        task_id="test", compute_profile_name=compute_profile_name, conn_id="test_conn"
+    )
 
-        operator = TeradataComputeClusterProvisionOperator(
-            compute_profile_name=compute_profile_name,
-            computer_group_name=computer_group_name,
-            query_strategy=query_strategy,
-            compute_map=compute_map,
-            compute_attribute=compute_attribute,
-            conn_id=conn_id,
-            timeout=timeout,
-            task_id=task_id,
-        )
-        operator.execute(context=context)
-        mock_hook.assert_called_once_with(teradata_conn_id=conn_id)
 
-        @mock.patch.object(
-            TeradataComputeClusterProvisionOperator,
-            "compute_cluster_execute",
-            autospec=TeradataComputeClusterProvisionOperator.compute_cluster_execute,
-        )
-        def test_mock_compute_cluster_execute(self, mock_compute_cluster_execute):
-            compute_profile_name = "test"
-            computer_group_name = "test"
-            query_strategy = "test"
-            compute_map = "test"
-            compute_attribute = "test"
-            conn_id = "teradata_default"
-            timeout = 1
-            context = "test_context"
-            task_id = "test_task_id"
+@pytest.fixture
+def compute_cluster_resume_instance(compute_profile_name):
+    return TeradataComputeClusterResumeOperator(
+        task_id="test", compute_profile_name=compute_profile_name, conn_id="test_conn"
+    )
 
-            operator = TeradataComputeClusterProvisionOperator(
-                compute_profile_name=compute_profile_name,
-                computer_group_name=computer_group_name,
-                query_strategy=query_strategy,
-                compute_map=compute_map,
-                compute_attribute=compute_attribute,
-                conn_id=conn_id,
-                timeout=timeout,
-                task_id=task_id,
+
+@pytest.fixture
+def compute_cluster_suspend_instance(compute_profile_name):
+    return TeradataComputeClusterSuspendOperator(
+        task_id="test", compute_profile_name=compute_profile_name, conn_id="test_conn"
+    )
+
+
+class TestTeradataComputeClusterOperator:
+    def test_compute_cluster_execute_invalid_profile(self, compute_cluster_provision_instance):
+        compute_cluster_provision_instance.compute_profile_name = None
+        with pytest.raises(AirflowException):
+            compute_cluster_provision_instance._compute_cluster_execute()
+
+    def test_compute_cluster_execute_empty_profile(self, compute_cluster_provision_instance):
+        compute_cluster_provision_instance.compute_profile_name = ""
+        with pytest.raises(AirflowException):
+            compute_cluster_provision_instance._compute_cluster_execute()
+
+    def test_compute_cluster_execute_none_profile(self, compute_cluster_provision_instance):
+        compute_cluster_provision_instance.compute_profile_name = "None"
+        with pytest.raises(AirflowException):
+            compute_cluster_provision_instance._compute_cluster_execute()
+
+    def test_compute_cluster_execute_not_lake(self, compute_cluster_provision_instance):
+        with patch.object(compute_cluster_provision_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = [None]
+        with pytest.raises(AirflowException):
+            compute_cluster_provision_instance._compute_cluster_execute()
+
+    def test_compute_cluster_execute_not_lake_version_check(self, compute_cluster_provision_instance):
+        with patch.object(compute_cluster_provision_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "19"]
+        with pytest.raises(AirflowException):
+            compute_cluster_provision_instance._compute_cluster_execute()
+
+    def test_compute_cluster_execute_not_lake_version_none(self, compute_cluster_provision_instance):
+        with patch.object(compute_cluster_provision_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", None]
+        with pytest.raises(AirflowException):
+            compute_cluster_provision_instance._compute_cluster_execute()
+
+    def test_compute_cluster_execute_not_lake_version_invalid(self, compute_cluster_provision_instance):
+        with patch.object(compute_cluster_provision_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "invalid"]
+        with pytest.raises(AirflowException):
+            compute_cluster_provision_instance._compute_cluster_execute()
+
+    def test_compute_cluster_execute_complete_success(self, compute_cluster_provision_instance):
+        event = {"status": "success", "message": "Success message"}
+        # Call the method under test
+        result = compute_cluster_provision_instance._compute_cluster_execute_complete(event)
+        assert result == "Success message"
+
+    def test_compute_cluster_execute_complete_error(self, compute_cluster_provision_instance):
+        event = {"status": "error", "message": "Error message"}
+        with pytest.raises(AirflowException):
+            compute_cluster_provision_instance._compute_cluster_execute_complete(event)
+
+    def test_cc_execute_provision_new_cp(self, compute_cluster_provision_instance):
+        with patch.object(compute_cluster_provision_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "20.00", None, "Success"]
+            compute_profile_name = compute_cluster_provision_instance.compute_profile_name
+            with patch.object(compute_cluster_provision_instance, "defer") as mock_defer:
+                # Assert that defer method is called with the correct parameters
+                expected_trigger = TeradataComputeClusterSyncTrigger(
+                    conn_id=compute_cluster_provision_instance.conn_id,
+                    compute_profile_name=compute_profile_name,
+                    operation_type=Constants.CC_CREATE_OPR,
+                    poll_interval=Constants.CC_POLL_INTERVAL,
+                )
+                mock_defer.return_value = expected_trigger
+                result = compute_cluster_provision_instance._compute_cluster_execute()
+                assert result == "Success"
+                mock_defer.assert_called_once()
+                mock_hook.run.assert_has_calls(
+                    [
+                        call(
+                            "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"CREATE COMPUTE PROFILE {compute_profile_name}",
+                            handler=_single_result_row_handler,
+                        ),
+                    ]
+                )
+
+    def test_cc_execute_provision_exists_cp(self, compute_cluster_provision_instance):
+        with patch.object(compute_cluster_provision_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "20.00", "RUNNING", "Success"]
+            compute_profile_name = compute_cluster_provision_instance.compute_profile_name
+            with patch.object(compute_cluster_provision_instance, "defer") as mock_defer:
+                # Assert that defer method is called with the correct parameters
+                expected_trigger = TeradataComputeClusterSyncTrigger(
+                    conn_id=compute_cluster_provision_instance.conn_id,
+                    compute_profile_name=compute_profile_name,
+                    operation_type=Constants.CC_CREATE_OPR,
+                    poll_interval=Constants.CC_POLL_INTERVAL,
+                )
+                mock_defer.return_value = expected_trigger
+                result = compute_cluster_provision_instance._compute_cluster_execute()
+                assert result == "RUNNING"
+                mock_hook.run.assert_has_calls(
+                    [
+                        call(
+                            "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'",
+                            handler=_single_result_row_handler,
+                        ),
+                    ]
+                )
+
+    def test_cc_execute_provision_new_cp_exists_cg(
+        self, compute_group_name, compute_cluster_provision_instance
+    ):
+        with patch.object(compute_cluster_provision_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "20.00", "1", None, "Success"]
+            compute_cluster_provision_instance.compute_group_name = compute_group_name
+            compute_profile_name = compute_cluster_provision_instance.compute_profile_name
+            with patch.object(compute_cluster_provision_instance, "defer") as mock_defer:
+                # Assert that defer method is called with the correct parameters
+                expected_trigger = TeradataComputeClusterSyncTrigger(
+                    conn_id=compute_cluster_provision_instance.conn_id,
+                    compute_profile_name=compute_profile_name,
+                    compute_group_name=compute_group_name,
+                    operation_type=Constants.CC_CREATE_OPR,
+                    poll_interval=Constants.CC_POLL_INTERVAL,
+                )
+                mock_defer.return_value = expected_trigger
+                result = compute_cluster_provision_instance._compute_cluster_execute()
+                assert result == "Success"
+                mock_defer.assert_called_once()
+                mock_hook.run.assert_has_calls(
+                    [
+                        call(
+                            "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"SELECT  count(1) FROM DBC.ComputeGroups WHERE ComputeGroupName = '{compute_group_name}'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}' AND ComputeGroupName = '{compute_group_name}'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"CREATE COMPUTE PROFILE {compute_profile_name} IN {compute_group_name}",
+                            handler=_single_result_row_handler,
+                        ),
+                    ]
+                )
+
+    def test_cc_execute_provision_exists_cp_exists_cg(
+        self, compute_group_name, compute_cluster_provision_instance
+    ):
+        with patch.object(compute_cluster_provision_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "20.00", "1", "RUNNING", "Success"]
+            compute_profile_name = compute_cluster_provision_instance.compute_profile_name
+            compute_cluster_provision_instance.compute_group_name = compute_group_name
+            with patch.object(compute_cluster_provision_instance, "defer") as mock_defer:
+                # Assert that defer method is called with the correct parameters
+                expected_trigger = TeradataComputeClusterSyncTrigger(
+                    conn_id=compute_cluster_provision_instance.conn_id,
+                    compute_profile_name=compute_profile_name,
+                    compute_group_name=compute_group_name,
+                    operation_type=Constants.CC_CREATE_OPR,
+                    poll_interval=Constants.CC_POLL_INTERVAL,
+                )
+                mock_defer.return_value = expected_trigger
+                result = compute_cluster_provision_instance._compute_cluster_execute()
+                assert result == "RUNNING"
+                mock_hook.run.assert_has_calls(
+                    [
+                        call(
+                            "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"SELECT  count(1) FROM DBC.ComputeGroups WHERE ComputeGroupName = '{compute_group_name}'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}' AND ComputeGroupName = '{compute_group_name}'",
+                            handler=_single_result_row_handler,
+                        ),
+                    ]
+                )
+
+    def test_cc_execute_provision_new_cp_new_cg(self, compute_group_name, compute_cluster_provision_instance):
+        with patch.object(compute_cluster_provision_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "20.00", "0", "Success", None, "Success"]
+            compute_cluster_provision_instance.compute_group_name = compute_group_name
+            compute_profile_name = compute_cluster_provision_instance.compute_profile_name
+            with patch.object(compute_cluster_provision_instance, "defer") as mock_defer:
+                # Assert that defer method is called with the correct parameters
+                expected_trigger = TeradataComputeClusterSyncTrigger(
+                    conn_id=compute_cluster_provision_instance.conn_id,
+                    compute_profile_name=compute_profile_name,
+                    compute_group_name=compute_group_name,
+                    operation_type=Constants.CC_CREATE_OPR,
+                    poll_interval=Constants.CC_POLL_INTERVAL,
+                )
+                mock_defer.return_value = expected_trigger
+                result = compute_cluster_provision_instance._compute_cluster_execute()
+                assert result == "Success"
+                mock_defer.assert_called_once()
+                mock_hook.run.assert_has_calls(
+                    [
+                        call(
+                            "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"SELECT  count(1) FROM DBC.ComputeGroups WHERE ComputeGroupName = '{compute_group_name}'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"CREATE COMPUTE GROUP {compute_group_name}", handler=_single_result_row_handler
+                        ),
+                        call(
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}' AND ComputeGroupName = '{compute_group_name}'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"CREATE COMPUTE PROFILE {compute_profile_name} IN {compute_group_name}",
+                            handler=_single_result_row_handler,
+                        ),
+                    ]
+                )
+
+    def test_cc_execute_provision_new_cp_new_cg_with_options(
+        self,
+        compute_group_name,
+        query_strategy,
+        compute_map,
+        compute_attribute,
+        compute_cluster_provision_instance,
+    ):
+        with patch.object(compute_cluster_provision_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "20.00", "0", "Success", None, "Success"]
+            compute_cluster_provision_instance.compute_group_name = compute_group_name
+            compute_profile_name = compute_cluster_provision_instance.compute_profile_name
+            compute_cluster_provision_instance.query_strategy = query_strategy
+            compute_cluster_provision_instance.compute_map = compute_map
+            compute_cluster_provision_instance.compute_attribute = compute_attribute
+
+            with patch.object(compute_cluster_provision_instance, "defer") as mock_defer:
+                # Assert that defer method is called with the correct parameters
+                expected_trigger = TeradataComputeClusterSyncTrigger(
+                    conn_id=compute_cluster_provision_instance.conn_id,
+                    compute_profile_name=compute_profile_name,
+                    compute_group_name=compute_group_name,
+                    operation_type=Constants.CC_CREATE_OPR,
+                    poll_interval=Constants.CC_POLL_INTERVAL,
+                )
+                mock_defer.return_value = expected_trigger
+                result = compute_cluster_provision_instance._compute_cluster_execute()
+                assert result == "Success"
+                mock_defer.assert_called_once()
+                mock_hook.run.assert_has_calls(
+                    [
+                        call(
+                            "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"SELECT  count(1) FROM DBC.ComputeGroups WHERE ComputeGroupName = '{compute_group_name}'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"CREATE COMPUTE GROUP {compute_group_name} USING QUERY_STRATEGY ('{query_strategy}')",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}' AND ComputeGroupName = '{compute_group_name}'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"CREATE COMPUTE PROFILE {compute_profile_name} IN {compute_group_name}, "
+                            f"INSTANCE = {compute_map}, INSTANCE TYPE = {query_strategy} USING {compute_attribute}",
+                            handler=_single_result_row_handler,
+                        ),
+                    ]
+                )
+
+    def test_compute_cluster_execute_drop_cp(self, compute_cluster_decommission_instance):
+        with patch.object(compute_cluster_decommission_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "20.00", None]
+            compute_profile_name = compute_cluster_decommission_instance.compute_profile_name
+            compute_cluster_decommission_instance._compute_cluster_execute()
+            mock_hook.run.assert_has_calls(
+                [
+                    call(
+                        "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'",
+                        handler=_single_result_row_handler,
+                    ),
+                    call(
+                        "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'",
+                        handler=_single_result_row_handler,
+                    ),
+                    call(f"DROP COMPUTE PROFILE {compute_profile_name}", handler=_single_result_row_handler),
+                ]
             )
-            result = operator.execute(context=context)
-            assert result is mock_compute_cluster_execute.return_value
-            mock_compute_cluster_execute.assert_called_once_with(
-                mock.ANY,
-                "CREATE",
+
+    def test_compute_cluster_execute_drop_cp_cg(
+        self, compute_cluster_decommission_instance, compute_group_name
+    ):
+        with patch.object(compute_cluster_decommission_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "20.00", None, None]
+            compute_profile_name = compute_cluster_decommission_instance.compute_profile_name
+            compute_cluster_decommission_instance.compute_group_name = compute_group_name
+            compute_cluster_decommission_instance.delete_compute_group = True
+            compute_cluster_decommission_instance._compute_cluster_execute()
+            mock_hook.run.assert_has_calls(
+                [
+                    call(
+                        "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'",
+                        handler=_single_result_row_handler,
+                    ),
+                    call(
+                        "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'",
+                        handler=_single_result_row_handler,
+                    ),
+                    call(
+                        f"DROP COMPUTE PROFILE {compute_profile_name} IN COMPUTE GROUP {compute_group_name}",
+                        handler=_single_result_row_handler,
+                    ),
+                    call(f"DROP COMPUTE GROUP {compute_group_name}", handler=_single_result_row_handler),
+                ]
+            )
+
+    def test_compute_cluster_execute_resume_success(self, compute_cluster_resume_instance):
+        with patch.object(compute_cluster_resume_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "20.00", "Suspended", "Success"]
+            compute_profile_name = compute_cluster_resume_instance.compute_profile_name
+
+            with patch.object(compute_cluster_resume_instance, "defer") as mock_defer:
+                expected_trigger = TeradataComputeClusterSyncTrigger(
+                    conn_id=compute_cluster_resume_instance.conn_id,
+                    compute_profile_name=compute_profile_name,
+                    operation_type=Constants.CC_RESUME_OPR,
+                    poll_interval=Constants.CC_POLL_INTERVAL,
+                )
+                mock_defer.return_value = expected_trigger
+                result = compute_cluster_resume_instance._compute_cluster_execute()
+                assert result == "Success"
+                mock_defer.assert_called_once()
+                mock_hook.run.assert_has_calls(
+                    [
+                        call(
+                            "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"RESUME COMPUTE FOR COMPUTE PROFILE {compute_profile_name}",
+                            handler=_single_result_row_handler,
+                        ),
+                    ]
+                )
+
+    def test_compute_cluster_execute_resume_cg_success(
+        self, compute_group_name, compute_cluster_resume_instance
+    ):
+        with patch.object(compute_cluster_resume_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "20.00", "Suspended", "Success"]
+            compute_profile_name = compute_cluster_resume_instance.compute_profile_name
+            compute_cluster_resume_instance.compute_group_name = compute_group_name
+            with patch.object(compute_cluster_resume_instance, "defer") as mock_defer:
+                expected_trigger = TeradataComputeClusterSyncTrigger(
+                    conn_id=compute_cluster_resume_instance.conn_id,
+                    compute_profile_name=compute_profile_name,
+                    operation_type=Constants.CC_RESUME_OPR,
+                    poll_interval=Constants.CC_POLL_INTERVAL,
+                )
+                mock_defer.return_value = expected_trigger
+                result = compute_cluster_resume_instance._compute_cluster_execute()
+                assert result == "Success"
+                mock_defer.assert_called_once()
+                mock_hook.run.assert_has_calls(
+                    [
+                        call(
+                            "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'"
+                            f" AND ComputeGroupName = '{compute_group_name}'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"RESUME COMPUTE FOR COMPUTE PROFILE {compute_profile_name} IN COMPUTE GROUP {compute_group_name}",
+                            handler=_single_result_row_handler,
+                        ),
+                    ]
+                )
+
+    def test_compute_cluster_execute_resume_cc_not_exists(
+        self, compute_group_name, compute_cluster_resume_instance
+    ):
+        with patch.object(compute_cluster_resume_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "20.00", None]
+            compute_profile_name = compute_cluster_resume_instance.compute_profile_name
+            with pytest.raises(AirflowException):
+                compute_cluster_resume_instance._compute_cluster_execute()
+            mock_hook.run.assert_has_calls(
+                [
+                    call(
+                        "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'",
+                        handler=_single_result_row_handler,
+                    ),
+                    call(
+                        "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'",
+                        handler=_single_result_row_handler,
+                    ),
+                    call(
+                        f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'",
+                        handler=_single_result_row_handler,
+                    ),
+                ]
+            )
+
+    def test_compute_cluster_execute_resume_same_state(self, compute_cluster_resume_instance):
+        with patch.object(compute_cluster_resume_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "20.00", "Running"]
+            compute_profile_name = compute_cluster_resume_instance.compute_profile_name
+            result = compute_cluster_resume_instance._compute_cluster_execute()
+            assert result is None
+            mock_hook.run.assert_has_calls(
+                [
+                    call(
+                        "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'",
+                        handler=_single_result_row_handler,
+                    ),
+                    call(
+                        "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'",
+                        handler=_single_result_row_handler,
+                    ),
+                    call(
+                        f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'",
+                        handler=_single_result_row_handler,
+                    ),
+                ]
+            )
+
+    def test_compute_cluster_execute_suspend_success(self, compute_cluster_suspend_instance):
+        with patch.object(compute_cluster_suspend_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "20.00", "Running", "Success"]
+            compute_profile_name = compute_cluster_suspend_instance.compute_profile_name
+
+            with patch.object(compute_cluster_suspend_instance, "defer") as mock_defer:
+                expected_trigger = TeradataComputeClusterSyncTrigger(
+                    conn_id=compute_cluster_suspend_instance.conn_id,
+                    compute_profile_name=compute_profile_name,
+                    operation_type=Constants.CC_RESUME_OPR,
+                    poll_interval=Constants.CC_POLL_INTERVAL,
+                )
+                mock_defer.return_value = expected_trigger
+                result = compute_cluster_suspend_instance._compute_cluster_execute()
+                assert result == "Success"
+                mock_defer.assert_called_once()
+                mock_hook.run.assert_has_calls(
+                    [
+                        call(
+                            "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"SUSPEND COMPUTE FOR COMPUTE PROFILE {compute_profile_name}",
+                            handler=_single_result_row_handler,
+                        ),
+                    ]
+                )
+
+    def test_compute_cluster_execute_suspend_cg_success(
+        self, compute_group_name, compute_cluster_suspend_instance
+    ):
+        with patch.object(compute_cluster_suspend_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "20.00", "Running", "Success"]
+            compute_profile_name = compute_cluster_suspend_instance.compute_profile_name
+            compute_cluster_suspend_instance.compute_group_name = compute_group_name
+            with patch.object(compute_cluster_suspend_instance, "defer") as mock_defer:
+                expected_trigger = TeradataComputeClusterSyncTrigger(
+                    conn_id=compute_cluster_suspend_instance.conn_id,
+                    compute_profile_name=compute_profile_name,
+                    operation_type=Constants.CC_RESUME_OPR,
+                    poll_interval=Constants.CC_POLL_INTERVAL,
+                )
+                mock_defer.return_value = expected_trigger
+                result = compute_cluster_suspend_instance._compute_cluster_execute()
+                assert result == "Success"
+                mock_defer.assert_called_once()
+                mock_hook.run.assert_has_calls(
+                    [
+                        call(
+                            "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'"
+                            f" AND ComputeGroupName = '{compute_group_name}'",
+                            handler=_single_result_row_handler,
+                        ),
+                        call(
+                            f"SUSPEND COMPUTE FOR COMPUTE PROFILE {compute_profile_name} IN COMPUTE GROUP {compute_group_name}",
+                            handler=_single_result_row_handler,
+                        ),
+                    ]
+                )
+
+    def test_compute_cluster_execute_suspend_cc_not_exists(
+        self, compute_group_name, compute_cluster_suspend_instance
+    ):
+        with patch.object(compute_cluster_suspend_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "20.00", None]
+            compute_profile_name = compute_cluster_suspend_instance.compute_profile_name
+            with pytest.raises(AirflowException):
+                compute_cluster_suspend_instance._compute_cluster_execute()
+            mock_hook.run.assert_has_calls(
+                [
+                    call(
+                        "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'",
+                        handler=_single_result_row_handler,
+                    ),
+                    call(
+                        "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'",
+                        handler=_single_result_row_handler,
+                    ),
+                    call(
+                        f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'",
+                        handler=_single_result_row_handler,
+                    ),
+                ]
+            )
+
+    def test_compute_cluster_execute_suspend_same_state(self, compute_cluster_suspend_instance):
+        with patch.object(compute_cluster_suspend_instance, "hook") as mock_hook:
+            # Set up mock return values
+            mock_hook.run.side_effect = ["1", "20.00", "Suspended"]
+            compute_profile_name = compute_cluster_suspend_instance.compute_profile_name
+            result = compute_cluster_suspend_instance._compute_cluster_execute()
+            assert result is None
+            mock_hook.run.assert_has_calls(
+                [
+                    call(
+                        "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'",
+                        handler=_single_result_row_handler,
+                    ),
+                    call(
+                        "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'",
+                        handler=_single_result_row_handler,
+                    ),
+                    call(
+                        f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'",
+                        handler=_single_result_row_handler,
+                    ),
+                ]
             )

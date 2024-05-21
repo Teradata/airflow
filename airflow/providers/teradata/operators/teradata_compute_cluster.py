@@ -103,9 +103,9 @@ class _TeradataComputeClusterOperator(BaseOperator):
 
         Relies on trigger to throw an exception, otherwise it assumes execution was successful.
         """
-        self.compute_cluster_execute_complete(event)
+        self._compute_cluster_execute_complete(event)
 
-    def compute_cluster_execute(self):
+    def _compute_cluster_execute(self):
         # Verifies the provided compute profile name.
         if (
             self.compute_profile_name is None
@@ -128,21 +128,26 @@ class _TeradataComputeClusterOperator(BaseOperator):
                 db_version_result = str(db_version_result)
                 db_version = db_version_result.split(".")[0]
                 self.log.info("DBC version %s ", db_version)
-                if int(db_version) < 20:
+                if db_version is not None and int(db_version) < 20:
                     raise AirflowException(Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG)
         except Exception as ex:
             self.log.error("Error occurred while getting teradata database version: %s ", str(ex))
             raise
 
-    def compute_cluster_execute_complete(self, event: dict[str, Any]) -> None:
+    def _compute_cluster_execute_complete(self, event: dict[str, Any]) -> None:
         if event["status"] == "success":
             self.log.info("Operation Status %s", event["message"])
+            return event["message"]
         elif event["status"] == "error":
             raise AirflowException(event["message"])
 
     def _handle_cc_status(self, operation_type, sql):
-        self._hook_run(sql)
-        self.log.info("%s query ran successfully. Differing to trigger to check status in db", operation_type)
+        create_sql_result = self._hook_run(sql, handler=_single_result_row_handler)
+        self.log.info(
+            "%s query ran successfully. Differing to trigger to check status in db. Result from sql: %s",
+            operation_type,
+            create_sql_result,
+        )
         self.defer(
             timeout=timedelta(minutes=self.timeout),
             trigger=TeradataComputeClusterSyncTrigger(
@@ -154,6 +159,8 @@ class _TeradataComputeClusterOperator(BaseOperator):
             ),
             method_name="execute_complete",
         )
+
+        return create_sql_result
 
     def _hook_run(self, query, handler=None):
         try:
@@ -232,10 +239,10 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
         Airflow runs this method on the worker and defers using the trigger.
         """
         super().execute(context)
-        return self.compute_cluster_execute()
+        return self._compute_cluster_execute()
 
-    def compute_cluster_execute(self):
-        super().compute_cluster_execute()
+    def _compute_cluster_execute(self):
+        super()._compute_cluster_execute()
         if self.compute_group_name:
             cg_status_query = (
                 "SELECT  count(1) FROM DBC.ComputeGroups WHERE ComputeGroupName = '"
@@ -266,10 +273,9 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
         cp_status_result = self._hook_run(cp_status_query, handler=_single_result_row_handler)
         if cp_status_result is not None:
             cp_status_result = str(cp_status_result)
-            self.log.info(
-                "Compute Profile %s is already exists under Compute Group %s. Status is %s",
-                self.compute_profile_name, self.compute_group_name, cp_status_result
-            )
+            msg = f"Compute Profile {self.compute_profile_name} is already exists under Compute Group {self.compute_group_name}. Status is {cp_status_result}"
+            self.log.info(msg)
+            return cp_status_result
         else:
             create_cp_query = self._build_ccp_setup_query()
             return self._handle_cc_status(Constants.CC_CREATE_OPR, create_cp_query)
@@ -320,10 +326,10 @@ class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator
         Airflow runs this method on the worker and defers using the trigger.
         """
         super().execute(context)
-        return self.compute_cluster_execute()
+        return self._compute_cluster_execute()
 
-    def compute_cluster_execute(self):
-        super().compute_cluster_execute()
+    def _compute_cluster_execute(self):
+        super()._compute_cluster_execute()
         cp_drop_query = "DROP COMPUTE PROFILE " + self.compute_profile_name
         if self.compute_group_name:
             cp_drop_query = cp_drop_query + " IN COMPUTE GROUP " + self.compute_group_name
@@ -376,10 +382,10 @@ class TeradataComputeClusterResumeOperator(_TeradataComputeClusterOperator):
         Airflow runs this method on the worker and defers using the trigger.
         """
         super().execute(context)
-        return self.compute_cluster_execute()
+        return self._compute_cluster_execute()
 
-    def compute_cluster_execute(self):
-        super().compute_cluster_execute()
+    def _compute_cluster_execute(self):
+        super()._compute_cluster_execute()
         cc_status_query = (
             "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '"
             + self.compute_profile_name
@@ -443,10 +449,10 @@ class TeradataComputeClusterSuspendOperator(_TeradataComputeClusterOperator):
         Airflow runs this method on the worker and defers using the trigger.
         """
         super().execute(context)
-        return self.compute_cluster_execute()
+        return self._compute_cluster_execute()
 
-    def compute_cluster_execute(self):
-        super().compute_cluster_execute()
+    def _compute_cluster_execute(self):
+        super()._compute_cluster_execute()
         sql = (
             "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '"
             + self.compute_profile_name
