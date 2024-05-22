@@ -65,7 +65,9 @@ class TestTeradataOperator:
         context = "test_context"
         task_id = "test_task_id"
 
-        operator = TeradataOperator(sql=sql, teradata_conn_id=teradata_conn_id, parameters=parameters, task_id=task_id)
+        operator = TeradataOperator(
+            sql=sql, teradata_conn_id=teradata_conn_id, parameters=parameters, task_id=task_id
+        )
         operator.execute(context=context)
         mock_get_db_hook.return_value.run.assert_called_once_with(
             sql=sql,
@@ -88,7 +90,9 @@ class TestTeradataOperator:
         context = "test_context"
         task_id = "test_task_id"
 
-        operator = TeradataOperator(sql=sql, teradata_conn_id=teradata_conn_id, parameters=parameters, task_id=task_id)
+        operator = TeradataOperator(
+            sql=sql, teradata_conn_id=teradata_conn_id, parameters=parameters, task_id=task_id
+        )
         operator.execute(context=context)
         mock_get_db_hook.return_value.run.assert_called_once_with(
             sql=sql,
