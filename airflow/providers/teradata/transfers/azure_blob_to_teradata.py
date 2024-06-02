@@ -75,7 +75,7 @@ class AzureBlobStorageToTeradataOperator(BaseOperator):
         azure_conn_id: str = "azure_default",
         teradata_table: str,
         teradata_conn_id: str = "teradata_default",
-        teradata_authorization_name: str = '',
+        teradata_authorization_name: str = "",
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
