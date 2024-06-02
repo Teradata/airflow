@@ -73,7 +73,7 @@ class S3ToTeradataOperator(BaseOperator):
         teradata_table: str,
         aws_conn_id: str = "aws_default",
         teradata_conn_id: str = "teradata_default",
-        teradata_authorization_name: str = '',
+        teradata_authorization_name: str = "",
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)

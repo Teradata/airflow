@@ -75,7 +75,7 @@ class AzureBlobStorageToTeradataOperator(BaseOperator):
         azure_conn_id: str = "azure_default",
         teradata_table: str,
         teradata_conn_id: str = "teradata_default",
-        teradata_authorization_name: str = None,
+        teradata_authorization_name: str = '',
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -95,7 +95,7 @@ class AzureBlobStorageToTeradataOperator(BaseOperator):
         if not self.public_bucket:
             # Accessing data directly from the Azure Blob Storage and creating permanent table inside the
             # database
-            if self.teradata_authorization_name is not None and self.teradata_authorization_name:
+            if self.teradata_authorization_name:
                 credentials_part = f"AUTHORIZATION={self.teradata_authorization_name}"
             else:
                 # Obtaining the Azure client ID and Azure secret in order to access a specified Blob container
