@@ -46,8 +46,8 @@ store can be granted via either Teradata Authorization database object or Object
 defined with AWS connection in Airflow. Conversely, for data transfer from public object storage, no authorization or
 access credentials are required.
 
-* Teradata Authorization database object access type can be used with `teradata_authorization_name` parameter of ``S3ToTeradataOperator``
-* Object Store Access Key ID and Access Key Secret access type can be used with `aws_conn_id` parameter of ``S3ToTeradataOperator``
+* Teradata Authorization database object access type can be used with ``teradata_authorization_name`` param of ``S3ToTeradataOperator``
+* Object Store Access Key ID and Access Key Secret access type can be used with ``aws_conn_id`` param of ``S3ToTeradataOperator``
 
 
 .. note::
