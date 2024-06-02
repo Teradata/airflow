@@ -53,7 +53,6 @@ with DAG(
     catchup=False,
     default_args={"conn_id": "teradata_default"},
 ) as dag:
-
     # [START azure_blob__to_teradata_transfer_operator_howto_guide_transfer_data_public_blob_to_teradata_csv]
     transfer_data_csv = AzureBlobStorageToTeradataOperator(
         task_id="transfer_data_blob_to_teradata_csv",

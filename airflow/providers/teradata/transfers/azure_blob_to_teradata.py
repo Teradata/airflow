@@ -91,7 +91,7 @@ class AzureBlobStorageToTeradataOperator(BaseOperator):
             "transferring data from %s to teradata table %s...", self.blob_source_key, self.teradata_table
         )
         teradata_hook = TeradataHook(teradata_conn_id=self.teradata_conn_id)
-        credentials_part = f"ACCESS_ID= '' ACCESS_KEY= ''"
+        credentials_part = "ACCESS_ID= '' ACCESS_KEY= ''"
         if not self.public_bucket:
             # Accessing data directly from the Azure Blob Storage and creating permanent table inside the
             # database

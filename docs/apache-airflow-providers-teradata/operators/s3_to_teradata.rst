@@ -34,7 +34,7 @@ within the database using READ_NOS and CREATE TABLE AS functionalities with belo
 .. code-block:: sql
 
     CREATE MULTISET TABLE multiset_table_name AS (
-      SELECT columnX, columnY, ...columnN
+      SELECT *
       FROM (
         LOCATION='YOUR-OBJECT-STORE-URI'
         AUTHORIZATION=authorization_object
