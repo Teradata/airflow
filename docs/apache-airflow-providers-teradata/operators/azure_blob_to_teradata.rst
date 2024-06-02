@@ -46,8 +46,8 @@ store can be granted via either Teradata Authorization database object or Object
 defined with Azure Blob Storage connection in Airflow. Conversely, for data transfer from public object storage,
 no authorization or access credentials are required.
 
-* Teradata Authorization database object access type can be used with teradata_authorization_name parameter of AzureBlobStorageToTeradataOperator
-* Object Store Access Key ID and Access Key Secret access type can be used with azure_conn_id parameter of S3ToTeradataOperator
+* Teradata Authorization database object access type can be used with ``teradata_authorization_name`` param of ``AzureBlobStorageToTeradataOperator``
+* Object Store Access Key ID and Access Key Secret access type can be used with ``azure_conn_id`` parameter of ``S3ToTeradataOperator``
 
 .. note::
    Teradata Authorization database object takes precedence if both access types defined.
