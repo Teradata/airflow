@@ -73,7 +73,7 @@ class S3ToTeradataOperator(BaseOperator):
         teradata_table: str,
         aws_conn_id: str = "aws_default",
         teradata_conn_id: str = "teradata_default",
-        teradata_authorization_name: str = None,
+        teradata_authorization_name: str = '',
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -94,7 +94,7 @@ class S3ToTeradataOperator(BaseOperator):
         credentials_part = "ACCESS_ID= '' ACCESS_KEY= ''"
         if not self.public_bucket:
             # Accessing data directly from the S3 bucket and creating permanent table inside the database
-            if self.teradata_authorization_name is not None and self.teradata_authorization_name:
+            if self.teradata_authorization_name:
                 credentials_part = f"AUTHORIZATION={self.teradata_authorization_name}"
             else:
                 credentials = s3_hook.get_credentials()
