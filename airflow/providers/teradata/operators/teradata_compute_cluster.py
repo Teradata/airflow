@@ -200,6 +200,8 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
         "compute_profile_name",
         "compute_group_name",
         "query_strategy",
+        "compute_map",
+        "compute_attribute"
         "conn_id",
         "timeout",
     )
