@@ -26,7 +26,8 @@ S3ToTeradataOperator
 The purpose of ``S3ToTeradataOperator`` is to define tasks involving CSV, JSON and Parquet
 format data transfer from an AWS Simple Storage Service (S3) to Teradata table.
 Use the :class:`S3ToTeradataOperator <airflow.providers.teradata.transfers.s3_to_teradata>`
-to transfer data from S3 to Teradata. This operator leverages the Teradata READ_NOS feature
+to transfer data from S3 to Teradata. This operator leverages the Teradata
+`READ_NOS <https://docs.teradata.com/r/Enterprise_IntelliFlex_VMware/Teradata-VantageTM-Native-Object-Store-Getting-Started-Guide-17.20/Welcome-to-Native-Object-Store>`_ feature
 to import data in CSV, JSON, and Parquet formats from S3 into Teradata.
 This operator accesses data directly from the object store and generates permanent tables
 within the database using READ_NOS and CREATE TABLE AS functionalities with below SQL statement.
@@ -48,7 +49,6 @@ access credentials are required.
 
 * Teradata Authorization database object access type can be used with ``teradata_authorization_name`` parameter of ``S3ToTeradataOperator``
 * Object Store Access Key ID and Access Key Secret access type can be used with ``aws_conn_id`` parameter of ``S3ToTeradataOperator``
-
 
 .. note::
    Teradata Authorization database object takes precedence if both access types defined.

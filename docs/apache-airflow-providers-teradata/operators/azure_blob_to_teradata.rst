@@ -26,7 +26,8 @@ AzureBlobStorageToTeradataOperator
 The purpose of ``AzureBlobStorageToTeradataOperator`` is to define tasks involving CSV, JSON and Parquet
 format data transfer from an Azure Blob Storage to Teradata table.
 Use the :class:`AzureBlobStorageToTeradataOperator <airflow.providers.teradata.transfers.azure_blob_to_teradata>`
-to transfer data from an Azure Blob Storage to Teradata.This operator leverages the Teradata READ_NOS feature
+to transfer data from an Azure Blob Storage to Teradata.This operator leverages the Teradata
+`READ_NOS <https://docs.teradata.com/r/Enterprise_IntelliFlex_VMware/Teradata-VantageTM-Native-Object-Store-Getting-Started-Guide-17.20/Welcome-to-Native-Object-Store>`_ feature
 to import data in CSV, JSON, and Parquet formats from Azure Blob Storage into Teradata.
 This operator accesses data directly from the object store and generates permanent tables
 within the database using READ_NOS and CREATE TABLE AS functionalities with below SQL statement.
@@ -48,6 +49,8 @@ no authorization or access credentials are required.
 
 * Teradata Authorization database object access type can be used with ``teradata_authorization_name`` parameter of ``AzureBlobStorageToTeradataOperator``
 * Object Store Access Key ID and Access Key Secret access type can be used with ``azure_conn_id`` parameter of ``S3ToTeradataOperator``
+
+https://docs.teradata.com/r/Enterprise_IntelliFlex_VMware/Teradata-VantageTM-Native-Object-Store-Getting-Started-Guide-17.20/Setting-Up-Access/Setting-Access-Privileges
 
 .. note::
    Teradata Authorization database object takes precedence if both access types defined.
