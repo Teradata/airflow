@@ -30,6 +30,11 @@ if TYPE_CHECKING:
 class TeradataToTeradataOperator(BaseOperator):
     """
     Moves data from Teradata source database to Teradata destination database.
+    The TeradataToTeradataOperator class uses two Python cursors to move data between
+    the source and destination Teradata databases. The source cursor fetches data in
+    chunks from the source database, and the destination cursor inserts the data into
+    the destination database. The process performs a bulk insert of rows into a 
+	destination table using a specified chunk size.
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
@@ -40,7 +45,11 @@ class TeradataToTeradataOperator(BaseOperator):
     :param source_teradata_conn_id: :ref:`Source Teradata connection <howto/connection:Teradata>`.
     :param sql: SQL query to execute against the source Teradata database
     :param sql_params: Parameters to use in sql query.
-    :param rows_chunk: number of rows per chunk to commit.
+    :param rows_chunk: number of rows per chunk to commit. The rows_chunk parameter determines \
+    the number of rows to be fetched and transferred at a time from the source database to the \
+    destination database. The default value is set to 5000, meaning that data will be transferred \
+    in chunks of 5000 rows at a time. If the number of rows to be transferred is large, you can \
+    increase the value of the rows_chunk parameter to improve performance.
     """
 
     template_fields: Sequence[str] = (

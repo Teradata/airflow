@@ -37,6 +37,13 @@ An example usage of the TeradataToTeradataOperator is as follows:
     :start-after: [START teradata_to_teradata_transfer_operator_howto_guide_transfer_data]
     :end-before: [END teradata_to_teradata_transfer_operator_howto_guide_transfer_data]
 
+An example usage of the TeradataToTeradataOperator with sql_params is as follows:
+
+.. exampleinclude:: /../../tests/system/providers/teradata/example_teradata_to_teradata_transfer.py
+    :language: python
+    :start-after: [START teradata_to_teradata_transfer_operator_howto_guide_transfer_data_with_sql_params]
+    :end-before: [END teradata_to_teradata_transfer_operator_howto_guide_transfer_data_with_sql_params]
+
 The complete TeradataToTeradata Transfer Operator DAG
 -----------------------------------------------------
 

@@ -101,6 +101,7 @@ with DAG(
             INSERT INTO my_users_src(user_name) VALUES ('User1');
             INSERT INTO my_users_src(user_name) VALUES ('User2');
             INSERT INTO my_users_src(user_name) VALUES ('User3');
+            INSERT INTO my_users_src(user_name, birth_date) VALUES ('User4', DATE '2022-01-01');
         """,
     )
     # [END teradata_to_teradata_transfer_operator_howto_guide_insert_data_src]
@@ -129,6 +130,28 @@ with DAG(
         sql="SELECT TOP 10 * from my_users_dest order by user_id desc;",
     )
     # [END teradata_to_teradata_transfer_operator_howto_guide_read_data_dest]
+    delete_dest_table = TeradataOperator(
+        task_id="delete_dest_table",
+        conn_id=CONN_ID,
+        sql="DELETE TABLE my_users_dest;",
+    )
+    # [START teradata_to_teradata_transfer_operator_howto_guide_transfer_data_with_sql_params]
+    sql_params = {"birth_date": "2023-01-01"}
+    transfer_data_with_sql_params = TeradataToTeradataOperator(
+        task_id="transfer_data_with_sql_params",
+        dest_teradata_conn_id="teradata_default",
+        destination_table="my_users_dest",
+        source_teradata_conn_id="teradata_default",
+        sql="select * from my_users_src where birth_date >= {{ sql_params.birth_date }} ",
+        sql_params=sql_params,
+        rows_chunk=2,
+    )
+    # [END teradata_to_teradata_transfer_operator_howto_guide_transfer_data_with_sql_params]
+    read_data_dest_again = TeradataOperator(
+        task_id="read_data_dest_again",
+        conn_id=CONN_ID,
+        sql="SELECT TOP 10 * from my_users_dest order by user_id desc;",
+    )
     # [START teradata_to_teradata_transfer_operator_howto_guide_drop_src_table]
     drop_src_table = TeradataOperator(
         task_id="drop_src_table",
@@ -150,6 +173,9 @@ with DAG(
         >> read_data_src
         >> transfer_data
         >> read_data_dest
+        >> delete_dest_table
+        >> transfer_data_with_sql_params
+        >> read_data_dest_again
         >> drop_src_table
         >> drop_dest_table
     )
