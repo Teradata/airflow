@@ -17,6 +17,7 @@
 # under the License.
 from __future__ import annotations
 
+import json
 from abc import abstractmethod
 from enum import Enum
 from functools import cached_property
