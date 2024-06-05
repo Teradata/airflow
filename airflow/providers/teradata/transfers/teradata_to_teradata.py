@@ -34,7 +34,7 @@ class TeradataToTeradataOperator(BaseOperator):
     the source and destination Teradata databases. The source cursor fetches data in
     chunks from the source database, and the destination cursor inserts the data into
     the destination database. The process performs a bulk insert of rows into a 
-	destination table using a specified chunk size.
+    destination table using a specified chunk size.
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
