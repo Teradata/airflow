@@ -30,10 +30,11 @@ if TYPE_CHECKING:
 class TeradataToTeradataOperator(BaseOperator):
     """
     Moves data from Teradata source database to Teradata destination database.
+
     The TeradataToTeradataOperator class uses two Python cursors to move data between
     the source and destination Teradata databases. The source cursor fetches data in
     chunks from the source database, and the destination cursor inserts the data into
-    the destination database. The process performs a bulk insert of rows into a 
+    the destination database. The process performs a bulk insert of rows into a
     destination table using a specified chunk size.
 
     .. seealso::

@@ -22,7 +22,9 @@ TeradataToTeradataOperator
 
 The purpose of TeradataToTeradataOperator is to define tasks involving data transfer between two Teradata instances.
 Use the :class:`TeradataToTeradataOperator <airflow.providers.teradata.transfers.teradata_to_teradata>`
-to transfer data between two Teradata instances.
+to transfer data between two Teradata instances. This operator requires to input SQL statement to `sql` parameter
+of `TeradataToTeradataOperator` to pull data from source. This operator provides an additional parameter `sql_params`
+to pass values to parameters defined in SQL statement.
 
 Transfer data between two Teradata instances
 -----------------------------------------------
@@ -36,6 +38,8 @@ An example usage of the TeradataToTeradataOperator is as follows:
     :language: python
     :start-after: [START teradata_to_teradata_transfer_operator_howto_guide_transfer_data]
     :end-before: [END teradata_to_teradata_transfer_operator_howto_guide_transfer_data]
+
+|
 
 An example usage of the TeradataToTeradataOperator with sql_params is as follows:
 
