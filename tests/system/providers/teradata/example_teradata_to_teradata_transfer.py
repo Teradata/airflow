@@ -133,7 +133,7 @@ with DAG(
     delete_dest_table = TeradataOperator(
         task_id="delete_dest_table",
         conn_id=CONN_ID,
-        sql="DELETE TABLE my_users_dest;",
+        sql="DELETE FROM my_users_dest;",
     )
     # [START teradata_to_teradata_transfer_operator_howto_guide_transfer_data_with_sql_params]
     sql_params = {"birth_date": "2023-01-01"}
@@ -142,8 +142,8 @@ with DAG(
         dest_teradata_conn_id="teradata_default",
         destination_table="my_users_dest",
         source_teradata_conn_id="teradata_default",
-        sql="select * from my_users_src where birth_date >= {{ sql_params.birth_date }} ",
-        sql_params=sql_params,
+        sql="select * from my_users_src where birth_date >= {{ params.birth_date }};",
+        params=sql_params,
         rows_chunk=2,
     )
     # [END teradata_to_teradata_transfer_operator_howto_guide_transfer_data_with_sql_params]
