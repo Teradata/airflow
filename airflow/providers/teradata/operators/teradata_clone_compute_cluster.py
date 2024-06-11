@@ -17,6 +17,7 @@
 # under the License.
 from __future__ import annotations
 
+import re
 from abc import abstractmethod
 from datetime import timedelta
 from functools import cached_property
@@ -25,6 +26,8 @@ from typing import TYPE_CHECKING, cast, Any
 from airflow.exceptions import AirflowException
 from airflow.models import BaseOperator
 from airflow.providers.teradata.hooks.teradata import TeradataHook
+from airflow.providers.teradata.triggers.teradata_clone_compute_cluster import \
+    TeradataCloneComputeClusterSyncTrigger
 from airflow.providers.teradata.triggers.teradata_compute_cluster import TeradataComputeClusterSyncTrigger
 from airflow.providers.teradata.utils.constants import Constants
 
@@ -160,6 +163,17 @@ def get_compute_group_policy(policy: str):
     return query_strategy
 
 
+def _get_initially_suspended(create_cp_query):
+    initially_suspended = 'FALSE'
+    pattern = r"INITIALLY_SUSPENDED\s*\(\s*'(TRUE|FALSE)'\s*\)"
+    # Search for the pattern in the input string
+    match = re.search(pattern, create_cp_query, re.IGNORECASE)
+    if match:
+        # Get the value of INITIALLY_SUSPENDED
+        initially_suspended = match.group(1).strip().upper()
+    return initially_suspended
+
+
 class TeradataCloneComputeClusterProfileOperator(_TeradataComputeClusterOperator):
     """
 
@@ -181,7 +195,9 @@ class TeradataCloneComputeClusterProfileOperator(_TeradataComputeClusterOperator
         "compute_profile_name",
         "compute_group_name",
         "copy_from_compute_profile_name",
-        "copy_from_compute_group_name"
+        "copy_from_compute_group_name",
+        "conn_id",
+        "timeout",
     )
 
     ui_color = "#e07c24"
@@ -255,18 +271,31 @@ class TeradataCloneComputeClusterProfileOperator(_TeradataComputeClusterOperator
                 if self.copy_from_compute_group_name:
                     show_query += " IN " + self.copy_from_compute_group_name
                 show_query_result = self._hook_run(show_query, handler=_single_result_row_handler)
+                self.log.info("Result came for SHOW - %s", show_query_result)
                 if show_query_result is not None:
                     show_query_result = str(show_query_result)
-                    show_query_result = show_query_result.replace(self.copy_from_compute_profile_name,
-                                                                  self.compute_profile_name)
-                    if not self.compute_group_name and not self.copy_from_compute_group_name:
+                    show_query_result = re.sub(re.escape(self.copy_from_compute_profile_name),
+                                               self.compute_profile_name, show_query_result,
+                                               flags=re.IGNORECASE)
+                    self.log.info("Result after profile name replace - %s", show_query_result)
+                    self.log.info("%s and  %s", self.compute_group_name, self.copy_from_compute_group_name)
+                    if not self.compute_group_name:
                         start_index = show_query_result.find("IN") + len("IN")
                         end_index = show_query_result.find(",", start_index)
                         self.compute_group_name = show_query_result[start_index:end_index].strip()
-                        show_query_result = show_query_result.replace(self.copy_from_compute_group_name,
-                                                                      self.compute_group_name)
-                    return self._handle_cc_status(Constants.CC_CREATE_OPR, show_query_result,
+                    self.log.info("%s != %s", self.compute_group_name, self.copy_from_compute_group_name)
+                    if self.compute_group_name != self.copy_from_compute_group_name:
+                        show_query_result = re.sub(re.escape(self.copy_from_compute_group_name),
+                                                   self.compute_group_name, show_query_result,
+                                                   flags=re.IGNORECASE)
+                        self.log.info("Result after group name replace - %s", show_query_result)
+                    operation = Constants.CC_CREATE_OPR
+                    initially_suspended = _get_initially_suspended(show_query_result)
+                    if initially_suspended == 'TRUE':
+                        operation = Constants.CC_CREATE_SUSPEND_OPR
+                    return self._handle_cc_status(operation, show_query_result,
                                                   self.compute_group_name, self.compute_profile_name)
+
 
 
 class TeradataCloneComputeClusterGroupOperator(_TeradataComputeClusterOperator):
@@ -289,7 +318,9 @@ class TeradataCloneComputeClusterGroupOperator(_TeradataComputeClusterOperator):
     template_fields: Sequence[str] = (
         "compute_group_name",
         "copy_from_compute_group_name",
-        "include_profiles"
+        "include_profiles",
+        "conn_id",
+        "timeout",
     )
 
     ui_color = "#e07c24"
@@ -328,7 +359,6 @@ class TeradataCloneComputeClusterGroupOperator(_TeradataComputeClusterOperator):
                 cg_status_result = str(cg_status_result)
             else:
                 cg_status_result = 0
-            self.log.debug("cg_status_result - %s", cg_status_result)
             if int(cg_status_result) == 0:
                 query_get_policy = "SEL ComputeGroupPolicy FROM DBC.ComputeGroups WHERE ComputeGroupName = '" + self.copy_from_compute_group_name + "'"
                 query_get_policy_result = self._hook_run(query_get_policy, _single_result_row_handler)
@@ -348,17 +378,21 @@ class TeradataCloneComputeClusterGroupOperator(_TeradataComputeClusterOperator):
                         )
                         get_profile_names_query_result = self._hook_run(get_profile_names_query,
                                                                         handler=_multiple_result_row_handler)
-                        for profile_info in get_profile_names_query_result:
-                            profile_name = profile_info[0]
-                            show_query = " SHOW COMPUTE PROFILE " + profile_name + " IN " + self.copy_from_compute_group_name
-                            show_query_result = self._hook_run(show_query, handler=_single_result_row_handler)
-                            if show_query_result is not None:
-                                show_query_result = str(show_query_result)
-                                start_index = show_query_result.find("IN") + len("IN")
-                                end_index = show_query_result.find(",", start_index)
-                                self.compute_group_name = show_query_result[start_index:end_index].strip()
-                                show_query_result = show_query_result.replace(
-                                    self.copy_from_compute_group_name,
-                                    self.compute_group_name)
-                                return self._handle_cc_status(Constants.CC_CREATE_OPR, show_query_result,
-                                                              self.compute_group_name, profile_name)
+                        self.log.info(get_profile_names_query_result)
+                        if len(get_profile_names_query_result) > 0:
+                            li_compute_profile = []
+                            # Iterating each row and getting profile name from row
+                            for row in get_profile_names_query_result:
+                                li_compute_profile.append(row[0])
+                            if isinstance(get_profile_names_query_result, list):
+                                self.defer(
+                                    timeout=timedelta(minutes=self.timeout),
+                                    trigger=TeradataCloneComputeClusterSyncTrigger(
+                                        conn_id=cast(str, self.conn_id),
+                                        li_compute_profile=li_compute_profile,
+                                        copy_from_compute_group_name=self.copy_from_compute_group_name,
+                                        compute_group_name=self.compute_group_name,
+                                        poll_interval=Constants.CC_POLL_INTERVAL,
+                                    ),
+                                    method_name="execute_complete",
+                                )

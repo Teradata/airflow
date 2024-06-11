@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import json
+import re
 from abc import abstractmethod
 from enum import Enum
 from functools import cached_property
@@ -173,6 +174,16 @@ class _TeradataComputeClusterOperator(BaseOperator):
             self.log.info(str(ex))
             raise
 
+    def _get_initially_suspended(self, create_cp_query):
+        initially_suspended = 'FALSE'
+        pattern = r"INITIALLY_SUSPENDED\s*\(\s*'(TRUE|FALSE)'\s*\)"
+        # Search for the pattern in the input string
+        match = re.search(pattern, create_cp_query, re.IGNORECASE)
+        if match:
+            # Get the value of INITIALLY_SUSPENDED
+            initially_suspended = match.group(1).strip().upper()
+        return initially_suspended
+
 
 class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
     """
@@ -202,7 +213,7 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
         "compute_group_name",
         "query_strategy",
         "compute_map",
-        "compute_attribute"
+        "compute_attribute",
         "conn_id",
         "timeout",
     )
@@ -248,9 +259,9 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
         super()._compute_cluster_execute()
         if self.compute_group_name:
             cg_status_query = (
-                "SELECT  count(1) FROM DBC.ComputeGroups WHERE ComputeGroupName = '"
+                "SELECT  count(1) FROM DBC.ComputeGroups WHERE UPPER(ComputeGroupName) = UPPER('"
                 + self.compute_group_name
-                + "'"
+                + "')"
             )
             cg_status_result = self._hook_run(cg_status_query, _single_result_row_handler)
             if cg_status_result is not None:
@@ -267,12 +278,12 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
                     )
                 self._hook_run(create_cg_query, _single_result_row_handler)
         cp_status_query = (
-            "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '"
+            "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('"
             + self.compute_profile_name
-            + "'"
+            + "')"
         )
         if self.compute_group_name:
-            cp_status_query += " AND ComputeGroupName = '" + self.compute_group_name + "'"
+            cp_status_query += " AND UPPER(ComputeGroupName) = UPPER('" + self.compute_group_name + "')"
         cp_status_result = self._hook_run(cp_status_query, handler=_single_result_row_handler)
         if cp_status_result is not None:
             cp_status_result = str(cp_status_result)
@@ -281,7 +292,11 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
             return cp_status_result
         else:
             create_cp_query = self._build_ccp_setup_query()
-            return self._handle_cc_status(Constants.CC_CREATE_OPR, create_cp_query)
+            operation = Constants.CC_CREATE_OPR
+            initially_suspended = self._get_initially_suspended(create_cp_query)
+            if initially_suspended == 'TRUE':
+                operation = Constants.CC_CREATE_SUSPEND_OPR
+            return self._handle_cc_status(operation, create_cp_query)
 
 
 class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator):
@@ -294,9 +309,6 @@ class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator
 
     :param compute_profile_name: Name of the Compute Profile to manage.
     :param compute_group_name: Name of compute group to which compute profile belongs.
-    :param delete_compute_group: Indicates whether the compute group should be deleted.
-        When set to True, it signals the system to remove the specified compute group.
-        Conversely, when set to False, no action is taken on the compute group.
     :param conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
         reference to a specific Teradata database.
     :param timeout: Time elapsed before the task times out and fails.
@@ -305,7 +317,6 @@ class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator
     template_fields: Sequence[str] = (
         "compute_profile_name",
         "compute_group_name",
-        "delete_compute_group",
         "conn_id",
         "timeout",
     )
@@ -314,11 +325,9 @@ class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator
 
     def __init__(
         self,
-        delete_compute_group: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
-        self.delete_compute_group = delete_compute_group
 
     def execute(self, context: Context):
         """
@@ -342,10 +351,6 @@ class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator
             self.compute_profile_name,
             self.compute_group_name,
         )
-        if self.delete_compute_group:
-            cg_drop_query = "DROP COMPUTE GROUP " + self.compute_group_name
-            self._hook_run(cg_drop_query, handler=_single_result_row_handler)
-            self.log.info("Compute Group %s is successfully dropped", self.compute_group_name)
 
 
 class TeradataComputeClusterResumeOperator(_TeradataComputeClusterOperator):
@@ -390,12 +395,12 @@ class TeradataComputeClusterResumeOperator(_TeradataComputeClusterOperator):
     def _compute_cluster_execute(self):
         super()._compute_cluster_execute()
         cc_status_query = (
-            "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '"
+            "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('"
             + self.compute_profile_name
-            + "'"
+            + "')"
         )
         if self.compute_group_name:
-            cc_status_query += " AND ComputeGroupName = '" + self.compute_group_name + "'"
+            cc_status_query += " AND UPPER(ComputeGroupName) = UPPER('" + self.compute_group_name + "')"
         cc_status_result = self._hook_run(cc_status_query, handler=_single_result_row_handler)
         if cc_status_result is not None:
             cp_status_result = str(cc_status_result)
@@ -457,12 +462,12 @@ class TeradataComputeClusterSuspendOperator(_TeradataComputeClusterOperator):
     def _compute_cluster_execute(self):
         super()._compute_cluster_execute()
         sql = (
-            "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '"
+            "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('"
             + self.compute_profile_name
-            + "'"
+            + "')"
         )
         if self.compute_group_name:
-            sql += " AND ComputeGroupName = '" + self.compute_group_name + "'"
+            sql += " AND UPPER(ComputeGroupName) = UPPER('" + self.compute_group_name + "')"
         result = self._hook_run(sql, handler=_single_result_row_handler)
         if result is not None:
             result = str(result)
