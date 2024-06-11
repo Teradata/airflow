@@ -28,6 +28,8 @@ import pytest
 
 from airflow import DAG
 from airflow.models import Param
+from airflow.providers.teradata.operators.teradata_clone_compute_cluster import \
+    TeradataCloneComputeClusterProfileOperator, TeradataCloneComputeClusterGroupOperator
 
 try:
     from airflow.providers.teradata.operators.teradata_compute_cluster import (
@@ -40,7 +42,7 @@ except ImportError:
 
 
 ENV_ID = os.environ.get("SYSTEM_TESTS_ENV_ID")
-DAG_ID = "example_teradata_computer_cluster_provision"
+DAG_ID = "example_teradata_computer_cluster_group_clone"
 
 with DAG(
     dag_id=DAG_ID,
@@ -51,34 +53,22 @@ with DAG(
     render_template_as_native_obj=True,
     params={
         "compute_group_name": Param(
-            "compute_group_test",
+            "clone_compute_group_test",
             type="string",
             title="Compute cluster group Name:",
             description="Enter compute cluster group name.",
         ),
-        "compute_profile_name": Param(
-            "compute_profile_test",
+        "copy_from_compute_group_name": Param(
+            "compute_group_test",
             type="string",
-            title="Compute cluster profile Name:",
-            description="Enter compute cluster profile name.",
+            title="Parent compute cluster group Name:",
+            description="Enter parent compute cluster group name.",
         ),
-        "query_strategy": Param(
-            "STANDARD",
-            type="string",
-            title="Compute cluster instance type:",
-            description="Enter compute cluster instance type. Valid values are STANDARD, ANALYTIC",
-        ),
-        "compute_map": Param(
-            "TD_COMPUTE_XSMALL",
-            type="string",
-            title="Compute Map Name:",
-            description="Enter compute cluster compute map name.",
-        ),
-        "compute_attribute": Param(
-            "MIN_COMPUTE_COUNT(1) MAX_COMPUTE_COUNT(5) INITIALLY_SUSPENDED('FALSE')",
-            type="string",
-            title="Compute cluster compute attribute:",
-            description="Enter compute cluster compute attribute values.",
+        "include_profiles": Param(
+            False,
+            type="boolean",
+            title="Do you want to copy compute profiles?:",
+            description="Confirmation to copy all compute profiles.",
         ),
         "conn_id": Param(
             "teradata_default",
@@ -94,17 +84,17 @@ with DAG(
         ),
     },
 ) as dag:
-    compute_cluster_provision_operation = TeradataComputeClusterProvisionOperator(
-        task_id="compute_cluster_provision_operation",
-        compute_profile_name="{{ params.compute_profile_name }}",
+
+    compute_cluster_group_clone_operation = TeradataCloneComputeClusterGroupOperator(
+        task_id="compute_cluster_group_clone_operation",
         compute_group_name="{{ params.compute_group_name }}",
+        copy_from_compute_group_name="{{ params.copy_from_compute_group_name }}",
+        include_profiles=bool("{{ params.include_profiles }}"),
         conn_id="{{ params.conn_id }}",
-        timeout="{{ params.timeout }}",
-        query_strategy="{{ params.query_strategy }}",
-        compute_map="{{ params.compute_map }}",
-        compute_attribute="{{ params.compute_attribute }}",
+        timeout="{{ params.timeout }}"
     )
-    (compute_cluster_provision_operation)
+
+    compute_cluster_group_clone_operation
 
     # [END teradata_vantage_lake_compute_cluster_provision_howto_guide]
 

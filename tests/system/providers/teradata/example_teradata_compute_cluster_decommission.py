@@ -62,12 +62,6 @@ with DAG(
             title="Compute cluster profile Name:",
             description="Enter compute cluster profile name.",
         ),
-        "delete_compute_group": Param(
-            False,
-            type="boolean",
-            title="Do you want to delete compute group?:",
-            description="Confirmation to delete compute group along with compute profile.",
-        ),
         "conn_id": Param(
             "teradata_lake",
             type="string",
@@ -86,7 +80,6 @@ with DAG(
         task_id="compute_cluster_decommission_operation",
         compute_profile_name="{{ params.compute_profile_name }}",
         compute_group_name="{{ params.compute_group_name }}",
-        delete_compute_group=bool("{{ params.delete_compute_group }}"),
         conn_id="{{ params.conn_id }}",
         timeout="{{ params.timeout }}",
     )
