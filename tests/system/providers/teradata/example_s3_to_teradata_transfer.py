@@ -81,7 +81,7 @@ with DAG(
     # [START s3_to_teradata_transfer_operator_howto_guide_transfer_data_access_s3_to_teradata_csv]
     transfer_key_data_csv = S3ToTeradataOperator(
         task_id="transfer_key_data_s3_to_teradata_key_csv",
-        s3_source_key="/s3/teradata-download.s3.us-east-1.amazonaws.com/DevTools/csv/",
+        s3_source_key="/s3/airflowteradatatest.s3.ap-southeast-2.amazonaws.com/",
         teradata_table="example_s3_teradata_csv",
         aws_conn_id="aws_default",
         teradata_conn_id="teradata_default",

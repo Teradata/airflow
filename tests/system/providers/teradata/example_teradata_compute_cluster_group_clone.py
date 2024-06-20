@@ -16,7 +16,7 @@
 # specific language governing permissions and limitations
 # under the License.
 """
-Example use of Teradata Compute Cluster Provision Operator
+Example use of Clone of Teradata Compute Cluster Group
 """
 
 from __future__ import annotations
@@ -28,17 +28,20 @@ import pytest
 
 from airflow import DAG
 from airflow.models import Param
+from airflow.providers.teradata.operators.teradata import TeradataOperator
 from airflow.providers.teradata.operators.teradata_clone_compute_cluster import \
     TeradataCloneComputeClusterProfileOperator, TeradataCloneComputeClusterGroupOperator
+from airflow.utils.task_group import TaskGroup
+from airflow.utils.trigger_rule import TriggerRule
 
 try:
     from airflow.providers.teradata.operators.teradata_compute_cluster import (
-        TeradataComputeClusterProvisionOperator,
+        TeradataComputeClusterProvisionOperator, TeradataComputeClusterDecommissionOperator,
     )
 except ImportError:
     pytest.skip("TERADATA provider not available", allow_module_level=True)
 
-# [START teradata_vantage_lake_compute_cluster_provision_howto_guide]
+# [START teradata_vantage_lake_compute_cluster_group_clone_howto_guide]
 
 
 ENV_ID = os.environ.get("SYSTEM_TESTS_ENV_ID")
@@ -49,54 +52,112 @@ with DAG(
     start_date=datetime.datetime(2020, 2, 2),
     schedule="@once",
     catchup=False,
-    default_args={"conn_id": "teradata_lake"},
-    render_template_as_native_obj=True,
-    params={
-        "compute_group_name": Param(
-            "clone_compute_group_test",
-            type="string",
-            title="Compute cluster group Name:",
-            description="Enter compute cluster group name.",
-        ),
-        "copy_from_compute_group_name": Param(
-            "compute_group_test",
-            type="string",
-            title="Parent compute cluster group Name:",
-            description="Enter parent compute cluster group name.",
-        ),
-        "include_profiles": Param(
-            False,
-            type="boolean",
-            title="Do you want to copy compute profiles?:",
-            description="Confirmation to copy all compute profiles.",
-        ),
-        "conn_id": Param(
-            "teradata_default",
-            type="string",
-            title="Teradata ConnectionId:",
-            description="Enter Teradata connection id.",
-        ),
-        "timeout": Param(
-            20,
-            type="integer",
-            title="Timeout:",
-            description="Time elapsed before the task times out and fails. Timeout is in minutes.",
-        ),
-    },
+    default_args={"conn_id": "teradata_default", "timeout": 30},
 ) as dag:
-
-    compute_cluster_group_clone_operation = TeradataCloneComputeClusterGroupOperator(
-        task_id="compute_cluster_group_clone_operation",
-        compute_group_name="{{ params.compute_group_name }}",
-        copy_from_compute_group_name="{{ params.copy_from_compute_group_name }}",
-        include_profiles=bool("{{ params.include_profiles }}"),
-        conn_id="{{ params.conn_id }}",
-        timeout="{{ params.timeout }}"
+    # Creating a compute cluster
+    compute_cluster_provision_operation = TeradataComputeClusterProvisionOperator(
+        task_id="compute_cluster_provision_operation",
+        compute_profile_name="cp1_group__clone",
+        compute_group_name="cg1_group_clone",
+        query_strategy="STANDARD",
+        compute_map="TD_COMPUTE_XSMALL",
+        compute_attribute="MIN_COMPUTE_COUNT(1) MAX_COMPUTE_COUNT(1) INITIALLY_SUSPENDED('FALSE')",
     )
 
-    compute_cluster_group_clone_operation
+    with TaskGroup(group_id='clone_to_existing_group') as clone_to_existing_group:
+        with TaskGroup(group_id='clone_to_existing_group_create_cg') as clone_to_existing_group_create_cg:
+            create_cg_clone_group = TeradataOperator(
+                task_id="create_cg_clone_group",
+                sql=r"""
+                        CREATE COMPUTE GROUP cg_clone USING QUERY_STRATEGY ('STANDARD')
+                    """,
+            )
 
-    # [END teradata_vantage_lake_compute_cluster_provision_howto_guide]
+            create_cg_clone_no_profiles_group = TeradataOperator(
+                task_id="create_cg_clone_no_profiles_group",
+                sql=r"""
+                        CREATE COMPUTE GROUP cg_clone_no_profiles USING QUERY_STRATEGY ('STANDARD')
+                    """,
+            )
+        # [START teradata_vantage_lake_compute_cluster_group_clone_howto_guide_to_copy_profiles_from_a_group_to_new_group]
+        compute_cluster_group_clone_existing_operation_with_profiles = TeradataCloneComputeClusterGroupOperator(
+            task_id="compute_cluster_group_clone_operation_with_profiles",
+            compute_group_name="cg_clone",
+            copy_from_compute_group_name="cg1_group_clone",
+            include_profiles=True,
+        )
+        # [END teradata_vantage_lake_compute_cluster_group_clone_howto_guide_to_copy_profiles_from_a_group_to_new_group]
+
+        # [START teradata_vantage_lake_compute_cluster_group_clone_howto_guide_to_create_new_group_from_a_group_without_profiles]
+        compute_cluster_group_clone_existing_operation_without_profiles = TeradataCloneComputeClusterGroupOperator(
+            task_id="compute_cluster_group_clone_operation_without_profiles",
+            compute_group_name="cg_clone_no_profiles",
+            copy_from_compute_group_name="cg1_group_clone",
+            include_profiles=False,
+        )
+        # [END teradata_vantage_lake_compute_cluster_group_clone_howto_guide_to_create_new_group_from_a_group_without_profiles]
+        clone_to_existing_group_create_cg >> [compute_cluster_group_clone_existing_operation_with_profiles,
+                                              compute_cluster_group_clone_existing_operation_without_profiles]
+
+    with TaskGroup(group_id='clone_to_new_group') as clone_to_new_group:
+        compute_cluster_group_clone_new_operation_with_profiles = TeradataCloneComputeClusterGroupOperator(
+            task_id="compute_cluster_group_clone_operation_with_profiles",
+            compute_group_name="cg_clone_new",
+            copy_from_compute_group_name="cg1_group_clone",
+            include_profiles=True,
+        )
+
+        compute_cluster_group_clone_new_operation_without_profiles = TeradataCloneComputeClusterGroupOperator(
+            task_id="compute_cluster_group_clone_operation_without_profiles",
+            compute_group_name="cg_clone_new_no_profiles",
+            copy_from_compute_group_name="cg1_group_clone",
+            include_profiles=False,
+        )
+
+    compute_cluster_provision_operation >> [clone_to_existing_group, clone_to_new_group]
+
+    with TaskGroup(group_id='delete_group') as delete_group:
+        with TaskGroup(group_id='delete_profiles_in_group') as delete_profiles_in_group:
+            drop_cp1_cg1_group__clone = TeradataComputeClusterDecommissionOperator(
+                task_id="drop_cp1_cg1_group__clone",
+                compute_profile_name="cp1_group__clone",
+                compute_group_name="cg1_group_clone",
+                delete_compute_group=True,
+                conn_id="{{ params.conn_id }}",
+                timeout="{{ params.timeout }}",
+                trigger_rule=TriggerRule.ALL_DONE
+            )
+            drop_cp1_cg_clone = TeradataComputeClusterDecommissionOperator(
+                task_id="drop_cp1_cg_clone",
+                compute_profile_name="cp1_group__clone",
+                compute_group_name="cg_clone",
+                delete_compute_group=True,
+                conn_id="{{ params.conn_id }}",
+                timeout="{{ params.timeout }}",
+                trigger_rule=TriggerRule.ALL_DONE
+            )
+
+            drop_cp1_cg_clone_new = TeradataComputeClusterDecommissionOperator(
+                task_id="drop_cp1_cg_clone_new",
+                compute_profile_name="cp1_group__clone",
+                compute_group_name="cg_clone_new",
+                delete_compute_group=True,
+                conn_id="{{ params.conn_id }}",
+                timeout="{{ params.timeout }}",
+                trigger_rule=TriggerRule.ALL_DONE
+            )
+
+            drop_cg_clone_no_profiles = TeradataOperator(
+                task_id="drop_cg_clone_no_profiles",
+                sql=r"""
+                            DROP COMPUTE GROUP cg_clone_no_profiles
+                        """,
+                trigger_rule=TriggerRule.ALL_DONE
+            )
+
+    compute_cluster_provision_operation >> [clone_to_existing_group, clone_to_new_group] >> delete_group
+
+    # [END teradata_vantage_lake_compute_cluster_group_clone_howto_guide]
 
     from tests.system.utils.watcher import watcher
 

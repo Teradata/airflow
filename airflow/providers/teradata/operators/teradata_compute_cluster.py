@@ -309,6 +309,9 @@ class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator
 
     :param compute_profile_name: Name of the Compute Profile to manage.
     :param compute_group_name: Name of compute group to which compute profile belongs.
+    :param delete_compute_group: Indicates whether the compute group should be deleted.
+        When set to True, it signals the system to remove the specified compute group.
+        Conversely, when set to False, no action is taken on the compute group.
     :param conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
         reference to a specific Teradata database.
     :param timeout: Time elapsed before the task times out and fails.
@@ -317,6 +320,7 @@ class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator
     template_fields: Sequence[str] = (
         "compute_profile_name",
         "compute_group_name",
+        "delete_compute_group",
         "conn_id",
         "timeout",
     )
@@ -325,9 +329,11 @@ class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator
 
     def __init__(
         self,
+        delete_compute_group: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
+        self.delete_compute_group = delete_compute_group
 
     def execute(self, context: Context):
         """
@@ -351,6 +357,10 @@ class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator
             self.compute_profile_name,
             self.compute_group_name,
         )
+        if self.delete_compute_group:
+            cg_drop_query = "DROP COMPUTE GROUP " + self.compute_group_name
+            self._hook_run(cg_drop_query, handler=_single_result_row_handler)
+            self.log.info("Compute Group %s is successfully dropped", self.compute_group_name)
 
 
 class TeradataComputeClusterResumeOperator(_TeradataComputeClusterOperator):

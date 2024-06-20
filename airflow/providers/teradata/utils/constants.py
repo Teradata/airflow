@@ -21,6 +21,7 @@ class Constants:
     """Define constants for Teradata."""
 
     CC_CREATE_OPR = "CREATE"
+    CC_CREATE_SUSPEND_OPR = "CREATE_SUSPEND"
     CC_DROP_OPR = "DROP"
     CC_SUSPEND_OPR = "SUSPEND"
     CC_RESUME_OPR = "RESUME"
@@ -38,5 +39,6 @@ class Constants:
         "There is an issue with the %s operation. Kindly consult the administrator for assistance."
     )
     CC_GRP_PRP_EXISTS_MSG = "The specified Compute cluster is already exists."
+    CC_OPR_EMPTY_COPY_PROFILE_ERROR_MSG = "Please provide a valid name for the source and target compute profile."
     CC_OPR_TIME_OUT = 1200
     CC_POLL_INTERVAL = 60

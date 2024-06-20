@@ -76,7 +76,9 @@ class _TeradataComputeClusterOperator(BaseOperator):
 
         Relies on trigger to throw an exception, otherwise it assumes execution was successful.
         """
-        self._compute_cluster_execute_complete(event)
+        if event["status"] == "success" or event["status"] == "failure":
+            return event["message"]
+        raise AirflowException(event["message"])
 
     def _compute_cluster_execute(self):
         # Verifies if the provided Teradata instance belongs to Vantage Cloud Lake.
@@ -98,13 +100,6 @@ class _TeradataComputeClusterOperator(BaseOperator):
         except Exception as ex:
             self.log.error("Error occurred while getting teradata database version: %s ", str(ex))
             raise
-
-    def _compute_cluster_execute_complete(self, event: dict[str, Any]) -> None:
-        if event["status"] == "success":
-            self.log.info("Operation Status %s", event["message"])
-            return event["message"]
-        elif event["status"] == "error":
-            raise AirflowException(event["message"])
 
     def _handle_cc_status(self, operation_type, sql, compute_group_name, compute_profile_name):
         create_sql_result = self._hook_run(sql, handler=_single_result_row_handler)
@@ -177,11 +172,11 @@ def _get_initially_suspended(create_cp_query):
 class TeradataCloneComputeClusterProfileOperator(_TeradataComputeClusterOperator):
     """
 
-    Creates a fresh Computer Cluster by duplicating the configuration of the provided Compute Cluster.
+    Creates a fresh Computer Cluster Profile by duplicating the configuration of the provided Compute Cluster Profile.
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
-        :ref:`howto/operator:TeradataComputeClusterProvisionOperator`
+        :ref:`howto/operator:TeradataCloneComputeClusterProfileOperator`
 
     :param compute_profile_name: Name of the Compute Profile to manage.
     :param compute_group_name: Name of compute group to which compute profile belongs.
@@ -205,9 +200,9 @@ class TeradataCloneComputeClusterProfileOperator(_TeradataComputeClusterOperator
     def __init__(
         self,
         compute_profile_name: str,
+        copy_from_compute_profile_name: str,
         compute_group_name: str,
-        copy_from_compute_profile_name: str = '',
-        copy_from_compute_group_name: str = '',
+        copy_from_compute_group_name: str,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -218,48 +213,64 @@ class TeradataCloneComputeClusterProfileOperator(_TeradataComputeClusterOperator
 
     def execute(self, context: Context):
         """
-        Initiate the execution of CREATE COMPUTE SQL statement.
+        Initiate the execution of cloning compute cluster profile.
 
-        Initiate the execution of the SQL statement for provisioning the compute cluster within Teradata Vantage
-        Lake, effectively creates the compute cluster.
+        Initiate the execution of required SQL statements for cloning the compute cluster within Teradata Vantage
+        Lake, effectively clones a compute cluster profile from another compute cluster profile.
         Airflow runs this method on the worker and defers using the trigger.
         """
         return self._compute_cluster_execute()
 
     def _compute_cluster_execute(self):
-        if self.compute_group_name:
-            cg_status_query = (
-                "SELECT  count(1) FROM DBC.ComputeGroups WHERE ComputeGroupName = '"
-                + self.compute_group_name
-                + "'"
-            )
-            cg_status_result = self._hook_run(cg_status_query, _single_result_row_handler)
-            if cg_status_result is not None:
-                cg_status_result = str(cg_status_result)
-            else:
-                cg_status_result = 0
-            self.log.debug("cg_status_result - %s", cg_status_result)
-            if int(cg_status_result) == 0:
-                query_get_policy = "SEL ComputeGroupPolicy FROM DBC.ComputeGroups WHERE ComputeGroupName = '" + self.copy_from_compute_group_name + "'"
-                query_get_policy_result = self._hook_run(query_get_policy, _single_result_row_handler)
-                query_strategy = None
-                if query_get_policy_result is not None:
-                    query_get_policy_result = str(query_get_policy_result)
-                    query_strategy = get_compute_group_policy(query_get_policy_result)
-                create_cg_query = "CREATE COMPUTE GROUP " + self.compute_group_name
-                if query_strategy is not None:
-                    create_cg_query = (
-                        create_cg_query + " USING QUERY_STRATEGY ('" + query_strategy + "')"
-                    )
-                self._hook_run(create_cg_query, _single_result_row_handler)
+        super()._compute_cluster_execute()
+        if not self.compute_profile_name and self.copy_from_compute_profile_name:
+            raise AirflowException(Constants.CC_OPR_EMPTY_COPY_PROFILE_ERROR_MSG)
+        if self.compute_group_name or self.copy_from_compute_group_name:
+            if self.compute_group_name:
+                cg_status_query = (
+                    "SELECT  count(1) FROM DBC.ComputeGroups WHERE UPPER(ComputeGroupName) = UPPER('"
+                    + self.compute_group_name
+                    + "')"
+                )
+                cg_status_result = self._hook_run(cg_status_query, _single_result_row_handler)
+                if cg_status_result is not None:
+                    cg_status_result = str(cg_status_result)
+                else:
+                    cg_status_result = 0
+                if int(cg_status_result) == 0:
+                    query_strategy = 'STANDARD'
+                    if not self.copy_from_compute_group_name:
+                        show_query = "SHOW COMPUTE PROFILE " + self.copy_from_compute_profile_name
+                        show_query_result = self._hook_run(show_query, handler=_single_result_row_handler)
+                        if show_query_result is not None:
+                            show_query_result = str(show_query_result)
+                            show_query_result = re.sub(re.escape(self.copy_from_compute_profile_name),
+                                                       self.compute_profile_name, show_query_result,
+                                                       flags=re.IGNORECASE)
+                            start_index = show_query_result.find("IN") + len("IN")
+                            end_index = show_query_result.find(",", start_index)
+                            self.copy_from_compute_group_name = show_query_result[
+                                                           start_index:end_index].strip()
+                    if self.copy_from_compute_group_name:
+                        query_get_policy = "SEL ComputeGroupPolicy FROM DBC.ComputeGroups WHERE UPPER(ComputeGroupName) = UPPER('" + self.copy_from_compute_group_name + "')"
+                        query_get_policy_result = self._hook_run(query_get_policy, _single_result_row_handler)
+                        if query_get_policy_result is not None:
+                            query_get_policy_result = str(query_get_policy_result)
+                            query_strategy = get_compute_group_policy(query_get_policy_result)
+                    create_cg_query = "CREATE COMPUTE GROUP " + self.compute_group_name
+                    if query_strategy is not None:
+                        create_cg_query = (
+                            create_cg_query + " USING QUERY_STRATEGY ('" + query_strategy + "')"
+                        )
+                    self._hook_run(create_cg_query, _single_result_row_handler)
 
             cp_status_query = (
-                "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '"
+                "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('"
                 + self.compute_profile_name
-                + "'"
+                + "')"
             )
             if self.compute_group_name:
-                cp_status_query += " AND ComputeGroupName = '" + self.compute_group_name + "'"
+                cp_status_query += " AND UPPER(ComputeGroupName) = UPPER('" + self.compute_group_name + "')"
             cp_status_result = self._hook_run(cp_status_query, handler=_single_result_row_handler)
             if cp_status_result is not None:
                 cp_status_result = str(cp_status_result)
@@ -267,52 +278,58 @@ class TeradataCloneComputeClusterProfileOperator(_TeradataComputeClusterOperator
                 self.log.info(msg)
                 return cp_status_result
             else:
-                show_query = " SHOW COMPUTE PROFILE " + self.copy_from_compute_profile_name
-                if self.copy_from_compute_group_name:
-                    show_query += " IN " + self.copy_from_compute_group_name
-                show_query_result = self._hook_run(show_query, handler=_single_result_row_handler)
-                self.log.info("Result came for SHOW - %s", show_query_result)
-                if show_query_result is not None:
-                    show_query_result = str(show_query_result)
-                    show_query_result = re.sub(re.escape(self.copy_from_compute_profile_name),
-                                               self.compute_profile_name, show_query_result,
-                                               flags=re.IGNORECASE)
-                    self.log.info("Result after profile name replace - %s", show_query_result)
-                    self.log.info("%s and  %s", self.compute_group_name, self.copy_from_compute_group_name)
-                    if not self.compute_group_name:
-                        start_index = show_query_result.find("IN") + len("IN")
-                        end_index = show_query_result.find(",", start_index)
-                        self.compute_group_name = show_query_result[start_index:end_index].strip()
-                    self.log.info("%s != %s", self.compute_group_name, self.copy_from_compute_group_name)
-                    if self.compute_group_name != self.copy_from_compute_group_name:
-                        show_query_result = re.sub(re.escape(self.copy_from_compute_group_name),
-                                                   self.compute_group_name, show_query_result,
-                                                   flags=re.IGNORECASE)
-                        self.log.info("Result after group name replace - %s", show_query_result)
-                    operation = Constants.CC_CREATE_OPR
-                    initially_suspended = _get_initially_suspended(show_query_result)
-                    if initially_suspended == 'TRUE':
-                        operation = Constants.CC_CREATE_SUSPEND_OPR
-                    return self._handle_cc_status(operation, show_query_result,
-                                                  self.compute_group_name, self.compute_profile_name)
+                return self.clone_compute_cluster()
+        else:
+            return self.clone_compute_cluster()
 
+    def clone_compute_cluster(self):
+        show_query = "SHOW COMPUTE PROFILE " + self.copy_from_compute_profile_name
+        if self.copy_from_compute_group_name:
+            show_query += " IN " + self.copy_from_compute_group_name
+        show_query_result = self._hook_run(show_query, handler=_single_result_row_handler)
+        if show_query_result is not None:
+            show_query_result = str(show_query_result)
+            show_query_result = re.sub(re.escape(self.copy_from_compute_profile_name),
+                                       self.compute_profile_name, show_query_result,
+                                       flags=re.IGNORECASE)
+            if not self.compute_group_name and self.copy_from_compute_group_name: # If copying from other group to default user group
+                start_index = show_query_result.find("IN") + len("IN")
+                end_index = show_query_result.find(",", start_index)
+                show_query_result = show_query_result[:start_index - 2] + show_query_result[end_index:]
+            elif self.compute_group_name and not self.copy_from_compute_group_name: # If copying from current default user compute group to other group
+                start_index = show_query_result.find("IN") + len("IN")
+                end_index = show_query_result.find(",", start_index)
+                temp_copy_compute_group_name = show_query_result[start_index:end_index].strip()
+                show_query_result = re.sub(re.escape(temp_copy_compute_group_name),
+                                           self.compute_group_name, show_query_result,
+                                           flags=re.IGNORECASE)
+            else:
+                show_query_result = re.sub(re.escape(self.copy_from_compute_group_name),
+                                           self.compute_group_name, show_query_result,
+                                           flags=re.IGNORECASE)
+            operation = Constants.CC_CREATE_OPR
+            initially_suspended = _get_initially_suspended(show_query_result)
+            if initially_suspended == 'TRUE':
+                operation = Constants.CC_CREATE_SUSPEND_OPR
+            return self._handle_cc_status(operation, show_query_result,
+                                          self.compute_group_name, self.compute_profile_name)
 
 
 class TeradataCloneComputeClusterGroupOperator(_TeradataComputeClusterOperator):
     """
 
-    Creates a fresh Computer Cluster by duplicating the configuration of the provided Compute Cluster.
+    Creates a fresh Computer Cluster Group by duplicating the configuration of the provided Compute Cluster Group.
 
     .. seealso::
         For more information on how to use this operator, take a look at the guide:
-        :ref:`howto/operator:TeradataComputeClusterProvisionOperator`
+        :ref:`howto/operator:TeradataCloneComputeClusterGroupOperator`
 
     :param compute_profile_name: Name of the Compute Profile to manage.
-    :param compute_group_name: Name of compute group to which compute profile belongs.
+    :param compute_group_name: Name of compute group to which new compute profile belongs.
     :param copy_from_compute_profile_name: The name of the Compute Profile from which the configuration
         is replicated to new Compute Profile.
     :param copy_from_compute_group_name: The name of the Compute Group from which the configuration
-        is replicated to new Compute Profile.
+        is replicated to new Compute Group.
     """
 
     template_fields: Sequence[str] = (
@@ -339,20 +356,21 @@ class TeradataCloneComputeClusterGroupOperator(_TeradataComputeClusterOperator):
 
     def execute(self, context: Context):
         """
-        Initiate the execution of CREATE COMPUTE SQL statement.
+        Initiate the execution of Cloning Compute Group.
 
-        Initiate the execution of the SQL statement for provisioning the compute cluster within Teradata Vantage
-        Lake, effectively creates the compute cluster.
+        Initiate the execution of required SQL statements for cloning the compute cluster group within Teradata Vantage
+        Lake, effectively creates new the compute cluster group.
         Airflow runs this method on the worker and defers using the trigger.
         """
         return self._compute_cluster_execute()
 
     def _compute_cluster_execute(self):
+        super()._compute_cluster_execute()
         if self.compute_group_name and self.copy_from_compute_group_name:
             cg_status_query = (
-                "SELECT  count(1) FROM DBC.ComputeGroups WHERE ComputeGroupName = '"
+                "SELECT  count(1) FROM DBC.ComputeGroups WHERE UPPER(ComputeGroupName) = UPPER('"
                 + self.compute_group_name
-                + "'"
+                + "')"
             )
             cg_status_result = self._hook_run(cg_status_query, _single_result_row_handler)
             if cg_status_result is not None:
@@ -360,7 +378,7 @@ class TeradataCloneComputeClusterGroupOperator(_TeradataComputeClusterOperator):
             else:
                 cg_status_result = 0
             if int(cg_status_result) == 0:
-                query_get_policy = "SEL ComputeGroupPolicy FROM DBC.ComputeGroups WHERE ComputeGroupName = '" + self.copy_from_compute_group_name + "'"
+                query_get_policy = "SEL ComputeGroupPolicy FROM DBC.ComputeGroups WHERE UPPER(ComputeGroupName) = UPPER('" + self.copy_from_compute_group_name + "')"
                 query_get_policy_result = self._hook_run(query_get_policy, _single_result_row_handler)
                 if query_get_policy_result is not None:
                     query_get_policy_result = str(query_get_policy_result)
@@ -374,7 +392,7 @@ class TeradataCloneComputeClusterGroupOperator(_TeradataComputeClusterOperator):
                     if self.include_profiles:
                         get_profile_names_query = (
                             "SEL ComputeProfileName FROM DBC.ComputeProfilesVX WHERE "
-                            "ComputeGroupName = '" + self.copy_from_compute_group_name + "'"
+                            "UPPER(ComputeGroupName) = UPPER('" + self.copy_from_compute_group_name + "')"
                         )
                         get_profile_names_query_result = self._hook_run(get_profile_names_query,
                                                                         handler=_multiple_result_row_handler)

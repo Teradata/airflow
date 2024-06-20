@@ -31,16 +31,17 @@ from airflow.models import Param
 
 try:
     from airflow.providers.teradata.operators.teradata_compute_cluster import (
-        TeradataComputeClusterProvisionOperator,
+        TeradataComputeClusterProvisionOperator, TeradataComputeClusterDecommissionOperator,
+        TeradataComputeClusterSuspendOperator, TeradataComputeClusterResumeOperator,
     )
 except ImportError:
     pytest.skip("TERADATA provider not available", allow_module_level=True)
 
-# [START teradata_vantage_lake_compute_cluster_provision_howto_guide]
+# [START teradata_vantage_lake_compute_cluster_howto_guide]
 
 
 ENV_ID = os.environ.get("SYSTEM_TESTS_ENV_ID")
-DAG_ID = "example_teradata_computer_cluster_provision"
+DAG_ID = "example_teradata_computer_cluster"
 
 with DAG(
     dag_id=DAG_ID,
@@ -94,6 +95,7 @@ with DAG(
         ),
     },
 ) as dag:
+    # [START teradata_vantage_lake_compute_cluster_provision_howto_guide]
     compute_cluster_provision_operation = TeradataComputeClusterProvisionOperator(
         task_id="compute_cluster_provision_operation",
         compute_profile_name="{{ params.compute_profile_name }}",
@@ -104,9 +106,38 @@ with DAG(
         compute_map="{{ params.compute_map }}",
         compute_attribute="{{ params.compute_attribute }}",
     )
-    (compute_cluster_provision_operation)
-
     # [END teradata_vantage_lake_compute_cluster_provision_howto_guide]
+    # [START teradata_vantage_lake_compute_cluster_suspend_howto_guide]
+    compute_cluster_suspend_operation = TeradataComputeClusterSuspendOperator(
+        task_id="compute_cluster_suspend_operation",
+        compute_profile_name="{{ params.compute_profile_name }}",
+        compute_group_name="{{ params.compute_group_name }}",
+        conn_id="{{ params.conn_id }}",
+        timeout="{{ params.timeout }}",
+    )
+    # [END teradata_vantage_lake_compute_cluster_suspend_howto_guide]
+    # [START teradata_vantage_lake_compute_cluster_resume_howto_guide]
+    compute_cluster_resume_operation = TeradataComputeClusterResumeOperator(
+        task_id="compute_cluster_resume_operation",
+        compute_profile_name="{{ params.compute_profile_name }}",
+        compute_group_name="{{ params.compute_group_name }}",
+        conn_id="{{ params.conn_id }}",
+        timeout="{{ params.timeout }}",
+    )
+    # [END teradata_vantage_lake_compute_cluster_resume_howto_guide]
+    # [START teradata_vantage_lake_compute_cluster_decommission_howto_guide]
+    compute_cluster_decommission_operation = TeradataComputeClusterDecommissionOperator(
+        task_id="compute_cluster_decommission_operation",
+        compute_profile_name="{{ params.compute_profile_name }}",
+        compute_group_name="{{ params.compute_group_name }}",
+        delete_compute_group=bool("{{ params.delete_compute_group }}"),
+        conn_id="{{ params.conn_id }}",
+        timeout="{{ params.timeout }}",
+    )
+    # [END teradata_vantage_lake_compute_cluster_decommission_howto_guide]
+    (compute_cluster_provision_operation >> compute_cluster_suspend_operation >> compute_cluster_resume_operation >> compute_cluster_decommission_operation)
+
+    # [END teradata_vantage_lake_compute_cluster_howto_guide]
 
     from tests.system.utils.watcher import watcher
 

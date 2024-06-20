@@ -169,7 +169,7 @@ class TestTeradataComputeClusterOperator:
                             handler=_single_result_row_handler,
                         ),
                         call(
-                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'",
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('{compute_profile_name}')",
                             handler=_single_result_row_handler,
                         ),
                         call(
@@ -206,7 +206,7 @@ class TestTeradataComputeClusterOperator:
                             handler=_single_result_row_handler,
                         ),
                         call(
-                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'",
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('{compute_profile_name}')",
                             handler=_single_result_row_handler,
                         ),
                     ]
@@ -244,11 +244,11 @@ class TestTeradataComputeClusterOperator:
                             handler=_single_result_row_handler,
                         ),
                         call(
-                            f"SELECT  count(1) FROM DBC.ComputeGroups WHERE ComputeGroupName = '{compute_group_name}'",
+                            f"SELECT  count(1) FROM DBC.ComputeGroups WHERE UPPER(ComputeGroupName) = UPPER('{compute_group_name}')",
                             handler=_single_result_row_handler,
                         ),
                         call(
-                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}' AND ComputeGroupName = '{compute_group_name}'",
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('{compute_profile_name}') AND UPPER(ComputeGroupName) = UPPER('{compute_group_name}')",
                             handler=_single_result_row_handler,
                         ),
                         call(
@@ -289,11 +289,11 @@ class TestTeradataComputeClusterOperator:
                             handler=_single_result_row_handler,
                         ),
                         call(
-                            f"SELECT  count(1) FROM DBC.ComputeGroups WHERE ComputeGroupName = '{compute_group_name}'",
+                            f"SELECT  count(1) FROM DBC.ComputeGroups WHERE UPPER(ComputeGroupName) = UPPER('{compute_group_name}')",
                             handler=_single_result_row_handler,
                         ),
                         call(
-                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}' AND ComputeGroupName = '{compute_group_name}'",
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('{compute_profile_name}') AND UPPER(ComputeGroupName) = UPPER('{compute_group_name}')",
                             handler=_single_result_row_handler,
                         ),
                     ]
@@ -329,14 +329,14 @@ class TestTeradataComputeClusterOperator:
                             handler=_single_result_row_handler,
                         ),
                         call(
-                            f"SELECT  count(1) FROM DBC.ComputeGroups WHERE ComputeGroupName = '{compute_group_name}'",
+                            f"SELECT  count(1) FROM DBC.ComputeGroups WHERE UPPER(ComputeGroupName) = UPPER('{compute_group_name}')",
                             handler=_single_result_row_handler,
                         ),
                         call(
                             f"CREATE COMPUTE GROUP {compute_group_name}", handler=_single_result_row_handler
                         ),
                         call(
-                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}' AND ComputeGroupName = '{compute_group_name}'",
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('{compute_profile_name}') AND UPPER(ComputeGroupName) = UPPER('{compute_group_name}')",
                             handler=_single_result_row_handler,
                         ),
                         call(
@@ -387,7 +387,7 @@ class TestTeradataComputeClusterOperator:
                             handler=_single_result_row_handler,
                         ),
                         call(
-                            f"SELECT  count(1) FROM DBC.ComputeGroups WHERE ComputeGroupName = '{compute_group_name}'",
+                            f"SELECT  count(1) FROM DBC.ComputeGroups WHERE UPPER(ComputeGroupName) = UPPER('{compute_group_name}')",
                             handler=_single_result_row_handler,
                         ),
                         call(
@@ -395,7 +395,7 @@ class TestTeradataComputeClusterOperator:
                             handler=_single_result_row_handler,
                         ),
                         call(
-                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}' AND ComputeGroupName = '{compute_group_name}'",
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('{compute_profile_name}') AND UPPER(ComputeGroupName) = UPPER('{compute_group_name}')",
                             handler=_single_result_row_handler,
                         ),
                         call(
@@ -482,7 +482,7 @@ class TestTeradataComputeClusterOperator:
                             handler=_single_result_row_handler,
                         ),
                         call(
-                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'",
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('{compute_profile_name}')",
                             handler=_single_result_row_handler,
                         ),
                         call(
@@ -522,8 +522,8 @@ class TestTeradataComputeClusterOperator:
                             handler=_single_result_row_handler,
                         ),
                         call(
-                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'"
-                            f" AND ComputeGroupName = '{compute_group_name}'",
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('{compute_profile_name}')"
+                            f" AND UPPER(ComputeGroupName) = UPPER('{compute_group_name}')",
                             handler=_single_result_row_handler,
                         ),
                         call(
@@ -553,7 +553,7 @@ class TestTeradataComputeClusterOperator:
                         handler=_single_result_row_handler,
                     ),
                     call(
-                        f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'",
+                        f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('{compute_profile_name}')",
                         handler=_single_result_row_handler,
                     ),
                 ]
@@ -577,7 +577,7 @@ class TestTeradataComputeClusterOperator:
                         handler=_single_result_row_handler,
                     ),
                     call(
-                        f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'",
+                        f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('{compute_profile_name}')",
                         handler=_single_result_row_handler,
                     ),
                 ]
@@ -611,7 +611,7 @@ class TestTeradataComputeClusterOperator:
                             handler=_single_result_row_handler,
                         ),
                         call(
-                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'",
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('{compute_profile_name}')",
                             handler=_single_result_row_handler,
                         ),
                         call(
@@ -651,8 +651,8 @@ class TestTeradataComputeClusterOperator:
                             handler=_single_result_row_handler,
                         ),
                         call(
-                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'"
-                            f" AND ComputeGroupName = '{compute_group_name}'",
+                            f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('{compute_profile_name}')"
+                            f" AND UPPER(ComputeGroupName) = UPPER('{compute_group_name}')",
                             handler=_single_result_row_handler,
                         ),
                         call(
@@ -682,7 +682,7 @@ class TestTeradataComputeClusterOperator:
                         handler=_single_result_row_handler,
                     ),
                     call(
-                        f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'",
+                        f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('{compute_profile_name}')",
                         handler=_single_result_row_handler,
                     ),
                 ]
@@ -706,7 +706,7 @@ class TestTeradataComputeClusterOperator:
                         handler=_single_result_row_handler,
                     ),
                     call(
-                        f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE ComputeProfileName = '{compute_profile_name}'",
+                        f"SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('{compute_profile_name}')",
                         handler=_single_result_row_handler,
                     ),
                 ]
