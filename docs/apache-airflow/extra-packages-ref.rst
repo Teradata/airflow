@@ -143,6 +143,8 @@ custom bash/python providers).
 +---------------------+-----------------------------------------------------+------------------------------------------------+
 | apache-hive         | ``pip install 'apache-airflow[apache-hive]'``       | All Hive related operators                     |
 +---------------------+-----------------------------------------------------+------------------------------------------------+
+| apache-iceberg      | ``pip install 'apache-airflow[apache-iceberg]'``    | Apache Iceberg hooks                           |
++---------------------+-----------------------------------------------------+------------------------------------------------+
 | apache-impala       | ``pip install 'apache-airflow[apache-impala]'``     | All Impala related operators & hooks           |
 +---------------------+-----------------------------------------------------+------------------------------------------------+
 | apache-kafka        | ``pip install 'apache-airflow[apache-kafka]'``      | All Kafka related operators & hooks            |
@@ -237,6 +239,8 @@ These are extras that add dependencies needed for integration with external serv
 | weaviate            | ``pip install 'apache-airflow[weaviate]'``          | Weaviate hook and operators                         |
 +---------------------+-----------------------------------------------------+-----------------------------------------------------+
 | yandex              | ``pip install 'apache-airflow[yandex]'``            | Yandex.cloud hooks and operators                    |
++---------------------+-----------------------------------------------------+-----------------------------------------------------+
+| ydb                 | ``pip install 'apache-airflow[ydb]'``               | YDB hooks and operators                             |
 +---------------------+-----------------------------------------------------+-----------------------------------------------------+
 | zendesk             | ``pip install 'apache-airflow[zendesk]'``           | Zendesk hooks                                       |
 +---------------------+-----------------------------------------------------+-----------------------------------------------------+
