@@ -102,6 +102,13 @@ with DAG(
         sql="DROP TABLE example_s3_teradata_csv;",
     )
     # [END s3_to_teradata_transfer_operator_howto_guide_drop_table_csv]
+    # [START s3_to_teradata_transfer_operator_howto_guide_create_authorization]
+    create_aws_authorization = TeradataOperator(
+        task_id="create_aws_authorization",
+        conn_id=CONN_ID,
+        sql="CREATE AUTHORIZATION aws_authorization USER '{{ var.value.get('AWS_ACCESS_KEY_ID') }}' PASSWORD '{{ var.value.get('AWS_SECRET_ACCESS_KEY') }}' ",
+    )
+    # [END s3_to_teradata_transfer_operator_howto_guide_create_authorization]
     # [START s3_to_teradata_transfer_operator_howto_guide_transfer_data_authorization_s3_to_teradata_csv]
     transfer_auth_data_csv = S3ToTeradataOperator(
         task_id="transfer_auth_data_s3_to_teradata_auth_csv",
@@ -126,6 +133,13 @@ with DAG(
         sql="DROP TABLE example_s3_teradata_csv;",
     )
     # [END s3_to_teradata_transfer_operator_howto_guide_drop_table_csv]
+    # [START s3_to_teradata_transfer_operator_howto_guide_drop_authorization]
+    drop_auth = TeradataOperator(
+        task_id="drop_auth",
+        conn_id=CONN_ID,
+        sql="DROP AUTHORIZATION aws_authorization;",
+    )
+    # [END s3_to_teradata_transfer_operator_howto_guide_drop_authorization]
     # [START s3_to_teradata_transfer_operator_howto_guide_transfer_data_s3_to_teradata_json]
     transfer_data_json = S3ToTeradataOperator(
         task_id="transfer_data_s3_to_teradata_json",
@@ -184,9 +198,11 @@ with DAG(
         >> transfer_key_data_csv
         >> read_key_data_table_csv
         >> drop_key_table_csv
+        >> create_aws_authorization
         >> transfer_auth_data_csv
         >> read_auth_data_table_csv
         >> drop_auth_table_csv
+        >> drop_auth
     )
     # [END s3_to_teradata_transfer_operator_howto_guide]
 

@@ -100,6 +100,13 @@ with DAG(
         sql="DROP TABLE example_blob_teradata_csv;",
     )
     # [END azure_blob_to_teradata_transfer_operator_howto_guide_drop_table_csv]
+    # [START azure_blob_to_teradata_transfer_operator_howto_guide_create_authorization]
+    create_azure_authorization = TeradataOperator(
+        task_id="create_azure_authorization",
+        conn_id=CONN_ID,
+        sql="CREATE AUTHORIZATION azure_authorization USER '{{ var.value.get('AZURE_BLOB_ACCOUNTNAME') }}' PASSWORD '{{ var.value.get('AZURE_BLOB_ACCOUNT_SECRET_KEY') }}' ",
+    )
+    # [END azure_blob_to_teradata_transfer_operator_howto_guide_create_authorization]
     # [START azure_blob_to_teradata_transfer_operator_howto_guide_transfer_data_authorization_blob_to_teradata_csv]
     transfer_auth_data_csv = AzureBlobStorageToTeradataOperator(
         task_id="transfer_auth_data_blob_to_teradata_csv",
@@ -124,6 +131,13 @@ with DAG(
         sql="DROP TABLE example_blob_teradata_csv;",
     )
     # [END azure_blob_to_teradata_transfer_operator_howto_guide_drop_table_csv]
+    # [START azure_blob_to_teradata_transfer_operator_howto_guide_drop_authorization]
+    drop_auth = TeradataOperator(
+        task_id="drop_auth",
+        conn_id=CONN_ID,
+        sql="DROP AUTHORIZATION azure_authorization;",
+    )
+    # [END azure_blob_to_teradata_transfer_operator_howto_guide_drop_authorization]
     # [START azure_blob_to_teradata_transfer_operator_howto_guide_transfer_data_blob_to_teradata_json]
     transfer_data_json = AzureBlobStorageToTeradataOperator(
         task_id="transfer_data_blob_to_teradata_json",
@@ -183,9 +197,11 @@ with DAG(
         >> transfer_key_data_csv
         >> read_key_data_table_csv
         >> drop_key_table_csv
+        >> create_azure_authorization
         >> transfer_auth_data_csv
         >> read_auth_data_table_csv
         >> drop_auth_table_csv
+        >> drop_auth
     )
     # [END azure_blob_to_teradata_transfer_operator_howto_guide]
 
