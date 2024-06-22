@@ -41,11 +41,14 @@ if TYPE_CHECKING:
 from airflow.exceptions import AirflowException
 
 
+# Represents
+# 1. Compute Cluster Setup - Provision and Decomission operations
+# 2. Compute Cluster State - Resume and Suspend operations
 class _Operation(Enum):
     SETUP = 1
     STATE = 2
 
-
+# Handler to handle single result set of a SQL query
 def _single_result_row_handler(cursor):
     records = cursor.fetchone()
     if isinstance(records, list):
@@ -54,7 +57,7 @@ def _single_result_row_handler(cursor):
         return records
     raise TypeError(f"Unexpected results: {cursor.fetchone()!r}")
 
-
+# Providers given operation is setup or state operation
 def _determine_operation_context(operation):
     if operation == Constants.CC_CREATE_OPR or operation == Constants.CC_DROP_OPR:
         return _Operation.SETUP
@@ -118,7 +121,6 @@ class _TeradataComputeClusterOperator(BaseOperator):
         # Verifies if the provided Teradata instance belongs to Vantage Cloud Lake.
         lake_support_find_sql = "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'"
         lake_support_result = self.hook.run(lake_support_find_sql, handler=_single_result_row_handler)
-        self.log.info("OFS available - %s ", lake_support_result)
         if lake_support_result is None:
             raise AirflowException(Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG)
         # Getting teradata db version. Considering teradata instance is Lake when db version is 20 or above
@@ -128,7 +130,6 @@ class _TeradataComputeClusterOperator(BaseOperator):
             if db_version_result is not None:
                 db_version_result = str(db_version_result)
                 db_version = db_version_result.split(".")[0]
-                self.log.info("DBC version %s ", db_version)
                 if db_version is not None and int(db_version) < 20:
                     raise AirflowException(Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG)
         except Exception as ex:
@@ -137,7 +138,6 @@ class _TeradataComputeClusterOperator(BaseOperator):
 
     def _compute_cluster_execute_complete(self, event: dict[str, Any]) -> None:
         if event["status"] == "success":
-            self.log.info("Operation Status %s", event["message"])
             return event["message"]
         elif event["status"] == "error":
             raise AirflowException(event["message"])
@@ -170,7 +170,7 @@ class _TeradataComputeClusterOperator(BaseOperator):
             else:
                 return self.hook.run(query)
         except Exception as ex:
-            self.log.info(str(ex))
+            self.log.error(str(ex))
             raise
 
     def _get_initially_suspended(self, create_cp_query):
@@ -267,9 +267,7 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
                 cg_status_result = str(cg_status_result)
             else:
                 cg_status_result = 0
-            self.log.debug("cg_status_result - %s", cg_status_result)
             if int(cg_status_result) == 0:
-                self.log.info("Compute Group %s not exists. Creating it", self.compute_group_name)
                 create_cg_query = "CREATE COMPUTE GROUP " + self.compute_group_name
                 if self.query_strategy is not None:
                     create_cg_query = (
@@ -287,7 +285,6 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
         if cp_status_result is not None:
             cp_status_result = str(cp_status_result)
             msg = f"Compute Profile {self.compute_profile_name} is already exists under Compute Group {self.compute_group_name}. Status is {cp_status_result}"
-            self.log.info(msg)
             return cp_status_result
         else:
             create_cp_query = self._build_ccp_setup_query()

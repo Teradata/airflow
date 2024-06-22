@@ -18,7 +18,7 @@ from __future__ import annotations
 
 
 class Constants:
-    """Define constants for Teradata."""
+    """Define constants for Teradata Provider."""
 
     CC_CREATE_OPR = "CREATE"
     CC_CREATE_SUSPEND_OPR = "CREATE_SUSPEND"

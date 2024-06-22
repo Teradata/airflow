@@ -71,7 +71,6 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
         try:
             while True:
                 status = await self.get_status(hook)
-                self.log.info("Status : %s ", status)
                 if status is None or len(status) == 0:
                     self.log.info(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
                     raise AirflowException(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
@@ -136,7 +135,7 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
         except Exception as e:
             yield TriggerEvent({"status": "error", "message": str(e)})
         except asyncio.CancelledError:
-            self.log.info(Constants.CC_OPR_TIMEOUT_ERROR, self.operation_type)
+            self.log.error(Constants.CC_OPR_TIMEOUT_ERROR, self.operation_type)
 
     async def get_status(self, hook: TeradataHook) -> str:
         """Return compute cluster SUSPEND/RESUME operation status."""
