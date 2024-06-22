@@ -70,12 +70,12 @@ class _TeradataComputeClusterOperator(BaseOperator):
 
     :param compute_profile_name: Name of the Compute Profile to manage.
     :param compute_group_name: Name of compute group to which compute profile belongs.
-    :param conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
+    :param teradata_conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
         reference to a specific Teradata database.
     :param timeout: Time elapsed before the task times out and fails.
     """
 
-    template_fields: Sequence[str] = ("compute_profile_name", "compute_group_name", "conn_id", "timeout")
+    template_fields: Sequence[str] = ("compute_profile_name", "compute_group_name", "teradata_conn_id", "timeout")
 
     ui_color = "#e07c24"
 
@@ -83,19 +83,19 @@ class _TeradataComputeClusterOperator(BaseOperator):
         self,
         compute_profile_name: str,
         compute_group_name: str | None = None,
-        conn_id: str = TeradataHook.default_conn_name,
+        teradata_conn_id: str = TeradataHook.default_conn_name,
         timeout: int = Constants.CC_OPR_TIME_OUT,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.compute_profile_name = compute_profile_name
         self.compute_group_name = compute_group_name
-        self.conn_id = conn_id
+        self.teradata_conn_id = teradata_conn_id
         self.timeout = timeout
 
     @cached_property
     def hook(self) -> TeradataHook:
-        return TeradataHook(teradata_conn_id=self.conn_id)
+        return TeradataHook(teradata_conn_id=self.teradata_conn_id)
 
     @abstractmethod
     def execute(self, context: Context):
@@ -152,7 +152,7 @@ class _TeradataComputeClusterOperator(BaseOperator):
         self.defer(
             timeout=timedelta(minutes=self.timeout),
             trigger=TeradataComputeClusterSyncTrigger(
-                conn_id=cast(str, self.conn_id),
+                teradata_conn_id=cast(str, self.teradata_conn_id),
                 compute_profile_name=self.compute_profile_name,
                 compute_group_name=self.compute_group_name,
                 operation_type=operation_type,
@@ -202,7 +202,7 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
         to the mapping of compute resources to a specific node or set of nodes within the cluster.
     :param compute_attribute: Optional attributes of compute profile. Example compute attribute
         MIN_COMPUTE_COUNT(1) MAX_COMPUTE_COUNT(5) INITIALLY_SUSPENDED('FALSE')
-    :param conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
+    :param teradata_conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
         reference to a specific Teradata database.
     :param timeout: Time elapsed before the task times out and fails.
     """
@@ -213,7 +213,7 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
         "query_strategy",
         "compute_map",
         "compute_attribute",
-        "conn_id",
+        "teradata_conn_id",
         "timeout",
     )
 
@@ -308,7 +308,7 @@ class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator
     :param delete_compute_group: Indicates whether the compute group should be deleted.
         When set to True, it signals the system to remove the specified compute group.
         Conversely, when set to False, no action is taken on the compute group.
-    :param conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
+    :param teradata_conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
         reference to a specific Teradata database.
     :param timeout: Time elapsed before the task times out and fails.
     """
@@ -317,7 +317,7 @@ class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator
         "compute_profile_name",
         "compute_group_name",
         "delete_compute_group",
-        "conn_id",
+        "teradata_conn_id",
         "timeout",
     )
 
@@ -372,12 +372,12 @@ class TeradataComputeClusterResumeOperator(_TeradataComputeClusterOperator):
 
     :param compute_profile_name: Name of the Compute Profile to manage.
     :param compute_group_name: Name of compute group to which compute profile belongs.
-    :param conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
+    :param teradata_conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
         reference to a specific Teradata database.
     :param timeout: Time elapsed before the task times out and fails. Time is in minutes.
     """
 
-    template_fields: Sequence[str] = ("compute_profile_name", "compute_group_name", "conn_id", "timeout")
+    template_fields: Sequence[str] = ("compute_profile_name", "compute_group_name", "teradata_conn_id", "timeout")
 
     ui_color = "#e07c24"
 
@@ -439,12 +439,12 @@ class TeradataComputeClusterSuspendOperator(_TeradataComputeClusterOperator):
 
     :param compute_profile_name: Name of the Compute Profile to manage.
     :param compute_group_name: Name of compute group to which compute profile belongs.
-    :param conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
+    :param teradata_conn_id: The :ref:`Teradata connection id <howto/connection:teradata>`
         reference to a specific Teradata database.
     :param timeout: Time elapsed before the task times out and fails.
     """
 
-    template_fields: Sequence[str] = ("compute_profile_name", "compute_group_name", "conn_id", "timeout")
+    template_fields: Sequence[str] = ("compute_profile_name", "compute_group_name", "teradata_conn_id", "timeout")
 
     ui_color = "#e07c24"
 

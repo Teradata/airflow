@@ -48,7 +48,7 @@ with DAG(
     start_date=datetime.datetime(2020, 2, 2),
     schedule="@once",
     catchup=False,
-    default_args={"conn_id": "teradata_lake"},
+    default_args={"teradata_conn_id": "teradata_lake"},
     render_template_as_native_obj=True,
     params={
         "compute_group_name": Param(
@@ -81,8 +81,8 @@ with DAG(
             title="Compute cluster compute attribute:",
             description="Enter compute cluster compute attribute values.",
         ),
-        "conn_id": Param(
-            "teradata_default",
+        "teradata_conn_id": Param(
+            "teradata_lake",
             type="string",
             title="Teradata ConnectionId:",
             description="Enter Teradata connection id.",
@@ -100,7 +100,7 @@ with DAG(
         task_id="compute_cluster_provision_operation",
         compute_profile_name="{{ params.compute_profile_name }}",
         compute_group_name="{{ params.compute_group_name }}",
-        conn_id="{{ params.conn_id }}",
+        teradata_conn_id="{{ params.teradata_conn_id }}",
         timeout="{{ params.timeout }}",
         query_strategy="{{ params.query_strategy }}",
         compute_map="{{ params.compute_map }}",
@@ -112,7 +112,7 @@ with DAG(
         task_id="compute_cluster_suspend_operation",
         compute_profile_name="{{ params.compute_profile_name }}",
         compute_group_name="{{ params.compute_group_name }}",
-        conn_id="{{ params.conn_id }}",
+        teradata_conn_id="{{ params.teradata_conn_id }}",
         timeout="{{ params.timeout }}",
     )
     # [END teradata_vantage_lake_compute_cluster_suspend_howto_guide]
@@ -121,7 +121,7 @@ with DAG(
         task_id="compute_cluster_resume_operation",
         compute_profile_name="{{ params.compute_profile_name }}",
         compute_group_name="{{ params.compute_group_name }}",
-        conn_id="{{ params.conn_id }}",
+        teradata_conn_id="{{ params.teradata_conn_id }}",
         timeout="{{ params.timeout }}",
     )
     # [END teradata_vantage_lake_compute_cluster_resume_howto_guide]
@@ -131,7 +131,7 @@ with DAG(
         compute_profile_name="{{ params.compute_profile_name }}",
         compute_group_name="{{ params.compute_group_name }}",
         delete_compute_group=bool("{{ params.delete_compute_group }}"),
-        conn_id="{{ params.conn_id }}",
+        teradata_conn_id="{{ params.teradata_conn_id }}",
         timeout="{{ params.timeout }}",
     )
     # [END teradata_vantage_lake_compute_cluster_decommission_howto_guide]

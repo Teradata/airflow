@@ -29,7 +29,7 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
     """
     Fetch the status of the suspend or resume operation for the specified compute cluster.
 
-    :param conn_id:  The :ref:`Teradata connection id <howto/connection:teradata>`
+    :param teradata_conn_id:  The :ref:`Teradata connection id <howto/connection:teradata>`
         reference to a specific Teradata database.
     :param compute_profile_name:  Name of the Compute Profile to manage.
     :param compute_group_name: Name of compute group to which compute profile belongs.
@@ -39,14 +39,14 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
 
     def __init__(
         self,
-        conn_id: str,
+        teradata_conn_id: str,
         compute_profile_name: str,
         compute_group_name: str | None = None,
         operation_type: str | None = None,
         poll_interval: float | None = None,
     ):
         super().__init__()
-        self.conn_id = conn_id
+        self.teradata_conn_id = teradata_conn_id
         self.compute_profile_name = compute_profile_name
         self.compute_group_name = compute_group_name
         self.operation_type = operation_type
@@ -57,7 +57,7 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
         return (
             "airflow.providers.teradata.triggers.teradata_compute_cluster.TeradataComputeClusterSyncTrigger",
             {
-                "conn_id": self.conn_id,
+                "teradata_conn_id": self.teradata_conn_id,
                 "compute_profile_name": self.compute_profile_name,
                 "compute_group_name": self.compute_group_name,
                 "operation_type": self.operation_type,
@@ -67,7 +67,7 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
 
     async def run(self) -> AsyncIterator[TriggerEvent]:
         """Wait for Compute Cluster operation to complete."""
-        hook = TeradataHook(teradata_conn_id=self.conn_id)
+        hook = TeradataHook(teradata_conn_id=self.teradata_conn_id)
         try:
             while True:
                 status = await self.get_status(hook)

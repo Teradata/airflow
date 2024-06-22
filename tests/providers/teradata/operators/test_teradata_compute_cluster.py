@@ -61,28 +61,28 @@ def compute_attribute():
 @pytest.fixture
 def compute_cluster_provision_instance(compute_profile_name):
     return TeradataComputeClusterProvisionOperator(
-        task_id="test", compute_profile_name=compute_profile_name, conn_id="test_conn"
+        task_id="test", compute_profile_name=compute_profile_name, teradata_conn_id="test_conn"
     )
 
 
 @pytest.fixture
 def compute_cluster_decommission_instance(compute_profile_name):
     return TeradataComputeClusterDecommissionOperator(
-        task_id="test", compute_profile_name=compute_profile_name, conn_id="test_conn"
+        task_id="test", compute_profile_name=compute_profile_name, teradata_conn_id="test_conn"
     )
 
 
 @pytest.fixture
 def compute_cluster_resume_instance(compute_profile_name):
     return TeradataComputeClusterResumeOperator(
-        task_id="test", compute_profile_name=compute_profile_name, conn_id="test_conn"
+        task_id="test", compute_profile_name=compute_profile_name, teradata_conn_id="test_conn"
     )
 
 
 @pytest.fixture
 def compute_cluster_suspend_instance(compute_profile_name):
     return TeradataComputeClusterSuspendOperator(
-        task_id="test", compute_profile_name=compute_profile_name, conn_id="test_conn"
+        task_id="test", compute_profile_name=compute_profile_name, teradata_conn_id="test_conn"
     )
 
 
@@ -149,7 +149,7 @@ class TestTeradataComputeClusterOperator:
             with patch.object(compute_cluster_provision_instance, "defer") as mock_defer:
                 # Assert that defer method is called with the correct parameters
                 expected_trigger = TeradataComputeClusterSyncTrigger(
-                    conn_id=compute_cluster_provision_instance.conn_id,
+                    teradata_conn_id=compute_cluster_provision_instance.teradata_conn_id,
                     compute_profile_name=compute_profile_name,
                     operation_type=Constants.CC_CREATE_OPR,
                     poll_interval=Constants.CC_POLL_INTERVAL,
@@ -187,7 +187,7 @@ class TestTeradataComputeClusterOperator:
             with patch.object(compute_cluster_provision_instance, "defer") as mock_defer:
                 # Assert that defer method is called with the correct parameters
                 expected_trigger = TeradataComputeClusterSyncTrigger(
-                    conn_id=compute_cluster_provision_instance.conn_id,
+                    teradata_conn_id=compute_cluster_provision_instance.teradata_conn_id,
                     compute_profile_name=compute_profile_name,
                     operation_type=Constants.CC_CREATE_OPR,
                     poll_interval=Constants.CC_POLL_INTERVAL,
@@ -223,7 +223,7 @@ class TestTeradataComputeClusterOperator:
             with patch.object(compute_cluster_provision_instance, "defer") as mock_defer:
                 # Assert that defer method is called with the correct parameters
                 expected_trigger = TeradataComputeClusterSyncTrigger(
-                    conn_id=compute_cluster_provision_instance.conn_id,
+                    teradata_conn_id=compute_cluster_provision_instance.teradata_conn_id,
                     compute_profile_name=compute_profile_name,
                     compute_group_name=compute_group_name,
                     operation_type=Constants.CC_CREATE_OPR,
@@ -269,7 +269,7 @@ class TestTeradataComputeClusterOperator:
             with patch.object(compute_cluster_provision_instance, "defer") as mock_defer:
                 # Assert that defer method is called with the correct parameters
                 expected_trigger = TeradataComputeClusterSyncTrigger(
-                    conn_id=compute_cluster_provision_instance.conn_id,
+                    teradata_conn_id=compute_cluster_provision_instance.teradata_conn_id,
                     compute_profile_name=compute_profile_name,
                     compute_group_name=compute_group_name,
                     operation_type=Constants.CC_CREATE_OPR,
@@ -308,7 +308,7 @@ class TestTeradataComputeClusterOperator:
             with patch.object(compute_cluster_provision_instance, "defer") as mock_defer:
                 # Assert that defer method is called with the correct parameters
                 expected_trigger = TeradataComputeClusterSyncTrigger(
-                    conn_id=compute_cluster_provision_instance.conn_id,
+                    teradata_conn_id=compute_cluster_provision_instance.teradata_conn_id,
                     compute_profile_name=compute_profile_name,
                     compute_group_name=compute_group_name,
                     operation_type=Constants.CC_CREATE_OPR,
@@ -366,7 +366,7 @@ class TestTeradataComputeClusterOperator:
             with patch.object(compute_cluster_provision_instance, "defer") as mock_defer:
                 # Assert that defer method is called with the correct parameters
                 expected_trigger = TeradataComputeClusterSyncTrigger(
-                    conn_id=compute_cluster_provision_instance.conn_id,
+                    teradata_conn_id=compute_cluster_provision_instance.teradata_conn_id,
                     compute_profile_name=compute_profile_name,
                     compute_group_name=compute_group_name,
                     operation_type=Constants.CC_CREATE_OPR,
@@ -462,7 +462,7 @@ class TestTeradataComputeClusterOperator:
 
             with patch.object(compute_cluster_resume_instance, "defer") as mock_defer:
                 expected_trigger = TeradataComputeClusterSyncTrigger(
-                    conn_id=compute_cluster_resume_instance.conn_id,
+                    teradata_conn_id=compute_cluster_resume_instance.teradata_conn_id,
                     compute_profile_name=compute_profile_name,
                     operation_type=Constants.CC_RESUME_OPR,
                     poll_interval=Constants.CC_POLL_INTERVAL,
@@ -502,7 +502,7 @@ class TestTeradataComputeClusterOperator:
             compute_cluster_resume_instance.compute_group_name = compute_group_name
             with patch.object(compute_cluster_resume_instance, "defer") as mock_defer:
                 expected_trigger = TeradataComputeClusterSyncTrigger(
-                    conn_id=compute_cluster_resume_instance.conn_id,
+                    teradata_conn_id=compute_cluster_resume_instance.teradata_conn_id,
                     compute_profile_name=compute_profile_name,
                     operation_type=Constants.CC_RESUME_OPR,
                     poll_interval=Constants.CC_POLL_INTERVAL,
@@ -591,7 +591,7 @@ class TestTeradataComputeClusterOperator:
 
             with patch.object(compute_cluster_suspend_instance, "defer") as mock_defer:
                 expected_trigger = TeradataComputeClusterSyncTrigger(
-                    conn_id=compute_cluster_suspend_instance.conn_id,
+                    teradata_conn_id=compute_cluster_suspend_instance.teradata_conn_id,
                     compute_profile_name=compute_profile_name,
                     operation_type=Constants.CC_RESUME_OPR,
                     poll_interval=Constants.CC_POLL_INTERVAL,
@@ -631,7 +631,7 @@ class TestTeradataComputeClusterOperator:
             compute_cluster_suspend_instance.compute_group_name = compute_group_name
             with patch.object(compute_cluster_suspend_instance, "defer") as mock_defer:
                 expected_trigger = TeradataComputeClusterSyncTrigger(
-                    conn_id=compute_cluster_suspend_instance.conn_id,
+                    teradata_conn_id=compute_cluster_suspend_instance.teradata_conn_id,
                     compute_profile_name=compute_profile_name,
                     operation_type=Constants.CC_RESUME_OPR,
                     poll_interval=Constants.CC_POLL_INTERVAL,
