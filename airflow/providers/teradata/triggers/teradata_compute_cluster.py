@@ -74,7 +74,8 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
                 if status is None or len(status) == 0:
                     self.log.info(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
                     raise AirflowException(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
-                if (self.operation_type == Constants.CC_SUSPEND_OPR
+                if (
+                    self.operation_type == Constants.CC_SUSPEND_OPR
                     or self.operation_type == Constants.CC_CREATE_SUSPEND_OPR
                 ):
                     if status == Constants.CC_SUSPEND_DB_STATUS:

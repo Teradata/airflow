@@ -48,6 +48,7 @@ class _Operation(Enum):
     SETUP = 1
     STATE = 2
 
+
 # Handler to handle single result set of a SQL query
 def _single_result_row_handler(cursor):
     records = cursor.fetchone()
@@ -56,6 +57,7 @@ def _single_result_row_handler(cursor):
     if records is None:
         return records
     raise TypeError(f"Unexpected results: {cursor.fetchone()!r}")
+
 
 # Providers given operation is setup or state operation
 def _determine_operation_context(operation):
@@ -75,7 +77,12 @@ class _TeradataComputeClusterOperator(BaseOperator):
     :param timeout: Time elapsed before the task times out and fails.
     """
 
-    template_fields: Sequence[str] = ("compute_profile_name", "compute_group_name", "teradata_conn_id", "timeout")
+    template_fields: Sequence[str] = (
+        "compute_profile_name",
+        "compute_group_name",
+        "teradata_conn_id",
+        "timeout",
+    )
 
     ui_color = "#e07c24"
 
@@ -174,7 +181,7 @@ class _TeradataComputeClusterOperator(BaseOperator):
             raise
 
     def _get_initially_suspended(self, create_cp_query):
-        initially_suspended = 'FALSE'
+        initially_suspended = "FALSE"
         pattern = r"INITIALLY_SUSPENDED\s*\(\s*'(TRUE|FALSE)'\s*\)"
         # Search for the pattern in the input string
         match = re.search(pattern, create_cp_query, re.IGNORECASE)
@@ -285,12 +292,13 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
         if cp_status_result is not None:
             cp_status_result = str(cp_status_result)
             msg = f"Compute Profile {self.compute_profile_name} is already exists under Compute Group {self.compute_group_name}. Status is {cp_status_result}"
+            self.log.info(msg)
             return cp_status_result
         else:
             create_cp_query = self._build_ccp_setup_query()
             operation = Constants.CC_CREATE_OPR
             initially_suspended = self._get_initially_suspended(create_cp_query)
-            if initially_suspended == 'TRUE':
+            if initially_suspended == "TRUE":
                 operation = Constants.CC_CREATE_SUSPEND_OPR
             return self._handle_cc_status(operation, create_cp_query)
 
@@ -377,7 +385,12 @@ class TeradataComputeClusterResumeOperator(_TeradataComputeClusterOperator):
     :param timeout: Time elapsed before the task times out and fails. Time is in minutes.
     """
 
-    template_fields: Sequence[str] = ("compute_profile_name", "compute_group_name", "teradata_conn_id", "timeout")
+    template_fields: Sequence[str] = (
+        "compute_profile_name",
+        "compute_group_name",
+        "teradata_conn_id",
+        "timeout",
+    )
 
     ui_color = "#e07c24"
 
@@ -444,7 +457,12 @@ class TeradataComputeClusterSuspendOperator(_TeradataComputeClusterOperator):
     :param timeout: Time elapsed before the task times out and fails.
     """
 
-    template_fields: Sequence[str] = ("compute_profile_name", "compute_group_name", "teradata_conn_id", "timeout")
+    template_fields: Sequence[str] = (
+        "compute_profile_name",
+        "compute_group_name",
+        "teradata_conn_id",
+        "timeout",
+    )
 
     ui_color = "#e07c24"
 

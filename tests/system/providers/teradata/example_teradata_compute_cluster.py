@@ -27,12 +27,14 @@ import os
 import pytest
 
 from airflow import DAG
-from airflow.models import Param
+from airflow.utils.task_group import TaskGroup
 
 try:
     from airflow.providers.teradata.operators.teradata_compute_cluster import (
-        TeradataComputeClusterProvisionOperator, TeradataComputeClusterDecommissionOperator,
-        TeradataComputeClusterSuspendOperator, TeradataComputeClusterResumeOperator,
+        TeradataComputeClusterDecommissionOperator,
+        TeradataComputeClusterProvisionOperator,
+        TeradataComputeClusterResumeOperator,
+        TeradataComputeClusterSuspendOperator,
     )
 except ImportError:
     pytest.skip("TERADATA provider not available", allow_module_level=True)
@@ -48,96 +50,73 @@ with DAG(
     start_date=datetime.datetime(2020, 2, 2),
     schedule="@once",
     catchup=False,
-    default_args={"teradata_conn_id": "teradata_lake"},
+    default_args={"teradata_conn_id": "teradata_lake", "timeout": "40"},
     render_template_as_native_obj=True,
-    params={
-        "compute_group_name": Param(
-            "compute_group_test",
-            type="string",
-            title="Compute cluster group Name:",
-            description="Enter compute cluster group name.",
-        ),
-        "compute_profile_name": Param(
-            "compute_profile_test",
-            type="string",
-            title="Compute cluster profile Name:",
-            description="Enter compute cluster profile name.",
-        ),
-        "query_strategy": Param(
-            "STANDARD",
-            type="string",
-            title="Compute cluster instance type:",
-            description="Enter compute cluster instance type. Valid values are STANDARD, ANALYTIC",
-        ),
-        "compute_map": Param(
-            "TD_COMPUTE_XSMALL",
-            type="string",
-            title="Compute Map Name:",
-            description="Enter compute cluster compute map name.",
-        ),
-        "compute_attribute": Param(
-            "MIN_COMPUTE_COUNT(1) MAX_COMPUTE_COUNT(5) INITIALLY_SUSPENDED('FALSE')",
-            type="string",
-            title="Compute cluster compute attribute:",
-            description="Enter compute cluster compute attribute values.",
-        ),
-        "teradata_conn_id": Param(
-            "teradata_lake",
-            type="string",
-            title="Teradata ConnectionId:",
-            description="Enter Teradata connection id.",
-        ),
-        "timeout": Param(
-            20,
-            type="integer",
-            title="Timeout:",
-            description="Time elapsed before the task times out and fails. Timeout is in minutes.",
-        ),
-    },
 ) as dag:
-    # [START teradata_vantage_lake_compute_cluster_provision_howto_guide]
-    compute_cluster_provision_operation = TeradataComputeClusterProvisionOperator(
-        task_id="compute_cluster_provision_operation",
-        compute_profile_name="{{ params.compute_profile_name }}",
-        compute_group_name="{{ params.compute_group_name }}",
-        teradata_conn_id="{{ params.teradata_conn_id }}",
-        timeout="{{ params.timeout }}",
-        query_strategy="{{ params.query_strategy }}",
-        compute_map="{{ params.compute_map }}",
-        compute_attribute="{{ params.compute_attribute }}",
-    )
-    # [END teradata_vantage_lake_compute_cluster_provision_howto_guide]
-    # [START teradata_vantage_lake_compute_cluster_suspend_howto_guide]
-    compute_cluster_suspend_operation = TeradataComputeClusterSuspendOperator(
-        task_id="compute_cluster_suspend_operation",
-        compute_profile_name="{{ params.compute_profile_name }}",
-        compute_group_name="{{ params.compute_group_name }}",
-        teradata_conn_id="{{ params.teradata_conn_id }}",
-        timeout="{{ params.timeout }}",
-    )
-    # [END teradata_vantage_lake_compute_cluster_suspend_howto_guide]
-    # [START teradata_vantage_lake_compute_cluster_resume_howto_guide]
-    compute_cluster_resume_operation = TeradataComputeClusterResumeOperator(
-        task_id="compute_cluster_resume_operation",
-        compute_profile_name="{{ params.compute_profile_name }}",
-        compute_group_name="{{ params.compute_group_name }}",
-        teradata_conn_id="{{ params.teradata_conn_id }}",
-        timeout="{{ params.timeout }}",
-    )
-    # [END teradata_vantage_lake_compute_cluster_resume_howto_guide]
-    # [START teradata_vantage_lake_compute_cluster_decommission_howto_guide]
-    compute_cluster_decommission_operation = TeradataComputeClusterDecommissionOperator(
-        task_id="compute_cluster_decommission_operation",
-        compute_profile_name="{{ params.compute_profile_name }}",
-        compute_group_name="{{ params.compute_group_name }}",
-        delete_compute_group=bool("{{ params.delete_compute_group }}"),
-        teradata_conn_id="{{ params.teradata_conn_id }}",
-        timeout="{{ params.timeout }}",
-    )
-    # [END teradata_vantage_lake_compute_cluster_decommission_howto_guide]
-    (compute_cluster_provision_operation >> compute_cluster_suspend_operation >> compute_cluster_resume_operation >> compute_cluster_decommission_operation)
-
-    # [END teradata_vantage_lake_compute_cluster_howto_guide]
+    with TaskGroup(
+        "cc_initially_run_example", tooltip="Tasks of compute cluster with initially run"
+    ) as cc_initially_run_example:
+        # [START teradata_vantage_lake_compute_cluster_provision_howto_guide]
+        compute_cluster_provision_operation = TeradataComputeClusterProvisionOperator(
+            task_id="compute_cluster_provision_operation",
+            compute_profile_name="compute_profile_test",
+            compute_group_name="compute_group_test",
+            query_strategy="STANDARD",
+            compute_map="TD_COMPUTE_XSMALL",
+            compute_attribute="MIN_COMPUTE_COUNT(1) MAX_COMPUTE_COUNT(1) INITIALLY_SUSPENDED('FALSE')",
+        )
+        # [END teradata_vantage_lake_compute_cluster_provision_howto_guide]
+        # [START teradata_vantage_lake_compute_cluster_suspend_howto_guide]
+        compute_cluster_suspend_operation = TeradataComputeClusterSuspendOperator(
+            task_id="compute_cluster_suspend_operation",
+            compute_profile_name="compute_profile_test",
+            compute_group_name="compute_group_test",
+        )
+        # [END teradata_vantage_lake_compute_cluster_suspend_howto_guide]
+        # [START teradata_vantage_lake_compute_cluster_decommission_howto_guide]
+        compute_cluster_decommission_operation = TeradataComputeClusterDecommissionOperator(
+            task_id="compute_cluster_decommission_operation",
+            compute_profile_name="compute_profile_test",
+            compute_group_name="compute_group_test",
+            delete_compute_group=True,
+        )
+        # [END teradata_vantage_lake_compute_cluster_decommission_howto_guide]
+        (
+            compute_cluster_provision_operation
+            >> compute_cluster_suspend_operation
+            >> compute_cluster_decommission_operation
+        )
+    with TaskGroup(
+        "cc_initially_suspend_example", tooltip="Tasks of compute cluster with initially suspend"
+    ) as cc_initially_suspend_example:
+        # [START teradata_vantage_lake_compute_cluster_provision_initially_suspend_howto_guide]
+        compute_cluster_provision_initially_suspend_operation = TeradataComputeClusterProvisionOperator(
+            task_id="compute_cluster_provision_initially_suspend_operation",
+            compute_profile_name="compute_profile_test_is",
+            compute_group_name="compute_group_test_is",
+            query_strategy="STANDARD",
+            compute_map="TD_COMPUTE_XSMALL",
+            compute_attribute="MIN_COMPUTE_COUNT(1) MAX_COMPUTE_COUNT(1) INITIALLY_SUSPENDED('TRUE')",
+        )
+        # [END teradata_vantage_lake_compute_cluster_provision_initially_suspend_howto_guide]
+        # [START teradata_vantage_lake_compute_cluster_resume_howto_guide]
+        compute_cluster_initially_suspend_resume_operation = TeradataComputeClusterResumeOperator(
+            task_id="compute_cluster_initially_suspend_resume_operation",
+            compute_profile_name="compute_profile_test_is",
+            compute_group_name="compute_group_test_is",
+        )
+        # [END teradata_vantage_lake_compute_cluster_resume_howto_guide]
+        compute_cluster_initially_suspend_decommission_operation = TeradataComputeClusterDecommissionOperator(
+            task_id="compute_cluster_initially_suspend_decommission_operation",
+            compute_profile_name="compute_profile_test_is",
+            compute_group_name="compute_group_test_is",
+            delete_compute_group=True,
+        )
+        (
+            compute_cluster_provision_initially_suspend_operation
+            >> compute_cluster_initially_suspend_resume_operation
+            >> compute_cluster_initially_suspend_decommission_operation
+        )
 
     from tests.system.utils.watcher import watcher
 
