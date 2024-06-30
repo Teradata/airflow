@@ -139,9 +139,11 @@ class _TeradataComputeClusterOperator(BaseOperator):
                 db_version = db_version_result.split(".")[0]
                 if db_version is not None and int(db_version) < 20:
                     raise AirflowException(Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG)
+            else:
+                raise AirflowException("Error occurred while getting teradata database version")
         except Exception as ex:
             self.log.error("Error occurred while getting teradata database version: %s ", str(ex))
-            raise
+            raise AirflowException("Error occurred while getting teradata database version")
 
     def _compute_cluster_execute_complete(self, event: dict[str, Any]) -> None:
         if event["status"] == "success":

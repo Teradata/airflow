@@ -106,29 +106,29 @@ class TestTeradataComputeClusterOperator:
         with patch.object(compute_cluster_provision_instance, "hook") as mock_hook:
             # Set up mock return values
             mock_hook.run.side_effect = [None]
-        with pytest.raises(AirflowException):
-            compute_cluster_provision_instance._compute_cluster_execute()
+            with pytest.raises(AirflowException):
+                compute_cluster_provision_instance._compute_cluster_execute()
 
     def test_compute_cluster_execute_not_lake_version_check(self, compute_cluster_provision_instance):
         with patch.object(compute_cluster_provision_instance, "hook") as mock_hook:
             # Set up mock return values
             mock_hook.run.side_effect = ["1", "19"]
-        with pytest.raises(AirflowException):
-            compute_cluster_provision_instance._compute_cluster_execute()
+            with pytest.raises(AirflowException):
+                compute_cluster_provision_instance._compute_cluster_execute()
 
     def test_compute_cluster_execute_not_lake_version_none(self, compute_cluster_provision_instance):
         with patch.object(compute_cluster_provision_instance, "hook") as mock_hook:
             # Set up mock return values
             mock_hook.run.side_effect = ["1", None]
-        with pytest.raises(AirflowException):
-            compute_cluster_provision_instance._compute_cluster_execute()
+            with pytest.raises(AirflowException):
+                compute_cluster_provision_instance._compute_cluster_execute()
 
     def test_compute_cluster_execute_not_lake_version_invalid(self, compute_cluster_provision_instance):
         with patch.object(compute_cluster_provision_instance, "hook") as mock_hook:
             # Set up mock return values
             mock_hook.run.side_effect = ["1", "invalid"]
-        with pytest.raises(AirflowException):
-            compute_cluster_provision_instance._compute_cluster_execute()
+            with pytest.raises(AirflowException):
+                compute_cluster_provision_instance._compute_cluster_execute()
 
     def test_compute_cluster_execute_complete_success(self, compute_cluster_provision_instance):
         event = {"status": "success", "message": "Success message"}
