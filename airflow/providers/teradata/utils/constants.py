@@ -39,6 +39,8 @@ class Constants:
         "There is an issue with the %s operation. Kindly consult the administrator for assistance."
     )
     CC_GRP_PRP_EXISTS_MSG = "The specified Compute cluster is already exists."
-    CC_OPR_EMPTY_COPY_PROFILE_ERROR_MSG = "Please provide a valid name for the source and target compute profile."
+    CC_OPR_EMPTY_COPY_PROFILE_ERROR_MSG = (
+        "Please provide a valid name for the source and target compute profile."
+    )
     CC_OPR_TIME_OUT = 1200
     CC_POLL_INTERVAL = 60

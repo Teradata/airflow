@@ -74,14 +74,15 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
                 if status is None or len(status) == 0:
                     self.log.info(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
                     raise AirflowException(Constants.CC_GRP_PRP_NON_EXISTS_MSG)
-                if (self.operation_type == Constants.CC_SUSPEND_OPR
-                        or self.operation_type == Constants.CC_CREATE_SUSPEND_OPR
+                if (
+                    self.operation_type == Constants.CC_SUSPEND_OPR
+                    or self.operation_type == Constants.CC_CREATE_SUSPEND_OPR
                 ):
                     if status == Constants.CC_SUSPEND_DB_STATUS:
                         break
                 elif (
-                        self.operation_type == Constants.CC_RESUME_OPR
-                        or self.operation_type == Constants.CC_CREATE_OPR
+                    self.operation_type == Constants.CC_RESUME_OPR
+                    or self.operation_type == Constants.CC_CREATE_OPR
                 ):
                     if status == Constants.CC_RESUME_DB_STATUS:
                         break
@@ -91,15 +92,15 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
                     self.poll_interval = float(Constants.CC_POLL_INTERVAL)
                 await asyncio.sleep(self.poll_interval)
             if (
-                    self.operation_type == Constants.CC_SUSPEND_OPR
-                    or self.operation_type == Constants.CC_CREATE_SUSPEND_OPR
+                self.operation_type == Constants.CC_SUSPEND_OPR
+                or self.operation_type == Constants.CC_CREATE_SUSPEND_OPR
             ):
                 if status == Constants.CC_SUSPEND_DB_STATUS:
                     yield TriggerEvent(
                         {
                             "status": "success",
                             "message": Constants.CC_OPR_SUCCESS_STATUS_MSG
-                                       % (self.compute_profile_name, self.operation_type),
+                            % (self.compute_profile_name, self.operation_type),
                         }
                     )
                 else:
@@ -107,19 +108,19 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
                         {
                             "status": "error",
                             "message": Constants.CC_OPR_FAILURE_STATUS_MSG
-                                       % (self.compute_profile_name, self.operation_type),
+                            % (self.compute_profile_name, self.operation_type),
                         }
                     )
             elif (
-                    self.operation_type == Constants.CC_RESUME_OPR
-                    or self.operation_type == Constants.CC_CREATE_OPR
+                self.operation_type == Constants.CC_RESUME_OPR
+                or self.operation_type == Constants.CC_CREATE_OPR
             ):
                 if status == Constants.CC_RESUME_DB_STATUS:
                     yield TriggerEvent(
                         {
                             "status": "success",
                             "message": Constants.CC_OPR_SUCCESS_STATUS_MSG
-                                       % (self.compute_profile_name, self.operation_type),
+                            % (self.compute_profile_name, self.operation_type),
                         }
                     )
                 else:
@@ -127,7 +128,7 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
                         {
                             "status": "error",
                             "message": Constants.CC_OPR_FAILURE_STATUS_MSG
-                                       % (self.compute_profile_name, self.operation_type),
+                            % (self.compute_profile_name, self.operation_type),
                         }
                     )
             else:
@@ -140,9 +141,9 @@ class TeradataComputeClusterSyncTrigger(BaseTrigger):
     async def get_status(self) -> str:
         """Return compute cluster SUSPEND/RESUME operation status."""
         sql = (
-                "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('"
-                + self.compute_profile_name
-                + "')"
+            "SEL ComputeProfileState FROM DBC.ComputeProfilesVX WHERE UPPER(ComputeProfileName) = UPPER('"
+            + self.compute_profile_name
+            + "')"
         )
         if self.compute_group_name:
             sql += " AND UPPER(ComputeGroupName) = UPPER('" + self.compute_group_name + "')"

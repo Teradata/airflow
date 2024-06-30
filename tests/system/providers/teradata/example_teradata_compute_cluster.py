@@ -31,8 +31,10 @@ from airflow.models import Param
 
 try:
     from airflow.providers.teradata.operators.teradata_compute_cluster import (
-        TeradataComputeClusterProvisionOperator, TeradataComputeClusterDecommissionOperator,
-        TeradataComputeClusterSuspendOperator, TeradataComputeClusterResumeOperator,
+        TeradataComputeClusterProvisionOperator,
+        TeradataComputeClusterDecommissionOperator,
+        TeradataComputeClusterSuspendOperator,
+        TeradataComputeClusterResumeOperator,
     )
 except ImportError:
     pytest.skip("TERADATA provider not available", allow_module_level=True)
@@ -135,7 +137,12 @@ with DAG(
         timeout="{{ params.timeout }}",
     )
     # [END teradata_vantage_lake_compute_cluster_decommission_howto_guide]
-    (compute_cluster_provision_operation >> compute_cluster_suspend_operation >> compute_cluster_resume_operation >> compute_cluster_decommission_operation)
+    (
+        compute_cluster_provision_operation
+        >> compute_cluster_suspend_operation
+        >> compute_cluster_resume_operation
+        >> compute_cluster_decommission_operation
+    )
 
     # [END teradata_vantage_lake_compute_cluster_howto_guide]
 
