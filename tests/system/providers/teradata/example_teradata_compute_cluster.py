@@ -31,10 +31,10 @@ from airflow.models import Param
 
 try:
     from airflow.providers.teradata.operators.teradata_compute_cluster import (
-        TeradataComputeClusterProvisionOperator,
         TeradataComputeClusterDecommissionOperator,
-        TeradataComputeClusterSuspendOperator,
+        TeradataComputeClusterProvisionOperator,
         TeradataComputeClusterResumeOperator,
+        TeradataComputeClusterSuspendOperator,
     )
 except ImportError:
     pytest.skip("TERADATA provider not available", allow_module_level=True)

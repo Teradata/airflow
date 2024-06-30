@@ -292,6 +292,7 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
         if cp_status_result is not None:
             cp_status_result = str(cp_status_result)
             msg = f"Compute Profile {self.compute_profile_name} is already exists under Compute Group {self.compute_group_name}. Status is {cp_status_result}"
+            self.log.info(msg)
             return cp_status_result
         else:
             create_cp_query = self._build_ccp_setup_query()
