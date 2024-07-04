@@ -19,8 +19,9 @@
 
 from __future__ import annotations
 
+import re
 import warnings
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Iterable, Mapping, Callable, TypeVar
 
 import sqlalchemy
 import teradatasql
@@ -29,6 +30,7 @@ from teradatasql import TeradataConnection
 from airflow.exceptions import AirflowProviderDeprecationWarning
 from airflow.providers.common.sql.hooks.sql import DbApiHook
 
+T = TypeVar("T")
 if TYPE_CHECKING:
     from airflow.models.connection import Connection
 
@@ -42,6 +44,45 @@ def _map_param(value):
         # in the out parameter mapping mechanism.
         value = value()
     return value
+
+
+def _handle_user_query_band_text(query_band_text) -> str:
+    """Ensures 'appname=airflow' and 'org=teradata-internal-telem' are in query_band_text efficiently."""
+
+    # Check if 'appname=' exists
+    if 'appname=' in query_band_text or 'appname =' in query_band_text:
+        pairs = query_band_text.split(';')
+        modified = False
+
+        # Iterate over each pair
+        for i in range(len(pairs)):
+            if 'appname=' in pairs[i] or 'appname =' in pairs[i]:
+                key, value = pairs[i].split('=', 1)
+                if value.strip() != 'airflow':
+                    pairs[i] = f'{key}={value.strip()}+airflow'
+                    modified = True
+
+        # Join pairs back into query_band_text if modified
+        if modified:
+            query_band_text = ';'.join(pairs)
+    else:
+        query_band_text += 'appname=airflow;'
+
+    # Check if 'org=' exists
+    if 'org=' not in query_band_text and 'org =' not in query_band_text:
+        query_band_text += 'org=teradata-internal-telem;'
+
+    return query_band_text
+
+
+def _set_query_band(self, query_band_text, teradata_conn):
+    try:
+        query_band_text = _handle_user_query_band_text(query_band_text)
+        set_query_band_sql = "SET QUERY_BAND='%s' FOR SESSION" % query_band_text
+        with teradata_conn.cursor() as cur:
+            cur.execute(set_query_band_sql)
+    except Exception as ex:
+        self.log.error("Error occurred while setting session query band: %s ", str(ex))
 
 
 class TeradataHook(DbApiHook):
@@ -100,13 +141,17 @@ class TeradataHook(DbApiHook):
         """
         Create and return a Teradata Connection object using teradatasql client.
 
-        Establishes connection to a Teradata SQL database using config corresponding to teradata_conn_id.
+        Establishes connection to a Teradata SQL databadse using config corresponding to teradata_conn_id.
 
         :return: a Teradata connection object
         """
         teradata_conn_config: dict = self._get_conn_config_teradatasql()
+        query_band_text = 'org=teradata-internal-telem;appname=airflow;'
+        if 'query_band' in teradata_conn_config:
+            query_band_text = teradata_conn_config.pop('query_band')
         teradata_conn = teradatasql.connect(**teradata_conn_config)
-        return teradata_conn
+        # setting query band
+        _set_query_band(self, query_band_text, teradata_conn)
 
     def bulk_insert_rows(
         self,
@@ -171,6 +216,8 @@ class TeradataHook(DbApiHook):
             conn_config["sslcrc"] = conn.extra_dejson["sslcrc"]
         if conn.extra_dejson.get("sslprotocol", False):
             conn_config["sslprotocol"] = conn.extra_dejson["sslprotocol"]
+        if conn.extra_dejson.get("query_band", False):
+            conn_config["query_band"] = conn.extra_dejson["query_band"]
 
         return conn_config
 
