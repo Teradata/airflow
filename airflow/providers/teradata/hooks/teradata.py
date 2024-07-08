@@ -47,7 +47,7 @@ def _map_param(value):
 
 
 def _handle_user_query_band_text(query_band_text) -> str:
-    """Validates given query_band and appending if required values missed in query_band"""
+    """Validate given query_band and append if required values missed in query_band."""
     # Ensures 'appname=airflow' and 'org=teradata-internal-telem' are in query_band_text.
     if query_band_text is not None:
         # Making sure appname in query_band contains 'airflow'
@@ -153,7 +153,7 @@ class TeradataHook(DbApiHook):
         return teradata_conn
 
     def set_query_band(self, query_band_text, teradata_conn):
-        """Setting SESSION Query Band for each connection session"""
+        """Set SESSION Query Band for each connection session."""
         try:
             query_band_text = _handle_user_query_band_text(query_band_text)
             set_query_band_sql = f"SET QUERY_BAND='{query_band_text}' FOR SESSION"
