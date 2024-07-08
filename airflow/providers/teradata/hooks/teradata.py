@@ -47,42 +47,40 @@ def _map_param(value):
 
 
 def _handle_user_query_band_text(query_band_text) -> str:
-    """Ensures 'appname=airflow' and 'org=teradata-internal-telem' are in query_band_text efficiently."""
+    """Validates given query_band and appending if required values missed in query_band """
+    # Ensures 'appname=airflow' and 'org=teradata-internal-telem' are in query_band_text.
+    if query_band_text is not None:
+        # Making sure appname in query_band contains 'airflow'
+        pattern = r'appname\s*=\s*([^;]*)'
+        # Search for the pattern in the query_band_text
+        match = re.search(pattern, query_band_text)
+        if match:
+            appname_value = match.group(1).strip()
+            # if appname exists and airflow not exists in appname then appending 'airflow' to existing
+            # appname value
+            if 'airflow' not in appname_value.lower():
+                new_appname_value = appname_value + "_airflow"
+                # Optionally, you can replace the original value in the query_band_text
+                updated_query_band_text = re.sub(pattern, f'appname={new_appname_value}', query_band_text)
+                query_band_text = updated_query_band_text
+        else:
+            # if appname doesn't exist in query_band, adding 'appname=airflow'
+            if len(query_band_text.strip()) > 0 and not query_band_text.endswith(';'):
+                query_band_text += ';'
+            query_band_text += 'appname=airflow;'
 
-    # Check if 'appname=' exists
-    if 'appname=' in query_band_text or 'appname =' in query_band_text:
-        pairs = query_band_text.split(';')
-        modified = False
-
-        # Iterate over each pair
-        for i in range(len(pairs)):
-            if 'appname=' in pairs[i] or 'appname =' in pairs[i]:
-                key, value = pairs[i].split('=', 1)
-                if value.strip() != 'airflow':
-                    pairs[i] = f'{key}={value.strip()}+airflow'
-                    modified = True
-
-        # Join pairs back into query_band_text if modified
-        if modified:
-            query_band_text = ';'.join(pairs)
+        # checking org doesn't exist in query_band, appending 'org=teradata-internal-telem'
+        #  If it exists, user might have set some value of their own, so doing nothing in that case
+        pattern = r'org\s*=\s*([^;]*)'
+        match = re.search(pattern, query_band_text)
+        if not match:
+            if not query_band_text.endswith(';'):
+                query_band_text += ';'
+            query_band_text += 'org=teradata-internal-telem;'
     else:
-        query_band_text += 'appname=airflow;'
-
-    # Check if 'org=' exists
-    if 'org=' not in query_band_text and 'org =' not in query_band_text:
-        query_band_text += 'org=teradata-internal-telem;'
+        query_band_text = 'appname=airflow;org=teradata-internal-telem;'
 
     return query_band_text
-
-
-def _set_query_band(self, query_band_text, teradata_conn):
-    try:
-        query_band_text = _handle_user_query_band_text(query_band_text)
-        set_query_band_sql = "SET QUERY_BAND='%s' FOR SESSION" % query_band_text
-        with teradata_conn.cursor() as cur:
-            cur.execute(set_query_band_sql)
-    except Exception as ex:
-        self.log.error("Error occurred while setting session query band: %s ", str(ex))
 
 
 class TeradataHook(DbApiHook):
@@ -146,12 +144,23 @@ class TeradataHook(DbApiHook):
         :return: a Teradata connection object
         """
         teradata_conn_config: dict = self._get_conn_config_teradatasql()
-        query_band_text = 'org=teradata-internal-telem;appname=airflow;'
+        query_band_text = None
         if 'query_band' in teradata_conn_config:
             query_band_text = teradata_conn_config.pop('query_band')
         teradata_conn = teradatasql.connect(**teradata_conn_config)
         # setting query band
-        _set_query_band(self, query_band_text, teradata_conn)
+        self.set_query_band(query_band_text, teradata_conn)
+        return teradata_conn
+
+    def set_query_band(self, query_band_text, teradata_conn):
+        """Setting SESSION Query Band for each connection session"""
+        try:
+            query_band_text = _handle_user_query_band_text(query_band_text)
+            set_query_band_sql = "SET QUERY_BAND='%s' FOR SESSION" % query_band_text
+            with teradata_conn.cursor() as cur:
+                cur.execute(set_query_band_sql)
+        except Exception as ex:
+            self.log.error("Error occurred while setting session query band: %s ", str(ex))
 
     def bulk_insert_rows(
         self,
