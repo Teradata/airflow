@@ -26,6 +26,7 @@ import pytest
 from airflow.exceptions import AirflowProviderDeprecationWarning
 from airflow.models import Connection
 from airflow.providers.teradata.hooks.teradata import TeradataHook
+from airflow.providers.teradata.hooks.teradata import _handle_user_query_band_text
 
 
 class TestTeradataHook:
@@ -281,7 +282,7 @@ class TestTeradataHook:
         ):
             self.test_db_hook.bulk_insert_rows("table", rows)
 
-    def test_callproc_dict(self):
+    def test_call_proc_dict(self):
         parameters = {"a": 1, "b": 2, "c": 3}
 
         class bindvar(int):
@@ -312,9 +313,6 @@ class TestTeradataHook:
         assert kwargs["user"] == "login"
         assert kwargs["password"] == "password"
         assert "query_band" not in kwargs
-
-
-from airflow.providers.teradata.hooks.teradata import _handle_user_query_band_text
 
 
 def test_handle_user_query_band_text_invalid():
