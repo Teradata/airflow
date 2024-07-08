@@ -293,11 +293,26 @@ class TestTeradataHook:
         result = self.test_db_hook.callproc("proc", True, parameters)
         assert result == parameters
 
-    def test_set_query_band_success_valid_input(self):
+    def test_set_query_band(self):
         query_band_text = "example_query_band_text"
         _handle_user_query_band_text(query_band_text)
         self.test_db_hook.set_query_band(query_band_text, self.conn)
         self.conn.cursor.assert_called_once()
+
+    @mock.patch("teradatasql.connect")
+    def test_query_band_not_in_conn_config(self, mock_connect):
+        extravalues = {"query_band": "appname=airflow;org=test;"}
+        self.connection.extra = json.dumps(extravalues)
+        self.db_hook.get_conn()
+        assert mock_connect.call_count == 1
+        args, kwargs = mock_connect.call_args
+        assert args == ()
+        assert kwargs["host"] == "host"
+        assert kwargs["database"] == "schema"
+        assert kwargs["dbs_port"] == "1025"
+        assert kwargs["user"] == "login"
+        assert kwargs["password"] == "password"
+        assert "query_band" not in kwargs
 
 
 from airflow.providers.teradata.hooks.teradata import _handle_user_query_band_text
