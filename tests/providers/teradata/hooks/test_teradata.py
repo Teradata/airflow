@@ -25,8 +25,7 @@ import pytest
 
 from airflow.exceptions import AirflowProviderDeprecationWarning
 from airflow.models import Connection
-from airflow.providers.teradata.hooks.teradata import TeradataHook
-from airflow.providers.teradata.hooks.teradata import _handle_user_query_band_text
+from airflow.providers.teradata.hooks.teradata import TeradataHook, _handle_user_query_band_text
 
 
 class TestTeradataHook:
