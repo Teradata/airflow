@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import re
 import warnings
-from typing import TYPE_CHECKING, Any, Iterable, Mapping, Callable, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import sqlalchemy
 import teradatasql
@@ -47,38 +47,38 @@ def _map_param(value):
 
 
 def _handle_user_query_band_text(query_band_text) -> str:
-    """Validates given query_band and appending if required values missed in query_band """
+    """Validates given query_band and appending if required values missed in query_band"""
     # Ensures 'appname=airflow' and 'org=teradata-internal-telem' are in query_band_text.
     if query_band_text is not None:
         # Making sure appname in query_band contains 'airflow'
-        pattern = r'appname\s*=\s*([^;]*)'
+        pattern = r"appname\s*=\s*([^;]*)"
         # Search for the pattern in the query_band_text
         match = re.search(pattern, query_band_text)
         if match:
             appname_value = match.group(1).strip()
             # if appname exists and airflow not exists in appname then appending 'airflow' to existing
             # appname value
-            if 'airflow' not in appname_value.lower():
+            if "airflow" not in appname_value.lower():
                 new_appname_value = appname_value + "_airflow"
                 # Optionally, you can replace the original value in the query_band_text
-                updated_query_band_text = re.sub(pattern, f'appname={new_appname_value}', query_band_text)
+                updated_query_band_text = re.sub(pattern, f"appname={new_appname_value}", query_band_text)
                 query_band_text = updated_query_band_text
         else:
             # if appname doesn't exist in query_band, adding 'appname=airflow'
-            if len(query_band_text.strip()) > 0 and not query_band_text.endswith(';'):
-                query_band_text += ';'
-            query_band_text += 'appname=airflow;'
+            if len(query_band_text.strip()) > 0 and not query_band_text.endswith(";"):
+                query_band_text += ";"
+            query_band_text += "appname=airflow;"
 
         # checking org doesn't exist in query_band, appending 'org=teradata-internal-telem'
         #  If it exists, user might have set some value of their own, so doing nothing in that case
-        pattern = r'org\s*=\s*([^;]*)'
+        pattern = r"org\s*=\s*([^;]*)"
         match = re.search(pattern, query_band_text)
         if not match:
-            if not query_band_text.endswith(';'):
-                query_band_text += ';'
-            query_band_text += 'org=teradata-internal-telem;'
+            if not query_band_text.endswith(";"):
+                query_band_text += ";"
+            query_band_text += "org=teradata-internal-telem;"
     else:
-        query_band_text = 'appname=airflow;org=teradata-internal-telem;'
+        query_band_text = "appname=airflow;org=teradata-internal-telem;"
 
     return query_band_text
 
@@ -145,8 +145,8 @@ class TeradataHook(DbApiHook):
         """
         teradata_conn_config: dict = self._get_conn_config_teradatasql()
         query_band_text = None
-        if 'query_band' in teradata_conn_config:
-            query_band_text = teradata_conn_config.pop('query_band')
+        if "query_band" in teradata_conn_config:
+            query_band_text = teradata_conn_config.pop("query_band")
         teradata_conn = teradatasql.connect(**teradata_conn_config)
         # setting query band
         self.set_query_band(query_band_text, teradata_conn)
@@ -156,7 +156,7 @@ class TeradataHook(DbApiHook):
         """Setting SESSION Query Band for each connection session"""
         try:
             query_band_text = _handle_user_query_band_text(query_band_text)
-            set_query_band_sql = "SET QUERY_BAND='%s' FOR SESSION" % query_band_text
+            set_query_band_sql = f"SET QUERY_BAND='{query_band_text}' FOR SESSION"
             with teradata_conn.cursor() as cur:
                 cur.execute(set_query_band_sql)
         except Exception as ex:

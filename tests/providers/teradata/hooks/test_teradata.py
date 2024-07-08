@@ -20,7 +20,6 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from unittest import mock
-from unittest.mock import Mock, patch
 
 import pytest
 
@@ -319,35 +318,35 @@ from airflow.providers.teradata.hooks.teradata import _handle_user_query_band_te
 
 
 def test_handle_user_query_band_text_invalid():
-    query_band_text = _handle_user_query_band_text('invalid_queryband')
-    assert query_band_text == 'invalid_queryband;appname=airflow;org=teradata-internal-telem;'
+    query_band_text = _handle_user_query_band_text("invalid_queryband")
+    assert query_band_text == "invalid_queryband;appname=airflow;org=teradata-internal-telem;"
 
 
 def test_handle_user_query_band_text_override_appname():
-    query_band_text = _handle_user_query_band_text('appname=test;')
-    assert query_band_text == 'appname=test_airflow;org=teradata-internal-telem;'
+    query_band_text = _handle_user_query_band_text("appname=test;")
+    assert query_band_text == "appname=test_airflow;org=teradata-internal-telem;"
 
 
 def test_handle_user_query_band_text_append_org():
-    query_band_text = _handle_user_query_band_text('appname=airflow;')
-    assert query_band_text == 'appname=airflow;org=teradata-internal-telem;'
+    query_band_text = _handle_user_query_band_text("appname=airflow;")
+    assert query_band_text == "appname=airflow;org=teradata-internal-telem;"
 
 
 def test_handle_user_query_band_text_user_org():
-    query_band_text = _handle_user_query_band_text('appname=airflow;org=test')
-    assert query_band_text == 'appname=airflow;org=test'
+    query_band_text = _handle_user_query_band_text("appname=airflow;org=test")
+    assert query_band_text == "appname=airflow;org=test"
 
 
 def test_handle_user_query_band_text_none():
     query_band_text = _handle_user_query_band_text(None)
-    assert query_band_text == 'appname=airflow;org=teradata-internal-telem;'
+    assert query_band_text == "appname=airflow;org=teradata-internal-telem;"
 
 
 def test_handle_user_query_band_text_no_appname():
-    query_band_text = _handle_user_query_band_text('org=test;')
-    assert query_band_text == 'org=test;appname=airflow;'
+    query_band_text = _handle_user_query_band_text("org=test;")
+    assert query_band_text == "org=test;appname=airflow;"
 
 
 def test_handle_user_query_band_text_no_appname_with_teradata_org():
-    query_band_text = _handle_user_query_band_text('org=teradata-internal-telem;')
-    assert query_band_text == 'org=teradata-internal-telem;appname=airflow;'
+    query_band_text = _handle_user_query_band_text("org=teradata-internal-telem;")
+    assert query_band_text == "org=teradata-internal-telem;appname=airflow;"
