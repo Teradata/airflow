@@ -90,6 +90,7 @@ QueryBand can be specified using extra connection configuration parameter as bel
        {
           "query_band": "appname=airflow;org=test;"
        }
+
 When specifying the connection as URI (in :envvar:`AIRFLOW_CONN_{CONN_ID}` variable) you should specify query_band as URL-encoded as below.
 
 For example:

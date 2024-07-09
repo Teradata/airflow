@@ -139,7 +139,7 @@ class TeradataHook(DbApiHook):
         """
         Create and return a Teradata Connection object using teradatasql client.
 
-        Establishes connection to a Teradata SQL databadse using config corresponding to teradata_conn_id.
+        Establishes connection to a Teradata SQL database using config corresponding to teradata_conn_id.
 
         :return: a Teradata connection object
         """
