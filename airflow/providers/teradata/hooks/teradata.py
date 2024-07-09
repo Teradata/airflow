@@ -30,7 +30,6 @@ from teradatasql import TeradataConnection
 from airflow.exceptions import AirflowProviderDeprecationWarning
 from airflow.providers.common.sql.hooks.sql import DbApiHook
 
-T = TypeVar("T")
 if TYPE_CHECKING:
     from airflow.models.connection import Connection
 
@@ -50,6 +49,14 @@ def _handle_user_query_band_text(query_band_text) -> str:
     """Validate given query_band and append if required values missed in query_band."""
     # Ensures 'appname=airflow' and 'org=teradata-internal-telem' are in query_band_text.
     if query_band_text is not None:
+        # checking org doesn't exist in query_band, appending 'org=teradata-internal-telem'
+        #  If it exists, user might have set some value of their own, so doing nothing in that case
+        pattern = r"org\s*=\s*([^;]*)"
+        match = re.search(pattern, query_band_text)
+        if not match:
+            if not query_band_text.endswith(";"):
+                query_band_text += ";"
+            query_band_text += "org=teradata-internal-telem;"
         # Making sure appname in query_band contains 'airflow'
         pattern = r"appname\s*=\s*([^;]*)"
         # Search for the pattern in the query_band_text
@@ -68,17 +75,8 @@ def _handle_user_query_band_text(query_band_text) -> str:
             if len(query_band_text.strip()) > 0 and not query_band_text.endswith(";"):
                 query_band_text += ";"
             query_band_text += "appname=airflow;"
-
-        # checking org doesn't exist in query_band, appending 'org=teradata-internal-telem'
-        #  If it exists, user might have set some value of their own, so doing nothing in that case
-        pattern = r"org\s*=\s*([^;]*)"
-        match = re.search(pattern, query_band_text)
-        if not match:
-            if not query_band_text.endswith(";"):
-                query_band_text += ";"
-            query_band_text += "org=teradata-internal-telem;"
     else:
-        query_band_text = "appname=airflow;org=teradata-internal-telem;"
+        query_band_text = "org=teradata-internal-telem;appname=airflow;"
 
     return query_band_text
 
