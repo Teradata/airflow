@@ -316,7 +316,7 @@ class TestTeradataHook:
 
 def test_handle_user_query_band_text_invalid():
     query_band_text = _handle_user_query_band_text("invalid_queryband")
-    assert query_band_text == "invalid_queryband;appname=airflow;org=teradata-internal-telem;"
+    assert query_band_text == "invalid_queryband;org=teradata-internal-telem;appname=airflow;"
 
 
 def test_handle_user_query_band_text_override_appname():
@@ -336,7 +336,7 @@ def test_handle_user_query_band_text_user_org():
 
 def test_handle_user_query_band_text_none():
     query_band_text = _handle_user_query_band_text(None)
-    assert query_band_text == "appname=airflow;org=teradata-internal-telem;"
+    assert query_band_text == "org=teradata-internal-telem;appname=airflow;"
 
 
 def test_handle_user_query_band_text_no_appname():
