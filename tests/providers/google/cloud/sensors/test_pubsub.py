@@ -21,9 +21,10 @@ from typing import Any
 from unittest import mock
 
 import pytest
+from google.cloud import pubsub_v1
 from google.cloud.pubsub_v1.types import ReceivedMessage
 
-from airflow.exceptions import AirflowException, AirflowSensorTimeout, AirflowSkipException, TaskDeferred
+from airflow.exceptions import AirflowException, TaskDeferred
 from airflow.providers.google.cloud.sensors.pubsub import PubSubPullSensor
 from airflow.providers.google.cloud.triggers.pubsub import PubsubPullTrigger
 
@@ -98,23 +99,19 @@ class TestPubSubPullSensor:
         )
         assert generated_dicts == response
 
-    @pytest.mark.parametrize(
-        "soft_fail, expected_exception", ((False, AirflowSensorTimeout), (True, AirflowSkipException))
-    )
     @mock.patch("airflow.providers.google.cloud.sensors.pubsub.PubSubHook")
-    def test_execute_timeout(self, mock_hook, soft_fail, expected_exception):
+    def test_execute_timeout(self, mock_hook):
         operator = PubSubPullSensor(
             task_id=TASK_ID,
             project_id=TEST_PROJECT,
             subscription=TEST_SUBSCRIPTION,
             poke_interval=0,
             timeout=1,
-            soft_fail=soft_fail,
         )
 
         mock_hook.return_value.pull.return_value = []
 
-        with pytest.raises(expected_exception):
+        with pytest.raises(AirflowException):
             operator.execute({})
 
     @mock.patch("airflow.providers.google.cloud.sensors.pubsub.PubSubHook")
@@ -171,10 +168,7 @@ class TestPubSubPullSensor:
             task.execute(context={})
         assert isinstance(exc.value.trigger, PubsubPullTrigger), "Trigger is not a PubsubPullTrigger"
 
-    @pytest.mark.parametrize(
-        "soft_fail, expected_exception", ((False, AirflowException), (True, AirflowSkipException))
-    )
-    def test_pubsub_pull_sensor_async_execute_should_throw_exception(self, soft_fail, expected_exception):
+    def test_pubsub_pull_sensor_async_execute_should_throw_exception(self):
         """Tests that an AirflowException is raised in case of error event"""
 
         operator = PubSubPullSensor(
@@ -183,10 +177,9 @@ class TestPubSubPullSensor:
             project_id=TEST_PROJECT,
             subscription=TEST_SUBSCRIPTION,
             deferrable=True,
-            soft_fail=soft_fail,
         )
 
-        with pytest.raises(expected_exception):
+        with pytest.raises(AirflowException):
             operator.execute_complete(
                 context=mock.MagicMock(), event={"status": "error", "message": "test failure message"}
             )
@@ -205,3 +198,50 @@ class TestPubSubPullSensor:
         with mock.patch.object(operator.log, "info") as mock_log_info:
             operator.execute_complete(context={}, event={"status": "success", "message": test_message})
         mock_log_info.assert_called_with("Sensor pulls messages: %s", test_message)
+
+    @mock.patch("airflow.providers.google.cloud.sensors.pubsub.PubSubHook")
+    def test_pubsub_pull_sensor_async_execute_complete_use_message_callback(self, mock_hook):
+        test_message = [
+            {
+                "ack_id": "UAYWLF1GSFE3GQhoUQ5PXiM_NSAoRRIJB08CKF15MU0sQVhwaFENGXJ9YHxrUxsDV0ECel1RGQdoTm11H4GglfRLQ1RrWBIHB01Vel5TEwxoX11wBnm4vPO6v8vgfwk9OpX-8tltO6ywsP9GZiM9XhJLLD5-LzlFQV5AEkwkDERJUytDCypYEU4EISE-MD5FU0Q",
+                "message": {
+                    "data": "aGkgZnJvbSBjbG91ZCBjb25zb2xlIQ==",
+                    "message_id": "12165864188103151",
+                    "publish_time": "2024-08-28T11:49:50.962Z",
+                    "attributes": {},
+                    "ordering_key": "",
+                },
+                "delivery_attempt": 0,
+            }
+        ]
+
+        received_messages = [pubsub_v1.types.ReceivedMessage(msg) for msg in test_message]
+
+        messages_callback_return_value = "custom_message_from_callback"
+
+        def messages_callback(
+            pulled_messages: list[ReceivedMessage],
+            context: dict[str, Any],
+        ):
+            assert pulled_messages == received_messages
+
+            assert isinstance(context, dict)
+            for key in context.keys():
+                assert isinstance(key, str)
+
+            return messages_callback_return_value
+
+        operator = PubSubPullSensor(
+            task_id="test_task",
+            ack_messages=True,
+            project_id=TEST_PROJECT,
+            subscription=TEST_SUBSCRIPTION,
+            deferrable=True,
+            messages_callback=messages_callback,
+        )
+        mock_hook.return_value.pull.return_value = received_messages
+
+        with mock.patch.object(operator.log, "info") as mock_log_info:
+            resp = operator.execute_complete(context={}, event={"status": "success", "message": test_message})
+        mock_log_info.assert_called_with("Sensor pulls messages: %s", test_message)
+        assert resp == messages_callback_return_value
