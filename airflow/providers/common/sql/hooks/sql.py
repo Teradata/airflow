@@ -53,6 +53,7 @@ if TYPE_CHECKING:
     from pandas import DataFrame
     from sqlalchemy.engine import URL
 
+    from airflow.models import Connection
     from airflow.providers.openlineage.extractors import OperatorLineage
     from airflow.providers.openlineage.sqlparser import DatabaseInfo
 
@@ -183,14 +184,14 @@ class DbApiHook(BaseHook):
         self._replace_statement_format: str = kwargs.get(
             "replace_statement_format", "REPLACE INTO {} {} VALUES ({})"
         )
+        self._connection: Connection | None = kwargs.pop("connection", None)
 
     def get_conn_id(self) -> str:
         return getattr(self, self.conn_name_attr)
 
     @cached_property
     def placeholder(self):
-        conn = self.get_connection(self.get_conn_id())
-        placeholder = conn.extra_dejson.get("placeholder")
+        placeholder = self.connection_extra.get("placeholder")
         if placeholder:
             if placeholder in SQL_PLACEHOLDERS:
                 return placeholder
@@ -203,9 +204,40 @@ class DbApiHook(BaseHook):
             )
         return self._placeholder
 
+    @property
+    def connection(self) -> Connection:
+        if self._connection is None:
+            self._connection = self.get_connection(self.get_conn_id())
+        return self._connection
+
+    @connection.setter
+    def connection(self, value: Any) -> None:
+        if value != self.connection:
+            self.log.warning(
+                "This setter is for backward compatibility and should not be used.\n"
+                "Since the introduction of connection property, the providers listed below "
+                "breaks due to assigning value to self.connection in their __init__ method.\n"
+                "* apache-airflow-providers-mysql<5.7.1\n"
+                "* apache-airflow-providers-elasticsearch<5.5.1\n"
+                "* apache-airflow-providers-postgres<5.13.0"
+            )
+
+    @property
+    def connection_extra(self) -> dict:
+        return self.connection.extra_dejson
+
+    @cached_property
+    def connection_extra_lower(self) -> dict:
+        """
+        ``connection.extra_dejson`` but where keys are converted to lower case.
+
+        This is used internally for case-insensitive access of extra params.
+        """
+        return {k.lower(): v for k, v in self.connection_extra.items()}
+
     def get_conn(self):
         """Return a connection object."""
-        db = self.get_connection(self.get_conn_id())
+        db = self.connection
         return self.connector.connect(host=db.host, port=db.port, username=db.login, schema=db.schema)
 
     def get_uri(self) -> str:
@@ -243,7 +275,6 @@ class DbApiHook(BaseHook):
         """
         if engine_kwargs is None:
             engine_kwargs = {}
-        engine_kwargs["creator"] = self.get_conn
 
         try:
             url = self.sqlalchemy_url
@@ -467,6 +498,8 @@ class DbApiHook(BaseHook):
             # If autocommit was set to False or db does not support autocommit, we do a manual commit.
             if not self.get_autocommit(conn):
                 conn.commit()
+            # Logs all database messages or errors sent to the client
+            self.get_db_log_messages(conn)
 
         if handler is None:
             return None
@@ -741,3 +774,10 @@ class DbApiHook(BaseHook):
         else:
             authority = parsed.hostname
         return authority
+
+    def get_db_log_messages(self, conn) -> None:
+        """
+        Log all database messages sent to the client during the session.
+
+        :param conn: Connection object
+        """

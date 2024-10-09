@@ -107,16 +107,6 @@ class JdbcHook(DbApiHook):
         }
 
     @property
-    def connection_extra_lower(self) -> dict:
-        """
-        ``connection.extra_dejson`` but where keys are converted to lower case.
-
-        This is used internally for case-insensitive access of jdbc params.
-        """
-        conn = self.get_connection(self.get_conn_id())
-        return {k.lower(): v for k, v in conn.extra_dejson.items()}
-
-    @property
     def driver_path(self) -> str | None:
         from airflow.configuration import conf
 
@@ -172,6 +162,19 @@ class JdbcHook(DbApiHook):
             port=conn.port,
             database=conn.schema,
         )
+
+    def get_sqlalchemy_engine(self, engine_kwargs=None):
+        """
+        Get an sqlalchemy_engine object.
+
+        :param engine_kwargs: Kwargs used in :func:`~sqlalchemy.create_engine`.
+        :return: the created engine.
+        """
+        if engine_kwargs is None:
+            engine_kwargs = {}
+        engine_kwargs["creator"] = self.get_conn
+
+        return super().get_sqlalchemy_engine(engine_kwargs)
 
     def get_conn(self) -> jaydebeapi.Connection:
         conn: Connection = self.get_connection(self.get_conn_id())

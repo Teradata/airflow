@@ -16,7 +16,7 @@
 # under the License.
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 import pytest
 
@@ -109,7 +109,7 @@ def test_get_provider_requirements():
 
 def test_get_removed_providers():
     # Modify it every time we schedule provider for removal or remove it
-    assert ["tabular"] == get_removed_provider_ids()
+    assert [] == get_removed_provider_ids()
 
 
 def test_get_suspended_provider_ids():
@@ -165,6 +165,7 @@ def test_get_documentation_package_path():
             "fab",
             "",
             """
+    "apache-airflow-providers-common-compat>=1.2.0",
     "apache-airflow>=2.9.0",
     "flask-appbuilder==4.5.0",
     "flask-login>=0.6.2",
@@ -178,6 +179,7 @@ def test_get_documentation_package_path():
             "fab",
             "dev0",
             """
+    "apache-airflow-providers-common-compat>=1.2.0.dev0",
     "apache-airflow>=2.9.0.dev0",
     "flask-appbuilder==4.5.0",
     "flask-login>=0.6.2",
@@ -191,6 +193,7 @@ def test_get_documentation_package_path():
             "fab",
             "beta0",
             """
+    "apache-airflow-providers-common-compat>=1.2.0b0",
     "apache-airflow>=2.9.0b0",
     "flask-appbuilder==4.5.0",
     "flask-login>=0.6.2",
@@ -204,7 +207,7 @@ def test_get_documentation_package_path():
             "postgres",
             "beta0",
             """
-    "apache-airflow-providers-common-sql>=1.14.1b0",
+    "apache-airflow-providers-common-sql>=1.17.0b0",
     "apache-airflow>=2.8.0b0",
     "psycopg2-binary>=2.9.4",
     """,
@@ -214,7 +217,7 @@ def test_get_documentation_package_path():
             "postgres",
             "",
             """
-    "apache-airflow-providers-common-sql>=1.14.1",
+    "apache-airflow-providers-common-sql>=1.17.0",
     "apache-airflow>=2.8.0",
     "psycopg2-binary>=2.9.4",
     """,
@@ -494,7 +497,7 @@ def test_provider_jinja_context():
         "VERSION_SUFFIX": ".rc1",
         "PROVIDER_DESCRIPTION": "Amazon integration (including `Amazon Web Services (AWS) <https://aws.amazon.com/>`__).\n",
         "CHANGELOG_RELATIVE_PATH": "../../airflow/providers/amazon",
-        "SUPPORTED_PYTHON_VERSIONS": ["3.8", "3.9", "3.10", "3.11", "3.12"],
+        "SUPPORTED_PYTHON_VERSIONS": ["3.9", "3.10", "3.11", "3.12"],
         "PLUGINS": [],
         "MIN_AIRFLOW_VERSION": "2.8.0",
         "PROVIDER_REMOVED": False,
