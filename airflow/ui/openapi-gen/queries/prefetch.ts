@@ -4,7 +4,11 @@ import { type QueryClient } from "@tanstack/react-query";
 import {
   AssetService,
   ConnectionService,
+  DagRunService,
   DagService,
+  DashboardService,
+  MonitorService,
+  VariableService,
 } from "../requests/services.gen";
 import { DagRunState } from "../requests/types.gen";
 import * as Common from "./common";
@@ -27,6 +31,32 @@ export const prefetchUseAssetServiceNextRunAssets = (
   queryClient.prefetchQuery({
     queryKey: Common.UseAssetServiceNextRunAssetsKeyFn({ dagId }),
     queryFn: () => AssetService.nextRunAssets({ dagId }),
+  });
+/**
+ * Historical Metrics
+ * Return cluster activity historical metrics.
+ * @param data The data for the request.
+ * @param data.startDate
+ * @param data.endDate
+ * @returns HistoricalMetricDataResponse Successful Response
+ * @throws ApiError
+ */
+export const prefetchUseDashboardServiceHistoricalMetrics = (
+  queryClient: QueryClient,
+  {
+    endDate,
+    startDate,
+  }: {
+    endDate: string;
+    startDate: string;
+  },
+) =>
+  queryClient.prefetchQuery({
+    queryKey: Common.UseDashboardServiceHistoricalMetricsKeyFn({
+      endDate,
+      startDate,
+    }),
+    queryFn: () => DashboardService.historicalMetrics({ endDate, startDate }),
   });
 /**
  * Get Dags
@@ -99,6 +129,26 @@ export const prefetchUseDagServiceGetDags = (
       }),
   });
 /**
+ * Get Dag
+ * Get basic information about a DAG.
+ * @param data The data for the request.
+ * @param data.dagId
+ * @returns DAGResponse Successful Response
+ * @throws ApiError
+ */
+export const prefetchUseDagServiceGetDag = (
+  queryClient: QueryClient,
+  {
+    dagId,
+  }: {
+    dagId: string;
+  },
+) =>
+  queryClient.prefetchQuery({
+    queryKey: Common.UseDagServiceGetDagKeyFn({ dagId }),
+    queryFn: () => DagService.getDag({ dagId }),
+  });
+/**
  * Get Dag Details
  * Get details of DAG.
  * @param data The data for the request.
@@ -137,4 +187,86 @@ export const prefetchUseConnectionServiceGetConnection = (
   queryClient.prefetchQuery({
     queryKey: Common.UseConnectionServiceGetConnectionKeyFn({ connectionId }),
     queryFn: () => ConnectionService.getConnection({ connectionId }),
+  });
+/**
+ * Get Connections
+ * Get all connection entries.
+ * @param data The data for the request.
+ * @param data.limit
+ * @param data.offset
+ * @param data.orderBy
+ * @returns ConnectionCollectionResponse Successful Response
+ * @throws ApiError
+ */
+export const prefetchUseConnectionServiceGetConnections = (
+  queryClient: QueryClient,
+  {
+    limit,
+    offset,
+    orderBy,
+  }: {
+    limit?: number;
+    offset?: number;
+    orderBy?: string;
+  } = {},
+) =>
+  queryClient.prefetchQuery({
+    queryKey: Common.UseConnectionServiceGetConnectionsKeyFn({
+      limit,
+      offset,
+      orderBy,
+    }),
+    queryFn: () => ConnectionService.getConnections({ limit, offset, orderBy }),
+  });
+/**
+ * Get Variable
+ * Get a variable entry.
+ * @param data The data for the request.
+ * @param data.variableKey
+ * @returns VariableResponse Successful Response
+ * @throws ApiError
+ */
+export const prefetchUseVariableServiceGetVariable = (
+  queryClient: QueryClient,
+  {
+    variableKey,
+  }: {
+    variableKey: string;
+  },
+) =>
+  queryClient.prefetchQuery({
+    queryKey: Common.UseVariableServiceGetVariableKeyFn({ variableKey }),
+    queryFn: () => VariableService.getVariable({ variableKey }),
+  });
+/**
+ * Get Dag Run
+ * @param data The data for the request.
+ * @param data.dagId
+ * @param data.dagRunId
+ * @returns DAGRunResponse Successful Response
+ * @throws ApiError
+ */
+export const prefetchUseDagRunServiceGetDagRun = (
+  queryClient: QueryClient,
+  {
+    dagId,
+    dagRunId,
+  }: {
+    dagId: string;
+    dagRunId: string;
+  },
+) =>
+  queryClient.prefetchQuery({
+    queryKey: Common.UseDagRunServiceGetDagRunKeyFn({ dagId, dagRunId }),
+    queryFn: () => DagRunService.getDagRun({ dagId, dagRunId }),
+  });
+/**
+ * Get Health
+ * @returns HealthInfoSchema Successful Response
+ * @throws ApiError
+ */
+export const prefetchUseMonitorServiceGetHealth = (queryClient: QueryClient) =>
+  queryClient.prefetchQuery({
+    queryKey: Common.UseMonitorServiceGetHealthKeyFn(),
+    queryFn: () => MonitorService.getHealth(),
   });
