@@ -24,15 +24,15 @@ Contributor's Quick Start
 Note to Starters
 ################
 
-Airflow is quite a complex project, and setting up a working environment, but we made it rather simple if
-you follow the guide.
+Airflow is a complex project, but setting up a working environment is quite simple
+if you follow the guide.
 
 There are three ways you can run the Airflow dev env:
 
 1. With a Docker Containers and Docker Compose (on your local machine). This environment is managed
    with `Breeze <../dev/breeze/doc/README.rst>`_ tool written in Python that makes the environment
-   management, yeah you guessed it - a breeze.
-2. With a local virtual environment (on your local machine).
+   management, yeah you guessed it - a breeze
+2. With a local virtual environment (on your local machine)
 3. With a remote, managed environment (via remote development environment)
 
 Before deciding which method to choose, there are a couple of factors to consider:
@@ -77,21 +77,24 @@ Docker Community Edition
     "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
     $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 
-2. Install Docker Engine, containerd, and Docker Compose Plugin.
+1. Install Docker Engine, containerd
 
 .. code-block:: bash
 
   sudo apt-get update
-  sudo apt-get install docker-ce docker-ce-cli containerd.io docker-compose-plugin
+  sudo apt-get install docker-ce docker-ce-cli containerd.io
 
-3. Creating group for docker and adding current user to it.
+3. Manage docker as non-root user
 
 .. code-block:: bash
 
   sudo groupadd docker
   sudo usermod -aG docker $USER
 
-Note : After adding user to docker group Logout and Login again for group membership re-evaluation.
+.. note::
+    This is done so a non-root user can access the ``docker`` command.
+    After adding user to docker group Logout and Login again for group membership re-evaluation.
+    On some Linux distributions, the system automatically creates this group.
 
 4. Test Docker installation
 
@@ -99,19 +102,22 @@ Note : After adding user to docker group Logout and Login again for group member
 
   docker run hello-world
 
+.. note::
+    Read more about `Linux post-installation steps for Docker Engine <https://docs.docker.com/engine/install/linux-postinstall/>`_.
+
 Colima
 ------
 If you use Colima as your container runtimes engine, please follow the next steps:
 
 1. `Install buildx manually <https://github.com/docker/buildx#manual-download>`_ and follow its instructions
 
-2. Link the Colima socket to the default socket path. Note that this may break other Docker servers.
+2. Link the Colima socket to the default socket path. Note that this may break other Docker servers
 
 .. code-block:: bash
 
   sudo ln -sf $HOME/.colima/default/docker.sock /var/run/docker.sock
 
-3. Change docker context to use default:
+3. Change docker context to use default
 
 .. code-block:: bash
 
@@ -120,7 +126,16 @@ If you use Colima as your container runtimes engine, please follow the next step
 Docker Compose
 --------------
 
-1. Installing latest version of Docker Compose
+1. Installing latest version of the Docker Compose plugin
+
+Install using the repository:
+
+.. code-block:: bash
+
+  sudo apt-get update
+  sudo apt-get install docker-compose-plugin
+
+Install manually:
 
 .. code-block:: bash
 
@@ -134,7 +149,11 @@ Docker Compose
 
   sudo chmod +x /usr/local/bin/docker-compose
 
-2. Verifying installation
+.. note::
+    This option requires you to manage updates manually.
+    It is recommended that you set up Docker's repository for easier maintenance.
+
+1. Verifying installation
 
 .. code-block:: bash
 
@@ -147,7 +166,7 @@ Setting up virtual-env
    as your build and integration frontend, and we already use ``hatchling`` build backend for Airflow.
    You can read more about Hatch and it's use in Airflow in `Local virtualenv <07_local_virtualenv.rst>`_.
    See [PEP-517](https://peps.python.org/pep-0517/#terminology-and-goals) for explanation of what the
-   frontend and backend meaning is.
+   frontend and backend meaning is
 
 2. After creating, you need to install a few more required packages for Airflow. The below command adds
    basic system-level dependencies on Debian/Ubuntu-like system. You will have to adapt it to install similar packages
@@ -155,7 +174,7 @@ Setting up virtual-env
 
 .. code-block:: bash
 
-  sudo apt install openssl sqlite default-libmysqlclient-dev libmysqlclient-dev postgresql
+  sudo apt install openssl sqlite3 default-libmysqlclient-dev libmysqlclient-dev postgresql
 
 If you want to install all airflow providers, more system dependencies might be needed. For example on Debian/Ubuntu
 like system, this command will install all necessary dependencies that should be installed when you use
@@ -170,12 +189,12 @@ like system, this command will install all necessary dependencies that should be
   software-properties-common sqlite3 sudo unixodbc unixodbc-dev
 
 3. With Hatch you can enter the virtual environment with ``hatch shell`` command, check
-   `Local virtualenvs <./07_local_virtualenv.rst#using-hatch>`__ for more details:
+   `Local virtualenvs <./07_local_virtualenv.rst#using-hatch>`__ for more details
 
 Forking and cloning Project
 ---------------------------
 
-1. Goto |airflow_github| and fork the project.
+1. Goto |airflow_github| and fork the project
 
    .. |airflow_github| raw:: html
 
@@ -188,7 +207,7 @@ Forking and cloning Project
             alt="Forking Apache Airflow project">
      </div>
 
-2. Goto your github account's fork of airflow click on ``Code`` you will find the link to your repo.
+2. Goto your github account's fork of airflow click on ``Code`` you will find the link to your repo
 
    .. raw:: html
 
@@ -199,18 +218,164 @@ Forking and cloning Project
 
 3. Follow `Cloning a repository <https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository>`_
    to clone the repo locally (you can also do it in your IDE - see the `Using your IDE`_
-   chapter below.
+   chapter below
 
-Note: For windows based machines, on cloning, the Git line endings may be different from unix based systems
-and might lead to unexpected behaviour on running breeze tooling. Manually setting a property will mitigate this issue.
-Set it to true for windows.
+.. note::
+    For windows based machines, on cloning, the Git line endings may be different from unix based systems
+    and might lead to unexpected behaviour on running breeze tooling. Manually setting a property will mitigate this issue.
+    Set it to true for windows.
 
 .. code-block:: bash
 
   git config core.autocrlf true
 
-Typical development tasks
-#########################
+Configuring Pre-commit
+----------------------
+
+Before committing changes to github or raising a pull request, code needs to be checked for certain quality standards
+such as spell check, code syntax, code formatting, compatibility with Apache License requirements etc. This set of
+tests are applied when you commit your code.
+
+.. raw:: html
+
+  <div align="center" style="padding-bottom:20px">
+    <img src="images/quick_start/ci_tests.png"
+         alt="CI tests GitHub">
+  </div>
+
+
+To avoid burden on CI infrastructure and to save time, Pre-commit hooks can be run locally before committing changes.
+
+.. note::
+    We have recently started to recommend ``uv`` for our local development.
+
+.. note::
+    Remember to have global python set to Python >= 3.9 - Python 3.8 is end-of-life already and we've
+    started to use Python 3.9+ features in Airflow and accompanying scripts.
+
+Installing pre-commit is best done with ``uv`` (recommended) or ``pipx``.
+
+1.  Installing required packages
+
+on Debian / Ubuntu, install via
+
+.. code-block:: bash
+
+  sudo apt install libxml2-utils
+
+on macOS, install via
+
+.. code-block:: bash
+
+  brew install libxml2
+
+2. Installing pre-commit:
+
+.. code-block:: bash
+
+  uv tool install pre-commit --with pre-commit-uv
+
+You can add ``uv`` support for ``pre-commit`` even you install it with ``pipx`` using the commands
+(then pre-commit will use ``uv`` to create virtualenvs for the hooks):
+
+.. code-block:: bash
+
+  pipx install pre-commit
+  pipx install inject pre-commit pre-commit-uv # optional, configures pre-commit to use uv to install virtualenvs
+
+3. Go to your project directory
+
+.. code-block:: bash
+
+  cd ~/Projects/airflow
+
+
+4. Running pre-commit hooks
+
+.. code-block:: bash
+
+  pre-commit run --all-files
+    No-tabs checker......................................................Passed
+    Add license for all SQL files........................................Passed
+    Add license for all other files......................................Passed
+    Add license for all rst files........................................Passed
+    Add license for all JS/CSS/PUML files................................Passed
+    Add license for all JINJA template files.............................Passed
+    Add license for all shell files......................................Passed
+    Add license for all python files.....................................Passed
+    Add license for all XML files........................................Passed
+    Add license for all yaml files.......................................Passed
+    Add license for all md files.........................................Passed
+    Add license for all mermaid files....................................Passed
+    Add TOC for md files.................................................Passed
+    Add TOC for upgrade documentation....................................Passed
+    Check hooks apply to the repository..................................Passed
+    black................................................................Passed
+    Check for merge conflicts............................................Passed
+    Debug Statements (Python)............................................Passed
+    Check builtin type constructor use...................................Passed
+    Detect Private Key...................................................Passed
+    Fix End of Files.....................................................Passed
+    ...........................................................................
+
+5. Running pre-commit for selected files
+
+.. code-block:: bash
+
+  pre-commit run  --files airflow/utils/decorators.py tests/utils/test_task_group.py
+
+
+6. Running specific hook for selected files
+
+.. code-block:: bash
+
+  pre-commit run black --files airflow/decorators.py tests/utils/test_task_group.py
+    black...............................................................Passed
+  pre-commit run ruff --files airflow/decorators.py tests/utils/test_task_group.py
+    Run ruff............................................................Passed
+
+
+7. Enabling Pre-commit check before push. It will run pre-commit automatically before committing and stops the commit
+
+.. code-block:: bash
+
+  cd ~/Projects/airflow
+  pre-commit install
+  git commit -m "Added xyz"
+
+8. To disable Pre-commit
+
+.. code-block:: bash
+
+  cd ~/Projects/airflow
+  pre-commit uninstall
+
+- For more information on visit |08_static_code_checks.rst|
+
+.. |08_static_code_checks.rst| raw:: html
+
+   <a href="https://github.com/apache/airflow/blob/main/contributing-docs/08_static_code_checks.rst" target="_blank">
+   08_static_code_checks.rst</a>
+
+- Following are some of the important links of 08_static_code_checks.rst
+
+  - |Pre-commit Hooks|
+
+  .. |Pre-commit Hooks| raw:: html
+
+   <a href="https://github.com/apache/airflow/blob/main/contributing-docs/08_static_code_checks.rst#pre-commit-hooks" target="_blank">
+   Pre-commit Hooks</a>
+
+  - |Running Static Code Checks via Breeze|
+
+  .. |Running Static Code Checks via Breeze| raw:: html
+
+   <a href="https://github.com/apache/airflow/blob/main/contributing-docs/08_static_code_checks.rst#running-static-code-checks-via-breeze"
+   target="_blank">Running Static Code Checks via Breeze</a>
+
+
+Setting up Breeze
+#################
 
 For many of the development tasks you will need ``Breeze`` to be configured. ``Breeze`` is a development
 environment which uses docker and docker-compose and its main purpose is to provide a consistent
@@ -219,21 +384,20 @@ syndrome - because not only others can reproduce easily what you do, but also th
 the same environment to run all tests - so you should be able to easily reproduce the same failures you
 see in CI in your local environment.
 
-Setting up Breeze
------------------
-
-1. Install ``pipx`` (>=1.2.1) - follow the instructions in `Install pipx <https://pipx.pypa.io/stable/>`_
+1. Install ``uv`` or ``pipx``. We recommend to install ``uv`` as general purpose python development
+   environment - you can install it via https://docs.astral.sh/uv/getting-started/installation/ or you can
+   install ``pipx`` (>=1.2.1) - follow the instructions in `Install pipx <https://pipx.pypa.io/stable/>`_
    It is important to install version of pipx >= 1.2.1 to workaround ``packaging`` breaking change introduced
-   in September 2023.
+   in September 2023
 
-2. Run ``pipx install -e ./dev/breeze`` in your checked-out repository. Make sure to follow any instructions
-   printed by ``pipx`` during the installation - this is needed to make sure that ``breeze`` command is
-   available in your PATH.
+2. Run ``uv tool install -e ./dev/breeze`` (or ``pipx install -e ./dev/breeze`` in your checked-out
+   repository. Make sure to follow any instructions printed by during the installation - this is needed
+   to make sure that ``breeze`` command is available in your PATH
 
 .. warning::
 
-  If you see below warning - it means that you hit `known issue <https://github.com/pypa/pipx/issues/1092>`_
-  with ``packaging`` version 23.2:
+  If you see below warning while running pipx - it means that you hit the
+  `known issue <https://github.com/pypa/pipx/issues/1092>`_ with ``packaging`` version 23.2:
   ⚠️ Ignoring --editable install option. pipx disallows it for anything but a local path,
   to avoid having to create a new src/ directory.
 
@@ -244,7 +408,6 @@ Setting up Breeze
 
      pip install "packaging==23.1"
      pipx install -e ./dev/breeze --force
-
 
 3. Initialize breeze autocomplete
 
@@ -271,11 +434,11 @@ Setting up Breeze
 
 5. When you enter Breeze environment you should see prompt similar to ``root@e4756f6ac886:/opt/airflow#``. This
    means that you are inside the Breeze container and ready to run most of the development tasks. You can leave
-   the environment with ``exit`` and re-enter it with just ``breeze`` command.
+   the environment with ``exit`` and re-enter it with just ``breeze`` command
 
 6. Once you enter breeze environment, create airflow tables and users from the breeze CLI. ``airflow db reset``
    is required to execute at least once for Airflow Breeze to get the database/tables created. If you run
-   tests, however - the test database will be initialized automatically for you.
+   tests, however - the test database will be initialized automatically for you
 
 .. code-block:: bash
 
@@ -293,15 +456,14 @@ Setting up Breeze
 
 7. Exiting Breeze environment. After successfully finishing above command will leave you in container,
    type ``exit`` to exit the container. The database created before will remain and servers will be
-   running though, until you stop breeze environment completely.
+   running though, until you stop breeze environment completely
 
 .. code-block:: bash
 
-  root@b76fcb399bb6:/opt/airflow#
   root@b76fcb399bb6:/opt/airflow# exit
 
 8. You can stop the environment (which means deleting the databases and database servers running in the
-   background) via ``breeze down`` command.
+   background) via ``breeze down`` command
 
 .. code-block:: bash
 
@@ -387,7 +549,7 @@ Using Breeze
 
 
 2. Now you can access airflow web interface on your local machine at |http://127.0.0.1:28080| with user name ``admin``
-   and password ``admin``.
+   and password ``admin``
 
    .. |http://127.0.0.1:28080| raw:: html
 
@@ -402,7 +564,7 @@ Using Breeze
 
 3. Setup a PostgreSQL database in your database management tool of choice
    (e.g. DBeaver, DataGrip) with host ``127.0.0.1``, port ``25433``,
-   user ``postgres``,  password ``airflow``, and default schema ``airflow``.
+   user ``postgres``,  password ``airflow``, and default schema ``airflow``
 
    .. raw:: html
 
@@ -413,13 +575,24 @@ Using Breeze
 
 4. Stopping breeze
 
+If ``breeze`` was started with ``breeze start-airflow``, this command will stop breeze and Airflow:
+
 .. code-block:: bash
 
   root@f3619b74c59a:/opt/airflow# stop_airflow
+  breeze down
+
+If ``breeze`` was started with ``breeze --python 3.9 --backend postgres`` (or similar):
+
+.. code-block:: bash
+
   root@f3619b74c59a:/opt/airflow# exit
   breeze down
 
-5. Knowing more about Breeze
+.. note::
+    ``stop_airflow`` is available only when `breeze` is started with ``breeze start-airflow``.
+
+1. Knowing more about Breeze
 
 .. code-block:: bash
 
@@ -435,149 +608,18 @@ Following are some of important topics of `Breeze documentation <../dev/breeze/d
 * `Troubleshooting Breeze environment <../dev/breeze/doc/04_troubleshooting.rst>`__
 
 
-Configuring Pre-commit
-----------------------
-
-Before committing changes to github or raising a pull request, code needs to be checked for certain quality standards
-such as spell check, code syntax, code formatting, compatibility with Apache License requirements etc. This set of
-tests are applied when you commit your code.
-
-.. raw:: html
-
-  <div align="center" style="padding-bottom:20px">
-    <img src="images/quick_start/ci_tests.png"
-         alt="CI tests GitHub">
-  </div>
-
-
-To avoid burden on CI infrastructure and to save time, Pre-commit hooks can be run locally before committing changes.
-
-1.  Installing required packages
-
-on Debian / Ubuntu, install via
-
-.. code-block:: bash
-
-  sudo apt install libxml2-utils
-
-on macOS, install via
-
-.. code-block:: bash
-
-  brew install libxml2
-
-2. Installing required Python packages
-
-.. code-block:: bash
-
-  pipx install pre-commit
-
-3. Go to your project directory
-
-.. code-block:: bash
-
-  cd ~/Projects/airflow
-
-
-1. Running pre-commit hooks
-
-.. code-block:: bash
-
-  pre-commit run --all-files
-    No-tabs checker......................................................Passed
-    Add license for all SQL files........................................Passed
-    Add license for all other files......................................Passed
-    Add license for all rst files........................................Passed
-    Add license for all JS/CSS/PUML files................................Passed
-    Add license for all JINJA template files.............................Passed
-    Add license for all shell files......................................Passed
-    Add license for all python files.....................................Passed
-    Add license for all XML files........................................Passed
-    Add license for all yaml files.......................................Passed
-    Add license for all md files.........................................Passed
-    Add license for all mermaid files....................................Passed
-    Add TOC for md files.................................................Passed
-    Add TOC for upgrade documentation....................................Passed
-    Check hooks apply to the repository..................................Passed
-    black................................................................Passed
-    Check for merge conflicts............................................Passed
-    Debug Statements (Python)............................................Passed
-    Check builtin type constructor use...................................Passed
-    Detect Private Key...................................................Passed
-    Fix End of Files.....................................................Passed
-    ...........................................................................
-
-5. Running pre-commit for selected files
-
-.. code-block:: bash
-
-  pre-commit run  --files airflow/utils/decorators.py tests/utils/test_task_group.py
-
-
-
-6. Running specific hook for selected files
-
-.. code-block:: bash
-
-  pre-commit run black --files airflow/decorators.py tests/utils/test_task_group.py
-    black...............................................................Passed
-  pre-commit run ruff --files airflow/decorators.py tests/utils/test_task_group.py
-    Run ruff............................................................Passed
-
-
-
-7. Enabling Pre-commit check before push. It will run pre-commit automatically before committing and stops the commit
-
-.. code-block:: bash
-
-  cd ~/Projects/airflow
-  pre-commit install
-  git commit -m "Added xyz"
-
-8. To disable Pre-commit
-
-.. code-block:: bash
-
-  cd ~/Projects/airflow
-  pre-commit uninstall
-
-
-- For more information on visit |08_static_code_checks.rst|
-
-.. |08_static_code_checks.rst| raw:: html
-
-   <a href="https://github.com/apache/airflow/blob/main/contributing-docs/08_static_code_checks.rst" target="_blank">
-   08_static_code_checks.rst</a>
-
-- Following are some of the important links of 08_static_code_checks.rst
-
-  - |Pre-commit Hooks|
-
-  .. |Pre-commit Hooks| raw:: html
-
-   <a href="https://github.com/apache/airflow/blob/main/contributing-docs/08_static_code_checks.rst#pre-commit-hooks" target="_blank">
-   Pre-commit Hooks</a>
-
-  - |Running Static Code Checks via Breeze|
-
-  .. |Running Static Code Checks via Breeze| raw:: html
-
-   <a href="https://github.com/apache/airflow/blob/main/contributing-docs/08_static_code_checks.rst#running-static-code-checks-via-breeze"
-   target="_blank">Running Static Code Checks via Breeze</a>
-
-
 Installing airflow in the local venv
 ------------------------------------
 
-1. It may require some packages to be installed; watch the output of the command to see which ones are missing.
+1. It may require some packages to be installed; watch the output of the command to see which ones are missing
 
 .. code-block:: bash
 
-  sudo apt-get install sqlite libsqlite3-dev default-libmysqlclient-dev postgresql
+  sudo apt-get install sqlite3 libsqlite3-dev default-libmysqlclient-dev postgresql
   ./scripts/tools/initialize_virtualenv.py
 
 
-2. Add following line to ~/.bashrc in order to call breeze command from anywhere.
+2. Add following line to ~/.bashrc in order to call breeze command from anywhere
 
 .. code-block:: bash
 
@@ -624,10 +666,6 @@ All Tests are inside ./tests directory.
 
 - Running specific type of test
 
-  - Types of tests
-
-  - Running specific type of test
-
   .. code-block:: bash
 
     breeze --backend postgres --postgres-version 15 --python 3.9 --db-reset testing tests --test-type Core
@@ -635,19 +673,19 @@ All Tests are inside ./tests directory.
 
 - Running Integration test for specific test type
 
-  - Running an Integration Test
-
   .. code-block:: bash
 
    breeze --backend postgres --postgres-version 15 --python 3.9 --db-reset testing tests --test-type All --integration mongo
 
-- For more information on Testing visit : |09_testing.rst|
+- For more information on Testing visit |09_testing.rst|
 
   .. |09_testing.rst| raw:: html
 
    <a href="https://github.com/apache/airflow/blob/main/contributing-docs/09_testing.rst" target="_blank">09_testing.rst</a>
 
-  - |Local and Remote Debugging in IDE|
+- Similarly to regular development, you can also debug while testing using your IDE, for more information, you may refer to
+
+  |Local and Remote Debugging in IDE|
 
   .. |Local and Remote Debugging in IDE| raw:: html
 
@@ -701,7 +739,7 @@ Raising Pull Request
            alt="Goto fork and select branches">
     </div>
 
-2. Click on ``New pull request`` button on branch from which you want to raise a pull request.
+2. Click on ``New pull request`` button on branch from which you want to raise a pull request
 
    .. raw:: html
 
@@ -710,7 +748,7 @@ Raising Pull Request
              alt="Accessing local airflow">
       </div>
 
-3. Add title and description as per Contributing guidelines and click on ``Create pull request``.
+3. Add title and description as per Contributing guidelines and click on ``Create pull request``
 
    .. raw:: html
 

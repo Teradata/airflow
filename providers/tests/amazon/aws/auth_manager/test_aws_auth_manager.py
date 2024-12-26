@@ -22,10 +22,16 @@ from unittest.mock import ANY, Mock, patch
 import pytest
 from flask import Flask, session
 from flask_appbuilder.menu import MenuItem
-from tests_common.test_utils.compat import AIRFLOW_V_2_8_PLUS, AIRFLOW_V_2_9_PLUS
-from tests_common.test_utils.config import conf_vars
-from tests_common.test_utils.www import check_content_in_response
 
+from airflow.auth.managers.models.resource_details import (
+    AccessView,
+    ConfigurationDetails,
+    ConnectionDetails,
+    DagAccessEntity,
+    DagDetails,
+    PoolDetails,
+    VariableDetails,
+)
 from airflow.providers.amazon.aws.auth_manager.avp.entities import AvpEntities
 from airflow.providers.amazon.aws.auth_manager.avp.facade import AwsAuthManagerAmazonVerifiedPermissionsFacade
 from airflow.providers.amazon.aws.auth_manager.aws_auth_manager import AwsAuthManager
@@ -33,6 +39,7 @@ from airflow.providers.amazon.aws.auth_manager.security_manager.aws_security_man
     AwsSecurityManagerOverride,
 )
 from airflow.providers.amazon.aws.auth_manager.user import AwsAuthManagerUser
+from airflow.providers.amazon.version_compat import AIRFLOW_V_3_0_PLUS
 from airflow.security.permissions import (
     RESOURCE_AUDIT_LOG,
     RESOURCE_CLUSTER_ACTIVITY,
@@ -42,42 +49,17 @@ from airflow.security.permissions import (
 from airflow.www import app as application
 from airflow.www.extensions.init_appbuilder import init_appbuilder
 
-try:
-    from airflow.auth.managers.models.resource_details import (
-        AccessView,
-        ConfigurationDetails,
-        ConnectionDetails,
-        DagAccessEntity,
-        DagDetails,
-        PoolDetails,
-        VariableDetails,
-    )
-except ImportError:
-    if not AIRFLOW_V_2_8_PLUS:
-        pytest.skip(
-            "Skipping tests that require airflow.auth.managers.models.resource_details for Airflow < 2.8.0",
-            allow_module_level=True,
-        )
-    else:
-        raise
-
+from tests_common.test_utils.config import conf_vars
+from tests_common.test_utils.www import check_content_in_response
 
 if TYPE_CHECKING:
     from airflow.auth.managers.base_auth_manager import ResourceMethod
     from airflow.auth.managers.models.resource_details import AssetDetails
     from airflow.security.permissions import RESOURCE_ASSET
 else:
-    try:
-        from airflow.auth.managers.models.resource_details import AssetDetails
-        from airflow.security.permissions import RESOURCE_ASSET
-    except ImportError:
-        from airflow.auth.managers.models.resource_details import DatasetDetails as AssetDetails
-        from airflow.security.permissions import RESOURCE_DATASET as RESOURCE_ASSET
+    from airflow.providers.common.compat.assets import AssetDetails
+    from airflow.providers.common.compat.security.permissions import RESOURCE_ASSET
 
-pytestmark = [
-    pytest.mark.skipif(not AIRFLOW_V_2_9_PLUS, reason="Test requires Airflow 2.9+"),
-    pytest.mark.skip_if_database_isolation_mode,
-]
 
 mock = Mock()
 
@@ -110,23 +92,15 @@ def auth_manager():
         }
     ):
         with patch.object(AwsAuthManager, "_check_avp_schema_version"):
-            return AwsAuthManager(None)
+            return AwsAuthManager()
 
 
 @pytest.fixture
-def auth_manager_with_appbuilder():
+def auth_manager_with_appbuilder(auth_manager):
     flask_app = Flask(__name__)
     appbuilder = init_appbuilder(flask_app)
-    with conf_vars(
-        {
-            (
-                "core",
-                "auth_manager",
-            ): "airflow.providers.amazon.aws.auth_manager.aws_auth_manager.AwsAuthManager",
-        }
-    ):
-        with patch.object(AwsAuthManager, "_check_avp_schema_version"):
-            return AwsAuthManager(appbuilder)
+    auth_manager.appbuilder = appbuilder
+    return auth_manager
 
 
 @pytest.fixture
@@ -173,6 +147,9 @@ def client_admin():
             yield application.create_app(testing=True)
 
 
+@pytest.mark.skipif(
+    not AIRFLOW_V_3_0_PLUS, reason="AWS auth manager is only compatible with Airflow >= 3.0.0"
+)
 class TestAwsAuthManager:
     def test_avp_facade(self, auth_manager):
         assert hasattr(auth_manager, "avp_facade")

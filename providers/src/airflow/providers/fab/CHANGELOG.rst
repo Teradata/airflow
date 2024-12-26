@@ -20,6 +20,86 @@
 Changelog
 ---------
 
+2.0.0
+.....
+
+Breaking changes
+~~~~~~~~~~~~~~~~
+
+.. warning::
+  The new version of the Fab provider is only compatible with Airflow 3.
+  It is impossible to use ``apache-airflow-providers-fab`` >= 2.0 with Airflow 2.X.
+  If you use Airflow 2.X, please use ``apache-airflow-providers-fab`` 1.X.
+
+.. warning::
+  All deprecated classes, parameters and features have been removed from the Fab provider package.
+  The following breaking changes were introduced:
+
+  * Removed ``is_authorized_dataset`` method from ``FabAuthManager``. Use ``is_authorized_asset`` instead
+  * Removed ``oauth_whitelists`` property from the security manager override. Use ``oauth_allow_list`` instead
+  * Removed the authentication type ``AUTH_OID``
+  * Removed ``get_readable_dags`` method from the security manager override
+  * Removed ``get_editable_dags`` method from the security manager override
+  * Removed ``get_accessible_dags`` method from the security manager override
+  * Removed ``get_accessible_dag_ids`` method from the security manager override
+  * Removed ``prefixed_dag_id`` method from the security manager override
+  * Removed ``init_role`` method from the security manager override
+
+.. Review and move the new changes to one of the sections above:
+   * ``AIP-79 Support Airflow 2.x plugins in fast api. Embed a minimal version of the Flask application in fastapi application (#44464)``
+   * ``Prevent __init__.py in providers from being modified (#44713)``
+   * ``AIP-81 Move CLI Commands to directories according to Hybrid, Local and Remote (#44538)``
+   * ``Use Python 3.9 as target version for Ruff & Black rules (#44298)``
+   * ``Remove deprecations from fab provider (#44198)``
+   * ``Set up JWT token authentication in Fast APIs (#42634)``
+   * ``Prepare FAB provider to set next version as major version (#43939)``
+
+1.5.1
+.....
+
+Bug Fixes
+~~~~~~~~~
+
+* ``fab_auth_manager: allow get_user method to return the user authenticated via Kerberos (#43662)``
+
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Expand and improve the kerberos api authentication documentation (#43682)``
+
+1.5.0
+.....
+
+Features
+~~~~~~~~
+
+* ``feat(providers/fab): Use asset in common provider (#43112)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``fix revoke Dag stale permission on airflow < 2.10 (#42844)``
+* ``fix(providers/fab): alias is_authorized_dataset to is_authorized_asset (#43469)``
+* ``fix: Change CustomSecurityManager method name (#43034)``
+
+Misc
+~~~~
+
+* ``Upgrade Flask-AppBuilder to 4.5.2 (#43309)``
+* ``Upgrade Flask-AppBuilder to 4.5.1 (#43251)``
+* ``Move user and roles schemas to fab provider (#42869)``
+* ``Move the session auth backend to FAB auth manager (#42878)``
+* ``Add logging to the migration commands (#43516)``
+* ``DOC fix documentation error in 'apache-airflow-providers-fab/access-control.rst' (#43495)``
+* ``Rename dataset as asset in UI (#43073)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Split providers out of the main "airflow/" tree into a UV workspace project (#42505)``
+   * ``Start porting DAG definition code to the Task SDK (#43076)``
+   * ``Prepare docs for Oct 2nd wave of providers (#43409)``
+   * ``Prepare docs for Oct 2nd wave of providers RC2 (#43540)``
+
 1.4.1
 .....
 

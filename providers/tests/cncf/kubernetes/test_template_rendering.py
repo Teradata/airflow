@@ -21,7 +21,6 @@ from unittest import mock
 
 import pytest
 from sqlalchemy.orm import make_transient
-from tests_common.test_utils.compat import BashOperator
 
 from airflow.models.renderedtifields import RenderedTaskInstanceFields, RenderedTaskInstanceFields as RTIF
 from airflow.providers.cncf.kubernetes.template_rendering import get_rendered_k8s_spec, render_k8s_pod_yaml
@@ -29,7 +28,9 @@ from airflow.utils import timezone
 from airflow.utils.session import create_session
 from airflow.version import version
 
-pytestmark = [pytest.mark.db_test, pytest.mark.skip_if_database_isolation_mode]
+from tests_common.test_utils.compat import BashOperator
+
+pytestmark = pytest.mark.db_test
 
 DEFAULT_DATE = timezone.datetime(2021, 9, 9)
 
@@ -41,7 +42,7 @@ def test_render_k8s_pod_yaml(pod_mutation_hook, create_task_instance):
         dag_id="test_render_k8s_pod_yaml",
         run_id="test_run_id",
         task_id="op1",
-        execution_date=DEFAULT_DATE,
+        logical_date=DEFAULT_DATE,
     )
 
     expected_pod_spec = {

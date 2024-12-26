@@ -25,6 +25,7 @@ on:  # yamllint disable-line rule:truthy
       - main
       - v2-10-stable
       - v2-10-test
+      - providers-[a-z]+-?[a-z]*/v[0-9]+-[0-9]+
 permissions:
   # all other permissions are set to none
   contents: read
@@ -72,6 +73,7 @@ jobs:
       docker-cache: ${{ steps.selective-checks.outputs.docker-cache }}
       default-branch: ${{ steps.selective-checks.outputs.default-branch }}
       disable-airflow-repo-cache: ${{ steps.selective-checks.outputs.disable-airflow-repo-cache }}
+      force-pip: ${{ steps.selective-checks.outputs.force-pip }}
       constraints-branch: ${{ steps.selective-checks.outputs.default-constraints-branch }}
       runs-on-as-json-default: ${{ steps.selective-checks.outputs.runs-on-as-json-default }}
       runs-on-as-json-public: ${{ steps.selective-checks.outputs.runs-on-as-json-public }}
@@ -203,7 +205,7 @@ jobs:
       pull-request-target: "true"
       is-committer-build: ${{ needs.build-info.outputs.is-committer-build }}
       push-image: "true"
-      use-uv: "true"
+      use-uv: ${{ needs.build-info.outputs.force-pip == 'true' && 'false' || 'true' }}
       image-tag: ${{ needs.build-info.outputs.image-tag }}
       platform: "linux/amd64"
       python-versions: ${{ needs.build-info.outputs.python-versions }}
@@ -248,7 +250,7 @@ jobs:
       pull-request-target: "true"
       is-committer-build: ${{ needs.build-info.outputs.is-committer-build }}
       push-image: "true"
-      use-uv: "true"
+      use-uv: ${{ needs.build-info.outputs.force-pip == 'true' && 'false' || 'true' }}
       image-tag: ${{ needs.build-info.outputs.image-tag }}
       platform: linux/amd64
       python-versions: ${{ needs.build-info.outputs.python-versions }}

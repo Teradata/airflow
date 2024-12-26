@@ -32,9 +32,6 @@ import time_machine
 from celery import Celery
 from celery.result import AsyncResult
 from kombu.asynchronous import set_event_loop
-from tests_common.test_utils import db
-from tests_common.test_utils.compat import AIRFLOW_V_2_10_PLUS
-from tests_common.test_utils.config import conf_vars
 
 from airflow.configuration import conf
 from airflow.models.baseoperator import BaseOperator
@@ -44,6 +41,10 @@ from airflow.providers.celery.executors import celery_executor, celery_executor_
 from airflow.providers.celery.executors.celery_executor import CeleryExecutor
 from airflow.utils import timezone
 from airflow.utils.state import State
+
+from tests_common.test_utils import db
+from tests_common.test_utils.config import conf_vars
+from tests_common.test_utils.version_compat import AIRFLOW_V_2_10_PLUS
 
 pytestmark = pytest.mark.db_test
 
@@ -108,9 +109,6 @@ class TestCeleryExecutor:
     def teardown_method(self) -> None:
         db.clear_db_runs()
         db.clear_db_jobs()
-
-    def test_supports_pickling(self):
-        assert CeleryExecutor.supports_pickling
 
     def test_supports_sentry(self):
         assert CeleryExecutor.supports_sentry
@@ -257,11 +255,43 @@ class TestCeleryExecutor:
             executor.job_id = 1
             executor.running = {ti.key}
             executor.tasks = {ti.key: AsyncResult("231")}
-            executor.cleanup_stuck_queued_tasks(tis)
+            assert executor.has_task(ti)
+            with pytest.warns(DeprecationWarning):
+                executor.cleanup_stuck_queued_tasks(tis=tis)
             executor.sync()
         assert executor.tasks == {}
         app.control.revoke.assert_called_once_with("231")
-        mock_fail.assert_called_once()
+        mock_fail.assert_called()
+        assert not executor.has_task(ti)
+
+    @pytest.mark.backend("mysql", "postgres")
+    @mock.patch("airflow.providers.celery.executors.celery_executor.CeleryExecutor.fail")
+    def test_revoke_task(self, mock_fail):
+        start_date = timezone.utcnow() - timedelta(days=2)
+
+        with DAG("test_revoke_task", schedule=None):
+            task = BaseOperator(task_id="task_1", start_date=start_date)
+
+        ti = TaskInstance(task=task, run_id=None)
+        ti.external_executor_id = "231"
+        ti.state = State.QUEUED
+        ti.queued_dttm = timezone.utcnow() - timedelta(minutes=30)
+        ti.queued_by_job_id = 1
+        tis = [ti]
+        with _prepare_app() as app:
+            app.control.revoke = mock.MagicMock()
+            executor = celery_executor.CeleryExecutor()
+            executor.job_id = 1
+            executor.running = {ti.key}
+            executor.tasks = {ti.key: AsyncResult("231")}
+            assert executor.has_task(ti)
+            for ti in tis:
+                executor.revoke_task(ti=ti)
+            executor.sync()
+        app.control.revoke.assert_called_once_with("231")
+        assert executor.tasks == {}
+        assert not executor.has_task(ti)
+        mock_fail.assert_not_called()
 
     @conf_vars({("celery", "result_backend_sqlalchemy_engine_options"): '{"pool_recycle": 1800}'})
     @mock.patch("celery.Celery")
@@ -369,3 +399,12 @@ def test_celery_task_acks_late_loaded_from_string():
     # reload celery conf to apply the new config
     importlib.reload(default_celery)
     assert default_celery.DEFAULT_CELERY_CONFIG["task_acks_late"] is False
+
+
+@conf_vars({("celery", "extra_celery_config"): '{"worker_max_tasks_per_child": 10}'})
+def test_celery_extra_celery_config_loaded_from_string():
+    import importlib
+
+    # reload celery conf to apply the new config
+    importlib.reload(default_celery)
+    assert default_celery.DEFAULT_CELERY_CONFIG["worker_max_tasks_per_child"] == 10

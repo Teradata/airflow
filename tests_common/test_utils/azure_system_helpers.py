@@ -28,6 +28,7 @@ from airflow.exceptions import AirflowException
 from airflow.models import Connection
 from airflow.providers.microsoft.azure.hooks.fileshare import AzureFileShareHook
 from airflow.utils.process_utils import patch_environ
+
 from tests_common.test_utils import AIRFLOW_MAIN_FOLDER
 from tests_common.test_utils.system_tests_class import SystemTest
 
@@ -104,7 +105,7 @@ def provide_azure_fileshare(share_name: str, azure_fileshare_conn_id: str, file_
     AzureSystemTest.delete_share(share_name=share_name, azure_fileshare_conn_id=azure_fileshare_conn_id)
 
 
-@pytest.mark.system("azure")
+@pytest.mark.system
 class AzureSystemTest(SystemTest):
     """Base class for Azure system tests."""
 

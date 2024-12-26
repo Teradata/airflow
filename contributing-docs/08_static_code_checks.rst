@@ -182,6 +182,8 @@ require Breeze Docker image to be built locally.
 +-----------------------------------------------------------+--------------------------------------------------------+---------+
 | check-hooks-apply                                         | Check if all hooks apply to the repository             |         |
 +-----------------------------------------------------------+--------------------------------------------------------+---------+
+| check-imports-in-providers                                | Check imports in providers                             |         |
++-----------------------------------------------------------+--------------------------------------------------------+---------+
 | check-incorrect-use-of-LoggingMixin                       | Make sure LoggingMixin is not used alone               |         |
 +-----------------------------------------------------------+--------------------------------------------------------+---------+
 | check-init-decorator-arguments                            | Sync model __init__ and decorator arguments            |         |
@@ -193,6 +195,8 @@ require Breeze Docker image to be built locally.
 | check-links-to-example-dags-do-not-use-hardcoded-versions | Verify no hard-coded version in example dags           |         |
 +-----------------------------------------------------------+--------------------------------------------------------+---------+
 | check-merge-conflict                                      | Check that merge conflicts are not being committed     |         |
++-----------------------------------------------------------+--------------------------------------------------------+---------+
+| check-min-python-version                                  | Check minimum Python version                           |         |
 +-----------------------------------------------------------+--------------------------------------------------------+---------+
 | check-newsfragments-are-valid                             | Check newsfragments are valid                          |         |
 +-----------------------------------------------------------+--------------------------------------------------------+---------+
@@ -206,7 +210,7 @@ require Breeze Docker image to be built locally.
 +-----------------------------------------------------------+--------------------------------------------------------+---------+
 | check-pre-commit-information-consistent                   | Validate hook IDs & names and sync with docs           |         |
 +-----------------------------------------------------------+--------------------------------------------------------+---------+
-| check-provide-create-sessions-imports                     | Check provide_session and create_session imports       |         |
+| check-provide-create-sessions-imports                     | Check session util imports                             |         |
 +-----------------------------------------------------------+--------------------------------------------------------+---------+
 | check-provider-docs-valid                                 | Validate provider doc files                            |         |
 +-----------------------------------------------------------+--------------------------------------------------------+---------+
@@ -325,6 +329,9 @@ require Breeze Docker image to be built locally.
 | mypy-providers                                            | * Run mypy for providers                               | *       |
 |                                                           | * Run mypy for providers (manual)                      |         |
 +-----------------------------------------------------------+--------------------------------------------------------+---------+
+| mypy-task-sdk                                             | * Run mypy for Task SDK                                | *       |
+|                                                           | * Run mypy for Task SDK (manual)                       |         |
++-----------------------------------------------------------+--------------------------------------------------------+---------+
 | pretty-format-json                                        | Format JSON files                                      |         |
 +-----------------------------------------------------------+--------------------------------------------------------+---------+
 | pylint                                                    | pylint                                                 |         |
@@ -378,6 +385,8 @@ require Breeze Docker image to be built locally.
 | update-openapi-spec-tags-to-be-sorted                     | Sort alphabetically openapi spec tags                  |         |
 +-----------------------------------------------------------+--------------------------------------------------------+---------+
 | update-providers-dependencies                             | Update dependencies for provider packages              |         |
++-----------------------------------------------------------+--------------------------------------------------------+---------+
+| update-providers-init-py                                  | Update providers __init__.py files                     |         |
 +-----------------------------------------------------------+--------------------------------------------------------+---------+
 | update-reproducible-source-date-epoch                     | Update Source Date Epoch for reproducible builds       |         |
 +-----------------------------------------------------------+--------------------------------------------------------+---------+

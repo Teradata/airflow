@@ -38,7 +38,6 @@ from botocore.exceptions import NoCredentialsError
 from botocore.utils import FileWebIdentityTokenLoader
 from moto import mock_aws
 from moto.core import DEFAULT_ACCOUNT_ID
-from tests_common.test_utils.config import conf_vars
 
 from airflow.exceptions import AirflowException
 from airflow.models.connection import Connection
@@ -50,6 +49,8 @@ from airflow.providers.amazon.aws.hooks.base_aws import (
     resolve_session_factory,
 )
 from airflow.providers.amazon.aws.utils.connection_wrapper import AwsConnectionWrapper
+
+from tests_common.test_utils.config import conf_vars
 
 pytest.importorskip("aiobotocore")
 
@@ -1073,7 +1074,7 @@ def _non_retryable_test(thing):
 class TestRetryDecorator:  # ptlint: disable=invalid-name
     def test_do_nothing_on_non_exception(self):
         result = _retryable_test(lambda: 42)
-        assert result, 42
+        assert result == 42
 
     @mock.patch("time.sleep", return_value=0)
     def test_retry_on_exception(self, _):

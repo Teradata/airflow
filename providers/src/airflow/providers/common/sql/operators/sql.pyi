@@ -36,7 +36,7 @@ from airflow.models import BaseOperator as BaseOperator, SkipMixin as SkipMixin
 from airflow.providers.common.sql.hooks.sql import DbApiHook as DbApiHook
 from airflow.providers.openlineage.extractors import OperatorLineage as OperatorLineage
 from airflow.utils.context import Context as Context
-from typing import Any, Callable, Iterable, Mapping, Sequence, SupportsAbs
+from typing import Any, Callable, ClassVar, Iterable, Mapping, Sequence, SupportsAbs
 
 def parse_boolean(val: str) -> str | bool: ...
 
@@ -62,7 +62,7 @@ class SQLExecuteQueryOperator(BaseSQLOperator):
     def _raise_exception(self, exception_string: str) -> Incomplete: ...
     template_fields: Sequence[str]
     template_ext: Sequence[str]
-    template_fields_renderers: Incomplete
+    template_fields_renderers: ClassVar[dict]
     ui_color: str
     sql: Incomplete
     autocommit: Incomplete
@@ -78,6 +78,13 @@ class SQLExecuteQueryOperator(BaseSQLOperator):
         autocommit: bool = False,
         parameters: Mapping | Iterable | None = None,
         handler: Callable[[Any], list[tuple] | None] = ...,
+        output_processor: (
+            Callable[
+                [list[Any], list[Sequence[Sequence] | None]],
+                list[Any] | tuple[list[Sequence[Sequence] | None], list],
+            ]
+            | None
+        ) = None,
         conn_id: str | None = None,
         database: str | None = None,
         split_statements: bool | None = None,
@@ -92,7 +99,7 @@ class SQLExecuteQueryOperator(BaseSQLOperator):
 
 class SQLColumnCheckOperator(BaseSQLOperator):
     template_fields: Sequence[str]
-    template_fields_renderers: Incomplete
+    template_fields_renderers: ClassVar[dict]
     sql_check_template: str
     column_checks: Incomplete
     table: Incomplete
@@ -115,7 +122,7 @@ class SQLColumnCheckOperator(BaseSQLOperator):
 
 class SQLTableCheckOperator(BaseSQLOperator):
     template_fields: Sequence[str]
-    template_fields_renderers: Incomplete
+    template_fields_renderers: ClassVar[dict]
     sql_check_template: str
     table: Incomplete
     checks: Incomplete
@@ -136,7 +143,7 @@ class SQLTableCheckOperator(BaseSQLOperator):
 class SQLCheckOperator(BaseSQLOperator):
     template_fields: Sequence[str]
     template_ext: Sequence[str]
-    template_fields_renderers: Incomplete
+    template_fields_renderers: ClassVar[dict]
     ui_color: str
     sql: Incomplete
     parameters: Incomplete
@@ -155,7 +162,7 @@ class SQLValueCheckOperator(BaseSQLOperator):
     __mapper_args__: Incomplete
     template_fields: Sequence[str]
     template_ext: Sequence[str]
-    template_fields_renderers: Incomplete
+    template_fields_renderers: ClassVar[dict]
     ui_color: str
     sql: Incomplete
     pass_value: Incomplete
@@ -178,7 +185,7 @@ class SQLIntervalCheckOperator(BaseSQLOperator):
     __mapper_args__: Incomplete
     template_fields: Sequence[str]
     template_ext: Sequence[str]
-    template_fields_renderers: Incomplete
+    template_fields_renderers: ClassVar[dict]
     ui_color: str
     ratio_formulas: Incomplete
     ratio_formula: Incomplete
@@ -208,7 +215,7 @@ class SQLIntervalCheckOperator(BaseSQLOperator):
 class SQLThresholdCheckOperator(BaseSQLOperator):
     template_fields: Sequence[str]
     template_ext: Sequence[str]
-    template_fields_renderers: Incomplete
+    template_fields_renderers: ClassVar[dict]
     sql: Incomplete
     min_threshold: Incomplete
     max_threshold: Incomplete
@@ -228,7 +235,7 @@ class SQLThresholdCheckOperator(BaseSQLOperator):
 class BranchSQLOperator(BaseSQLOperator, SkipMixin):
     template_fields: Sequence[str]
     template_ext: Sequence[str]
-    template_fields_renderers: Incomplete
+    template_fields_renderers: ClassVar[dict]
     ui_color: str
     ui_fgcolor: str
     sql: Incomplete

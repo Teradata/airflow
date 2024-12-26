@@ -19,10 +19,10 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections.abc import Sequence
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Sequence
 from unittest import mock
 
 import pytest
@@ -30,11 +30,11 @@ from google.auth.environment_vars import CLOUD_SDK_CONFIG_DIR, CREDENTIALS
 
 import airflow.providers.google
 from airflow.providers.google.cloud.utils.credentials_provider import provide_gcp_conn_and_credentials
+
+from providers.tests.google.cloud.utils.gcp_authenticator import GCP_GCS_KEY, GCP_SECRET_MANAGER_KEY
 from tests_common.test_utils import AIRFLOW_MAIN_FOLDER
 from tests_common.test_utils.logging_command_executor import CommandExecutor
 from tests_common.test_utils.system_tests_class import SystemTest
-
-from providers.tests.google.cloud.utils.gcp_authenticator import GCP_GCS_KEY, GCP_SECRET_MANAGER_KEY
 
 GCP_DIR = Path(airflow.providers.google.__file__).parent
 CLOUD_DAG_FOLDER = GCP_DIR.joinpath("cloud", "example_dags")
@@ -84,10 +84,10 @@ def provide_gcp_context(
     key_file_path = resolve_full_gcp_key_path(key_file_path)  # type: ignore
     if project_id is None:
         project_id = os.environ.get("GCP_PROJECT_ID")
-    with provide_gcp_conn_and_credentials(
-        key_file_path, scopes, project_id
-    ), tempfile.TemporaryDirectory() as gcloud_config_tmp, mock.patch.dict(
-        "os.environ", {CLOUD_SDK_CONFIG_DIR: gcloud_config_tmp}
+    with (
+        provide_gcp_conn_and_credentials(key_file_path, scopes, project_id),
+        tempfile.TemporaryDirectory() as gcloud_config_tmp,
+        mock.patch.dict("os.environ", {CLOUD_SDK_CONFIG_DIR: gcloud_config_tmp}),
     ):
         executor = CommandExecutor()
 
@@ -113,7 +113,7 @@ def provide_gcs_bucket(bucket_name: str):
     GoogleSystemTest.delete_gcs_bucket(bucket_name)
 
 
-@pytest.mark.system("google")
+@pytest.mark.system
 class GoogleSystemTest(SystemTest):
     """Base class for Google system tests."""
 

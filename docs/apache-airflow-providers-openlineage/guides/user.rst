@@ -257,13 +257,13 @@ full import paths of Airflow Operators to disable as ``disabled_for_operators`` 
 
     [openlineage]
     transport = {"type": "http", "url": "http://example.com:5000", "endpoint": "api/v1/lineage"}
-    disabled_for_operators = 'airflow.providers.standard.operators.bash.BashOperator;airflow.operators.python.PythonOperator'
+    disabled_for_operators = 'airflow.providers.standard.operators.bash.BashOperator;airflow.providers.standard.operators.python.PythonOperator'
 
 ``AIRFLOW__OPENLINEAGE__DISABLED_FOR_OPERATORS`` environment variable is an equivalent.
 
 .. code-block:: ini
 
-  AIRFLOW__OPENLINEAGE__DISABLED_FOR_OPERATORS='airflow.providers.standard.operators.bash.BashOperator;airflow.operators.python.PythonOperator'
+  AIRFLOW__OPENLINEAGE__DISABLED_FOR_OPERATORS='airflow.providers.standard.operators.bash.BashOperator;airflow.providers.standard.operators.python.PythonOperator'
 
 Full Task Info
 ^^^^^^^^^^^^^^
@@ -412,6 +412,36 @@ Enabling lineage on the task level implicitly enables lineage on its DAG.
 This is because each emitting task sends a `ParentRunFacet <https://openlineage.io/docs/spec/facets/run-facets/parent_run>`_,
 which requires the DAG-level lineage to be enabled in some OpenLineage backend systems.
 Disabling DAG-level lineage while enabling task-level lineage might cause errors or inconsistencies.
+
+
+Passing parent job information to Spark jobs
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+OpenLineage integration can automatically inject Airflow's information (namespace, job name, run id)
+into Spark application properties as parent job information
+(``spark.openlineage.parentJobNamespace``, ``spark.openlineage.parentJobName``, ``spark.openlineage.parentRunId``),
+for :ref:`supported Operators <supported_classes:openlineage>`.
+It allows Spark integration to automatically include ``parentRunFacet`` in application-level OpenLineage event,
+creating a parent-child relationship between tasks from different integrations.
+See `Scheduling from Airflow <https://openlineage.io/docs/integrations/spark/configuration/airflow>`_.
+
+.. warning::
+
+  If any of the above properties are manually specified in the Spark job configuration, the integration will refrain from injecting parent job properties to ensure that manually provided values are preserved.
+
+You can enable this automation by setting ``spark_inject_parent_job_info`` option to ``true`` in Airflow configuration.
+
+.. code-block:: ini
+
+    [openlineage]
+    transport = {"type": "http", "url": "http://example.com:5000", "endpoint": "api/v1/lineage"}
+    spark_inject_parent_job_info = true
+
+``AIRFLOW__OPENLINEAGE__SPARK_INJECT_PARENT_JOB_INFO`` environment variable is an equivalent.
+
+.. code-block:: ini
+
+  AIRFLOW__OPENLINEAGE__SPARK_INJECT_PARENT_JOB_INFO=true
 
 
 Troubleshooting

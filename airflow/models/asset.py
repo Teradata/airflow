@@ -17,6 +17,7 @@
 # under the License.
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import sqlalchemy_jsonfield
@@ -29,56 +30,97 @@ from sqlalchemy import (
     PrimaryKeyConstraint,
     String,
     Table,
+    select,
     text,
 )
 from sqlalchemy.orm import relationship
 
-from airflow.assets import Asset, AssetAlias
 from airflow.models.base import Base, StringID
+from airflow.sdk.definitions.asset import Asset, AssetAlias
 from airflow.settings import json
 from airflow.utils import timezone
 from airflow.utils.sqlalchemy import UtcDateTime
 
+if TYPE_CHECKING:
+    from collections.abc import Iterable
+    from typing import Any
+
+    from sqlalchemy.orm import Session
+
+
+def fetch_active_assets_by_name(names: Iterable[str], session: Session) -> dict[str, Asset]:
+    return {
+        asset_model.name: asset_model.to_public()
+        for asset_model in session.scalars(
+            select(AssetModel)
+            .join(AssetActive, AssetActive.name == AssetModel.name)
+            .where(AssetActive.name.in_(names))
+        )
+    }
+
+
+def fetch_active_assets_by_uri(uris: Iterable[str], session: Session) -> dict[str, Asset]:
+    return {
+        asset_model.uri: asset_model.to_public()
+        for asset_model in session.scalars(
+            select(AssetModel)
+            .join(AssetActive, AssetActive.uri == AssetModel.uri)
+            .where(AssetActive.uri.in_(uris))
+        )
+    }
+
+
+def expand_alias_to_assets(alias_name: str, session: Session) -> Iterable[AssetModel]:
+    """Expand asset alias to resolved assets."""
+    asset_alias_obj = session.scalar(
+        select(AssetAliasModel).where(AssetAliasModel.name == alias_name).limit(1)
+    )
+    if asset_alias_obj:
+        return list(asset_alias_obj.assets)
+    return []
+
+
+def resolve_ref_to_asset(
+    *,
+    name: str | None = None,
+    uri: str | None = None,
+    session: Session,
+) -> AssetModel | None:
+    if name is None and uri is None:
+        raise TypeError("either name or uri is required")
+    stmt = select(AssetModel).where(AssetModel.active.has())
+    if name is not None:
+        stmt = stmt.where(AssetModel.name == name)
+    if uri is not None:
+        stmt = stmt.where(AssetModel.uri == uri)
+    return session.scalar(stmt)
+
+
 alias_association_table = Table(
-    "dataset_alias_dataset",
+    "asset_alias_asset",
     Base.metadata,
-    Column("alias_id", ForeignKey("dataset_alias.id", ondelete="CASCADE"), primary_key=True),
-    Column("dataset_id", ForeignKey("dataset.id", ondelete="CASCADE"), primary_key=True),
-    Index("idx_dataset_alias_dataset_alias_id", "alias_id"),
-    Index("idx_dataset_alias_dataset_alias_dataset_id", "dataset_id"),
-    ForeignKeyConstraint(
-        ("alias_id",),
-        ["dataset_alias.id"],
-        name="ds_dsa_alias_id",
-        ondelete="CASCADE",
-    ),
-    ForeignKeyConstraint(
-        ("dataset_id",),
-        ["dataset.id"],
-        name="ds_dsa_dataset_id",
-        ondelete="CASCADE",
-    ),
+    Column("alias_id", ForeignKey("asset_alias.id", ondelete="CASCADE"), primary_key=True),
+    Column("asset_id", ForeignKey("asset.id", ondelete="CASCADE"), primary_key=True),
+    Index("idx_asset_alias_asset_alias_id", "alias_id"),
+    Index("idx_asset_alias_asset_asset_id", "asset_id"),
 )
 
-dataset_alias_dataset_event_assocation_table = Table(
-    "dataset_alias_dataset_event",
+asset_alias_asset_event_association_table = Table(
+    "asset_alias_asset_event",
     Base.metadata,
-    Column("alias_id", ForeignKey("dataset_alias.id", ondelete="CASCADE"), primary_key=True),
-    Column("event_id", ForeignKey("dataset_event.id", ondelete="CASCADE"), primary_key=True),
-    Index("idx_dataset_alias_dataset_event_alias_id", "alias_id"),
-    Index("idx_dataset_alias_dataset_event_event_id", "event_id"),
-    ForeignKeyConstraint(
-        ("alias_id",),
-        ["dataset_alias.id"],
-        name="dss_de_alias_id",
-        ondelete="CASCADE",
-    ),
-    ForeignKeyConstraint(
-        ("event_id",),
-        ["dataset_event.id"],
-        name="dss_de_event_id",
-        ondelete="CASCADE",
-    ),
+    Column("alias_id", ForeignKey("asset_alias.id", ondelete="CASCADE"), primary_key=True),
+    Column("event_id", ForeignKey("asset_event.id", ondelete="CASCADE"), primary_key=True),
+    Index("idx_asset_alias_asset_event_alias_id", "alias_id"),
+    Index("idx_asset_alias_asset_event_event_id", "event_id"),
+)
+
+asset_trigger_association_table = Table(
+    "asset_trigger",
+    Base.metadata,
+    Column("asset_id", ForeignKey("asset.id", ondelete="CASCADE"), primary_key=True),
+    Column("trigger_id", ForeignKey("trigger.id", ondelete="CASCADE"), primary_key=True),
+    Index("idx_asset_trigger_asset_id", "asset_id"),
+    Index("idx_asset_trigger_trigger_id", "trigger_id"),
 )
 
 
@@ -91,9 +133,9 @@ class AssetAliasModel(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(
-        String(length=3000).with_variant(
+        String(length=1500).with_variant(
             String(
-                length=3000,
+                length=1500,
                 # latin1 allows for more indexed length in mysql
                 # and this field should only be ascii chars
                 collation="latin1_general_cs",
@@ -102,24 +144,37 @@ class AssetAliasModel(Base):
         ),
         nullable=False,
     )
+    group = Column(
+        String(length=1500).with_variant(
+            String(
+                length=1500,
+                # latin1 allows for more indexed length in mysql
+                # and this field should only be ascii chars
+                collation="latin1_general_cs",
+            ),
+            "mysql",
+        ),
+        default="",
+        nullable=False,
+    )
 
-    __tablename__ = "dataset_alias"
+    __tablename__ = "asset_alias"
     __table_args__ = (
-        Index("idx_dataset_alias_name_unique", name, unique=True),
+        Index("idx_asset_alias_name_unique", name, unique=True),
         {"sqlite_autoincrement": True},  # ensures PK values not reused
     )
 
-    datasets = relationship(
+    assets = relationship(
         "AssetModel",
         secondary=alias_association_table,
         backref="aliases",
     )
-    dataset_events = relationship(
+    asset_events = relationship(
         "AssetEvent",
-        secondary=dataset_alias_dataset_event_assocation_table,
+        secondary=asset_alias_asset_event_association_table,
         back_populates="source_aliases",
     )
-    consuming_dags = relationship("DagScheduleAssetAliasReference", back_populates="dataset_alias")
+    consuming_dags = relationship("DagScheduleAssetAliasReference", back_populates="asset_alias")
 
     @classmethod
     def from_public(cls, obj: AssetAlias) -> AssetAliasModel:
@@ -192,14 +247,15 @@ class AssetModel(Base):
     created_at = Column(UtcDateTime, default=timezone.utcnow, nullable=False)
     updated_at = Column(UtcDateTime, default=timezone.utcnow, onupdate=timezone.utcnow, nullable=False)
 
-    active = relationship("AssetActive", uselist=False, viewonly=True)
+    active = relationship("AssetActive", uselist=False, viewonly=True, back_populates="asset")
 
-    consuming_dags = relationship("DagScheduleAssetReference", back_populates="dataset")
-    producing_tasks = relationship("TaskOutletAssetReference", back_populates="dataset")
+    consuming_dags = relationship("DagScheduleAssetReference", back_populates="asset")
+    producing_tasks = relationship("TaskOutletAssetReference", back_populates="asset")
+    triggers = relationship("Trigger", secondary=asset_trigger_association_table, back_populates="assets")
 
-    __tablename__ = "dataset"
+    __tablename__ = "asset"
     __table_args__ = (
-        Index("idx_dataset_name_uri_unique", name, uri, unique=True),
+        Index("idx_asset_name_uri_unique", name, uri, unique=True),
         {"sqlite_autoincrement": True},  # ensures PK values not reused
     )
 
@@ -232,7 +288,7 @@ class AssetModel(Base):
         return hash((self.name, self.uri))
 
     def __repr__(self):
-        return f"{self.__class__.__name__}(uri={self.uri!r}, extra={self.extra!r})"
+        return f"{self.__class__.__name__}(name={self.name!r}, uri={self.uri!r}, extra={self.extra!r})"
 
     def to_public(self) -> Asset:
         return Asset(name=self.name, uri=self.uri, group=self.group, extra=self.extra)
@@ -275,12 +331,14 @@ class AssetActive(Base):
         nullable=False,
     )
 
+    asset = relationship("AssetModel", back_populates="active")
+
     __tablename__ = "asset_active"
     __table_args__ = (
         PrimaryKeyConstraint(name, uri, name="asset_active_pkey"),
         ForeignKeyConstraint(
             columns=[name, uri],
-            refcolumns=["dataset.name", "dataset.uri"],
+            refcolumns=["asset.name", "asset.uri"],
             name="asset_active_asset_name_uri_fkey",
             ondelete="CASCADE",
         ),
@@ -293,6 +351,98 @@ class AssetActive(Base):
         return cls(name=asset.name, uri=asset.uri)
 
 
+class DagScheduleAssetNameReference(Base):
+    """Reference from a DAG to an asset name reference of which it is a consumer."""
+
+    name = Column(
+        String(length=1500).with_variant(
+            String(
+                length=1500,
+                # latin1 allows for more indexed length in mysql
+                # and this field should only be ascii chars
+                collation="latin1_general_cs",
+            ),
+            "mysql",
+        ),
+        primary_key=True,
+        nullable=False,
+    )
+    dag_id = Column(StringID(), primary_key=True, nullable=False)
+    created_at = Column(UtcDateTime, default=timezone.utcnow, nullable=False)
+
+    dag = relationship("DagModel", back_populates="schedule_asset_name_references")
+
+    __tablename__ = "dag_schedule_asset_name_reference"
+    __table_args__ = (
+        PrimaryKeyConstraint(name, dag_id, name="dsanr_pkey"),
+        ForeignKeyConstraint(
+            columns=(dag_id,),
+            refcolumns=["dag.dag_id"],
+            name="dsanr_dag_id_fkey",
+            ondelete="CASCADE",
+        ),
+        Index("idx_dag_schedule_asset_name_reference_dag_id", dag_id),
+    )
+
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, self.__class__):
+            return self.name == other.name and self.dag_id == other.dag_id
+        return NotImplemented
+
+    def __hash__(self):
+        return hash(self.__mapper__.primary_key)
+
+    def __repr__(self):
+        args = [f"{x.name}={getattr(self, x.name)!r}" for x in self.__mapper__.primary_key]
+        return f"{self.__class__.__name__}({', '.join(args)})"
+
+
+class DagScheduleAssetUriReference(Base):
+    """Reference from a DAG to an asset URI reference of which it is a consumer."""
+
+    uri = Column(
+        String(length=1500).with_variant(
+            String(
+                length=1500,
+                # latin1 allows for more indexed length in mysql
+                # and this field should only be ascii chars
+                collation="latin1_general_cs",
+            ),
+            "mysql",
+        ),
+        primary_key=True,
+        nullable=False,
+    )
+    dag_id = Column(StringID(), primary_key=True, nullable=False)
+    created_at = Column(UtcDateTime, default=timezone.utcnow, nullable=False)
+
+    dag = relationship("DagModel", back_populates="schedule_asset_uri_references")
+
+    __tablename__ = "dag_schedule_asset_uri_reference"
+    __table_args__ = (
+        PrimaryKeyConstraint(uri, dag_id, name="dsaur_pkey"),
+        ForeignKeyConstraint(
+            columns=(dag_id,),
+            refcolumns=["dag.dag_id"],
+            name="dsaur_dag_id_fkey",
+            ondelete="CASCADE",
+        ),
+        Index("idx_dag_schedule_asset_uri_reference_dag_id", dag_id),
+    )
+
+    def __eq__(self, other: Any) -> bool:
+        if isinstance(other, self.__class__):
+            return self.uri == other.uri and self.dag_id == other.dag_id
+        return NotImplemented
+
+    def __hash__(self):
+        return hash(self.__mapper__.primary_key)
+
+    def __repr__(self):
+        args = [f"{x.name}={getattr(self, x.name)!r}" for x in self.__mapper__.primary_key]
+        return f"{self.__class__.__name__}({', '.join(args)})"
+
+
 class DagScheduleAssetAliasReference(Base):
     """References from a DAG to an asset alias of which it is a consumer."""
 
@@ -301,25 +451,25 @@ class DagScheduleAssetAliasReference(Base):
     created_at = Column(UtcDateTime, default=timezone.utcnow, nullable=False)
     updated_at = Column(UtcDateTime, default=timezone.utcnow, onupdate=timezone.utcnow, nullable=False)
 
-    dataset_alias = relationship("AssetAliasModel", back_populates="consuming_dags")
-    dag = relationship("DagModel", back_populates="schedule_dataset_alias_references")
+    asset_alias = relationship("AssetAliasModel", back_populates="consuming_dags")
+    dag = relationship("DagModel", back_populates="schedule_asset_alias_references")
 
-    __tablename__ = "dag_schedule_dataset_alias_reference"
+    __tablename__ = "dag_schedule_asset_alias_reference"
     __table_args__ = (
-        PrimaryKeyConstraint(alias_id, dag_id, name="dsdar_pkey"),
+        PrimaryKeyConstraint(alias_id, dag_id, name="dsaar_pkey"),
         ForeignKeyConstraint(
             (alias_id,),
-            ["dataset_alias.id"],
-            name="dsdar_dataset_alias_fkey",
+            ["asset_alias.id"],
+            name="dsaar_asset_alias_fkey",
             ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
             columns=(dag_id,),
             refcolumns=["dag.dag_id"],
-            name="dsdar_dag_fkey",
+            name="dsaar_dag_id_fkey",
             ondelete="CASCADE",
         ),
-        Index("idx_dag_schedule_dataset_alias_reference_dag_id", dag_id),
+        Index("idx_dag_schedule_asset_alias_reference_dag_id", dag_id),
     )
 
     def __eq__(self, other):
@@ -331,104 +481,99 @@ class DagScheduleAssetAliasReference(Base):
         return hash(self.__mapper__.primary_key)
 
     def __repr__(self):
-        args = []
-        for attr in [x.name for x in self.__mapper__.primary_key]:
-            args.append(f"{attr}={getattr(self, attr)!r}")
+        args = [f"{x.name}={getattr(self, x.name)!r}" for x in self.__mapper__.primary_key]
         return f"{self.__class__.__name__}({', '.join(args)})"
 
 
 class DagScheduleAssetReference(Base):
     """References from a DAG to an asset of which it is a consumer."""
 
-    dataset_id = Column(Integer, primary_key=True, nullable=False)
+    asset_id = Column(Integer, primary_key=True, nullable=False)
     dag_id = Column(StringID(), primary_key=True, nullable=False)
     created_at = Column(UtcDateTime, default=timezone.utcnow, nullable=False)
     updated_at = Column(UtcDateTime, default=timezone.utcnow, onupdate=timezone.utcnow, nullable=False)
 
-    dataset = relationship("AssetModel", back_populates="consuming_dags")
-    dag = relationship("DagModel", back_populates="schedule_dataset_references")
+    asset = relationship("AssetModel", back_populates="consuming_dags")
+    dag = relationship("DagModel", back_populates="schedule_asset_references")
 
     queue_records = relationship(
         "AssetDagRunQueue",
         primaryjoin="""and_(
-            DagScheduleAssetReference.dataset_id == foreign(AssetDagRunQueue.dataset_id),
+            DagScheduleAssetReference.asset_id == foreign(AssetDagRunQueue.asset_id),
             DagScheduleAssetReference.dag_id == foreign(AssetDagRunQueue.target_dag_id),
         )""",
         cascade="all, delete, delete-orphan",
     )
 
-    __tablename__ = "dag_schedule_dataset_reference"
+    __tablename__ = "dag_schedule_asset_reference"
     __table_args__ = (
-        PrimaryKeyConstraint(dataset_id, dag_id, name="dsdr_pkey"),
+        PrimaryKeyConstraint(asset_id, dag_id, name="dsar_pkey"),
         ForeignKeyConstraint(
-            (dataset_id,),
-            ["dataset.id"],
-            name="dsdr_dataset_fkey",
+            (asset_id,),
+            ["asset.id"],
+            name="dsar_asset_fkey",
             ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
             columns=(dag_id,),
             refcolumns=["dag.dag_id"],
-            name="dsdr_dag_id_fkey",
+            name="dsar_dag_id_fkey",
             ondelete="CASCADE",
         ),
-        Index("idx_dag_schedule_dataset_reference_dag_id", dag_id),
+        Index("idx_dag_schedule_asset_reference_dag_id", dag_id),
     )
 
     def __eq__(self, other):
         if isinstance(other, self.__class__):
-            return self.dataset_id == other.dataset_id and self.dag_id == other.dag_id
-        else:
-            return NotImplemented
+            return self.asset_id == other.asset_id and self.dag_id == other.dag_id
+        return NotImplemented
 
     def __hash__(self):
         return hash(self.__mapper__.primary_key)
 
     def __repr__(self):
-        args = []
-        for attr in [x.name for x in self.__mapper__.primary_key]:
-            args.append(f"{attr}={getattr(self, attr)!r}")
+        args = [f"{attr}={getattr(self, attr)!r}" for attr in [x.name for x in self.__mapper__.primary_key]]
         return f"{self.__class__.__name__}({', '.join(args)})"
 
 
 class TaskOutletAssetReference(Base):
     """References from a task to an asset that it updates / produces."""
 
-    dataset_id = Column(Integer, primary_key=True, nullable=False)
+    asset_id = Column(Integer, primary_key=True, nullable=False)
     dag_id = Column(StringID(), primary_key=True, nullable=False)
     task_id = Column(StringID(), primary_key=True, nullable=False)
     created_at = Column(UtcDateTime, default=timezone.utcnow, nullable=False)
     updated_at = Column(UtcDateTime, default=timezone.utcnow, onupdate=timezone.utcnow, nullable=False)
 
-    dataset = relationship("AssetModel", back_populates="producing_tasks")
+    asset = relationship("AssetModel", back_populates="producing_tasks")
 
-    __tablename__ = "task_outlet_dataset_reference"
+    __tablename__ = "task_outlet_asset_reference"
     __table_args__ = (
         ForeignKeyConstraint(
-            (dataset_id,),
-            ["dataset.id"],
-            name="todr_dataset_fkey",
+            (asset_id,),
+            ["asset.id"],
+            name="toar_asset_fkey",
             ondelete="CASCADE",
         ),
-        PrimaryKeyConstraint(dataset_id, dag_id, task_id, name="todr_pkey"),
+        PrimaryKeyConstraint(asset_id, dag_id, task_id, name="toar_pkey"),
         ForeignKeyConstraint(
             columns=(dag_id,),
             refcolumns=["dag.dag_id"],
-            name="todr_dag_id_fkey",
+            name="toar_dag_id_fkey",
             ondelete="CASCADE",
         ),
-        Index("idx_task_outlet_dataset_reference_dag_id", dag_id),
+        Index("idx_task_outlet_asset_reference_dag_id", dag_id),
     )
 
     def __eq__(self, other):
         if isinstance(other, self.__class__):
             return (
-                self.dataset_id == other.dataset_id
+                self.asset_id == other.asset_id
                 and self.dag_id == other.dag_id
                 and self.task_id == other.task_id
             )
-        else:
-            return NotImplemented
+
+        return NotImplemented
 
     def __hash__(self):
         return hash(self.__mapper__.primary_key)
@@ -443,31 +588,32 @@ class TaskOutletAssetReference(Base):
 class AssetDagRunQueue(Base):
     """Model for storing asset events that need processing."""
 
-    dataset_id = Column(Integer, primary_key=True, nullable=False)
+    asset_id = Column(Integer, primary_key=True, nullable=False)
     target_dag_id = Column(StringID(), primary_key=True, nullable=False)
     created_at = Column(UtcDateTime, default=timezone.utcnow, nullable=False)
-    dataset = relationship("AssetModel", viewonly=True)
-    __tablename__ = "dataset_dag_run_queue"
+    asset = relationship("AssetModel", viewonly=True)
+
+    __tablename__ = "asset_dag_run_queue"
     __table_args__ = (
-        PrimaryKeyConstraint(dataset_id, target_dag_id, name="datasetdagrunqueue_pkey"),
+        PrimaryKeyConstraint(asset_id, target_dag_id, name="assetdagrunqueue_pkey"),
         ForeignKeyConstraint(
-            (dataset_id,),
-            ["dataset.id"],
-            name="ddrq_dataset_fkey",
+            (asset_id,),
+            ["asset.id"],
+            name="adrq_asset_fkey",
             ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
             (target_dag_id,),
             ["dag.dag_id"],
-            name="ddrq_dag_fkey",
+            name="adrq_dag_fkey",
             ondelete="CASCADE",
         ),
-        Index("idx_dataset_dag_run_queue_target_dag_id", target_dag_id),
+        Index("idx_asset_dag_run_queue_target_dag_id", target_dag_id),
     )
 
     def __eq__(self, other):
         if isinstance(other, self.__class__):
-            return self.dataset_id == other.dataset_id and self.target_dag_id == other.target_dag_id
+            return self.asset_id == other.asset_id and self.target_dag_id == other.target_dag_id
         else:
             return NotImplemented
 
@@ -482,12 +628,12 @@ class AssetDagRunQueue(Base):
 
 
 association_table = Table(
-    "dagrun_dataset_event",
+    "dagrun_asset_event",
     Base.metadata,
     Column("dag_run_id", ForeignKey("dag_run.id", ondelete="CASCADE"), primary_key=True),
-    Column("event_id", ForeignKey("dataset_event.id", ondelete="CASCADE"), primary_key=True),
-    Index("idx_dagrun_dataset_events_dag_run_id", "dag_run_id"),
-    Index("idx_dagrun_dataset_events_event_id", "event_id"),
+    Column("event_id", ForeignKey("asset_event.id", ondelete="CASCADE"), primary_key=True),
+    Index("idx_dagrun_asset_events_dag_run_id", "dag_run_id"),
+    Index("idx_dagrun_asset_events_event_id", "event_id"),
 )
 
 
@@ -495,7 +641,7 @@ class AssetEvent(Base):
     """
     A table to store assets events.
 
-    :param dataset_id: reference to AssetModel record
+    :param asset_id: reference to AssetModel record
     :param extra: JSON field for arbitrary extra info
     :param source_task_id: the task_id of the TI which updated the asset
     :param source_dag_id: the dag_id of the TI which updated the asset
@@ -508,7 +654,7 @@ class AssetEvent(Base):
     """
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    dataset_id = Column(Integer, nullable=False)
+    asset_id = Column(Integer, nullable=False)
     extra = Column(sqlalchemy_jsonfield.JSONField(json=json), nullable=False, default={})
     source_task_id = Column(StringID(), nullable=True)
     source_dag_id = Column(StringID(), nullable=True)
@@ -516,22 +662,22 @@ class AssetEvent(Base):
     source_map_index = Column(Integer, nullable=True, server_default=text("-1"))
     timestamp = Column(UtcDateTime, default=timezone.utcnow, nullable=False)
 
-    __tablename__ = "dataset_event"
+    __tablename__ = "asset_event"
     __table_args__ = (
-        Index("idx_dataset_id_timestamp", dataset_id, timestamp),
+        Index("idx_asset_id_timestamp", asset_id, timestamp),
         {"sqlite_autoincrement": True},  # ensures PK values not reused
     )
 
     created_dagruns = relationship(
         "DagRun",
         secondary=association_table,
-        backref="consumed_dataset_events",
+        backref="consumed_asset_events",
     )
 
     source_aliases = relationship(
         "AssetAliasModel",
-        secondary=dataset_alias_dataset_event_assocation_table,
-        back_populates="dataset_events",
+        secondary=asset_alias_asset_event_association_table,
+        back_populates="asset_events",
     )
 
     source_task_instance = relationship(
@@ -556,9 +702,9 @@ class AssetEvent(Base):
         lazy="select",
         uselist=False,
     )
-    dataset = relationship(
+    asset = relationship(
         AssetModel,
-        primaryjoin="AssetEvent.dataset_id == foreign(AssetModel.id)",
+        primaryjoin="AssetEvent.asset_id == foreign(AssetModel.id)",
         viewonly=True,
         lazy="select",
         uselist=False,
@@ -566,13 +712,13 @@ class AssetEvent(Base):
 
     @property
     def uri(self):
-        return self.dataset.uri
+        return self.asset.uri
 
     def __repr__(self) -> str:
         args = []
         for attr in [
             "id",
-            "dataset_id",
+            "asset_id",
             "extra",
             "source_task_id",
             "source_dag_id",

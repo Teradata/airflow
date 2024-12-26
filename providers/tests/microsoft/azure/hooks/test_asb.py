@@ -33,6 +33,7 @@ except ImportError:
 
 from airflow.models import Connection
 from airflow.providers.microsoft.azure.hooks.asb import AdminClientHook, MessageHook
+from airflow.utils.context import Context
 
 MESSAGE = "Test Message"
 MESSAGE_LIST = [f"{MESSAGE} {n}" for n in range(10)]
@@ -117,6 +118,51 @@ class TestAdminClientHook:
         hook = AdminClientHook(azure_service_bus_conn_id=self.conn_id)
         with pytest.raises(TypeError):
             hook.delete_queue(None)
+
+    # Test creating subscription with topic name and subscription name using hook method `create_subscription`
+    @mock.patch("azure.servicebus.management.SubscriptionProperties")
+    @mock.patch(f"{MODULE}.AdminClientHook.get_conn")
+    def test_create_subscription(self, mock_sb_admin_client, mock_subscription_properties):
+        """
+        Test `create_subscription` hook function with mocking connection, subscription properties value and
+        the azure service bus `create_subscription` function
+        """
+        topic_name = "test_topic_name"
+        subscription_name = "test_subscription_name"
+        mock_subscription_properties.name = subscription_name
+        mock_sb_admin_client.return_value.__enter__.return_value.create_subscription.return_value = (
+            mock_subscription_properties
+        )
+        hook = AdminClientHook(azure_service_bus_conn_id=self.conn_id)
+        hook.create_subscription(topic_name, subscription_name)
+        assert mock_subscription_properties.name == subscription_name
+
+    # Test creating subscription with topic name, subscription name, correlation rule and rule naame
+    # using hook method `create_subscription`
+    @mock.patch("azure.servicebus.management.RuleProperties")
+    @mock.patch("azure.servicebus.management.SubscriptionProperties")
+    @mock.patch(f"{MODULE}.AdminClientHook.get_conn")
+    def test_create_subscription_with_rule(
+        self, mock_sb_admin_client, mock_subscription_properties, mock_rule_properties
+    ):
+        """
+        Test `create_subscription` hook function with mocking connection, subscription properties value and
+        the azure service bus `create_subscription` function
+        """
+        subscription_name = "test_subscription_name"
+        mock_rule_name = "test_rule_name"
+        mock_subscription_properties.name = subscription_name
+        mock_rule_properties.name = mock_rule_name
+        mock_sb_admin_client.return_value.__enter__.return_value.create_subscription.return_value = (
+            mock_subscription_properties
+        )
+        mock_sb_admin_client.return_value.__enter__.return_value.create_rule.return_value = (
+            mock_rule_properties
+        )
+        hook = AdminClientHook(azure_service_bus_conn_id=self.conn_id)
+        hook.create_subscription("test_topic_name", subscription_name)
+        assert mock_subscription_properties.name == subscription_name
+        assert mock_rule_properties.name == mock_rule_name
 
     @mock.patch(f"{MODULE}.AdminClientHook.get_conn")
     def test_delete_subscription(self, mock_sb_admin_client):
@@ -256,7 +302,7 @@ class TestMessageHook:
         mock_sb_client.return_value.get_queue_receiver.return_value.receive_messages.return_value = [
             mock_service_bus_message
         ]
-        hook.receive_message(self.queue_name)
+        hook.receive_message(self.queue_name, Context())
         expected_calls = [
             mock.call()
             .__enter__()
@@ -285,12 +331,13 @@ class TestMessageHook:
 
         received_messages = []
 
-        def message_callback(msg: Any) -> None:
+        def message_callback(msg: Any, context: Context) -> None:
             nonlocal received_messages
             print("received message:", msg)
+            assert context is not None
             received_messages.append(msg)
 
-        hook.receive_message(self.queue_name, message_callback=message_callback)
+        hook.receive_message(self.queue_name, Context(), message_callback=message_callback)
 
         assert len(received_messages) == 1
         assert received_messages[0] == mock_service_bus_message
@@ -316,7 +363,9 @@ class TestMessageHook:
         max_message_count = 10
         max_wait_time = 5
         hook = MessageHook(azure_service_bus_conn_id=self.conn_id)
-        hook.receive_subscription_message(topic_name, subscription_name, max_message_count, max_wait_time)
+        hook.receive_subscription_message(
+            topic_name, subscription_name, Context(), max_message_count, max_wait_time
+        )
         expected_calls = [
             mock.call()
             .__enter__()
@@ -350,13 +399,19 @@ class TestMessageHook:
 
         received_messages = []
 
-        def message_callback(msg: ServiceBusMessage) -> None:
+        def message_callback(msg: ServiceBusMessage, context: Context) -> None:
             nonlocal received_messages
             print("received message:", msg)
+            assert context is not None
             received_messages.append(msg)
 
         hook.receive_subscription_message(
-            topic_name, subscription_name, max_message_count, max_wait_time, message_callback=message_callback
+            topic_name,
+            subscription_name,
+            Context(),
+            max_message_count,
+            max_wait_time,
+            message_callback=message_callback,
         )
 
         assert len(received_messages) == 2

@@ -17,13 +17,8 @@
 from __future__ import annotations
 
 import pytest
-from tests_common.test_utils.compat import AIRFLOW_V_2_8_PLUS
 
 from airflow.providers.common.sql.hooks.sql import DbApiHook
-
-pytestmark = [
-    pytest.mark.skipif(not AIRFLOW_V_2_8_PLUS, reason="Tests for Airflow 2.8.0+ only"),
-]
 
 
 @pytest.mark.parametrize(

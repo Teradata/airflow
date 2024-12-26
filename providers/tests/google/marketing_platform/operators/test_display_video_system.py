@@ -17,12 +17,6 @@
 from __future__ import annotations
 
 import pytest
-from tests_common.test_utils.gcp_system_helpers import (
-    MARKETING_DAG_FOLDER,
-    GoogleSystemTest,
-    provide_gcp_context,
-)
-from tests_common.test_utils.system_tests import get_test_run
 
 from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook
 from airflow.providers.google.marketing_platform.example_dags.example_display_video import (
@@ -32,6 +26,12 @@ from airflow.providers.google.marketing_platform.example_dags.example_display_vi
 )
 
 from providers.tests.google.cloud.utils.gcp_authenticator import GCP_BIGQUERY_KEY, GMP_KEY
+from tests_common.test_utils.gcp_system_helpers import (
+    MARKETING_DAG_FOLDER,
+    GoogleSystemTest,
+    provide_gcp_context,
+)
+from tests_common.test_utils.system_tests import get_test_run
 
 # Requires the following scope:
 SCOPES = [
@@ -41,7 +41,7 @@ SCOPES = [
 ]
 
 
-@pytest.mark.system("google.marketing_platform")
+@pytest.mark.system
 @pytest.mark.credential_file(GMP_KEY)
 class TestDisplayVideoSystem(GoogleSystemTest):
     def setup_method(self):
