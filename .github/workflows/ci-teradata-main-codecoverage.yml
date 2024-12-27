@@ -56,8 +56,6 @@
                   uv venv
                   source .venv/bin/activate
                   uv sync --extra devel --extra teradata --extra microsoft.azure --extra amazon
-                  sudo apt install python3-pip zip
-                  pip install pytest-cov
                   python3 -m pytest --cov-report html --cov=providers/src/airflow/providers/teradata  providers/tests/teradata
           - name: Archive production artifacts
             uses: actions/upload-artifact@v4
