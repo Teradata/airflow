@@ -29,8 +29,9 @@ from werkzeug.wrappers import Response
 
 from airflow.exceptions import AirflowConfigException
 from airflow.www import app as application
-from tests.test_utils.config import conf_vars
-from tests.test_utils.decorators import dont_initialize_flask_app_submodules
+
+from tests_common.test_utils.config import conf_vars
+from tests_common.test_utils.decorators import dont_initialize_flask_app_submodules
 
 pytestmark = pytest.mark.db_test
 
@@ -84,7 +85,7 @@ class TestApp:
 
         response = Response.from_app(app, environ)
 
-        assert b"success" == response.get_data()
+        assert response.get_data() == b"success"
         assert response.status_code == 200
 
     @dont_initialize_flask_app_submodules
@@ -120,7 +121,7 @@ class TestApp:
 
         response = Response.from_app(app, environ)
 
-        assert b"success" == response.get_data()
+        assert response.get_data() == b"success"
         assert response.status_code == 200
 
     @dont_initialize_flask_app_submodules
@@ -168,7 +169,7 @@ class TestApp:
 
         response = Response.from_app(app, environ)
 
-        assert b"success" == response.get_data()
+        assert response.get_data() == b"success"
         assert response.status_code == 200
 
     @conf_vars(
@@ -214,7 +215,7 @@ class TestApp:
 
         response = Response.from_app(app, environ)
 
-        assert b"success" == response.get_data()
+        assert response.get_data() == b"success"
         assert response.status_code == 200
 
     @conf_vars(
@@ -230,9 +231,8 @@ class TestApp:
     @conf_vars({("webserver", "cookie_samesite"): ""})
     @dont_initialize_flask_app_submodules
     def test_correct_default_is_set_for_cookie_samesite(self):
-        """An empty 'cookie_samesite' should be corrected to 'Lax' with a deprecation warning."""
-        with pytest.deprecated_call():
-            app = application.cached_app(testing=True)
+        """An empty 'cookie_samesite' should be corrected to 'Lax'."""
+        app = application.cached_app(testing=True)
         assert app.config["SESSION_COOKIE_SAMESITE"] == "Lax"
 
     @pytest.mark.parametrize(
@@ -263,8 +263,9 @@ class TestApp:
 class TestFlaskCli:
     @dont_initialize_flask_app_submodules(skip_all_except=["init_appbuilder"])
     def test_flask_cli_should_display_routes(self, capsys):
-        with mock.patch.dict("os.environ", FLASK_APP="airflow.www.app:cached_app"), mock.patch.object(
-            sys, "argv", ["flask", "routes"]
+        with (
+            mock.patch.dict("os.environ", FLASK_APP="airflow.www.app:cached_app"),
+            mock.patch.object(sys, "argv", ["flask", "routes"]),
         ):
             # Import from flask.__main__ with a combination of mocking With mocking sys.argv
             # will invoke ``flask routes`` command.

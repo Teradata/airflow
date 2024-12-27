@@ -17,23 +17,17 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+import warnings
 
-import attrs
+from airflow.sdk.definitions.asset.metadata import Metadata
 
-from airflow.datasets import coerce_to_uri
+# TODO: Remove this module in Airflow 3.2
 
-if TYPE_CHECKING:
-    from airflow.datasets import Dataset
+warnings.warn(
+    "Import from the airflow.dataset module is deprecated and "
+    "will be removed in the Airflow 3.2. Please import it from 'airflow.sdk.definitions.asset.metadata'.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
-
-@attrs.define(init=False)
-class Metadata:
-    """Metadata to attach to a DatasetEvent."""
-
-    uri: str
-    extra: dict[str, Any]
-
-    def __init__(self, target: str | Dataset, extra: dict[str, Any]) -> None:
-        self.uri = coerce_to_uri(target)
-        self.extra = extra
+__all__ = ["Metadata"]

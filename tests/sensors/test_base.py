@@ -45,6 +45,7 @@ from airflow.executors.executor_constants import (
 from airflow.executors.local_executor import LocalExecutor
 from airflow.executors.sequential_executor import SequentialExecutor
 from airflow.models import TaskInstance, TaskReschedule
+from airflow.models.trigger import TriggerFailureReason
 from airflow.models.xcom import XCom
 from airflow.operators.empty import EmptyOperator
 from airflow.providers.celery.executors.celery_executor import CeleryExecutor
@@ -57,7 +58,8 @@ from airflow.utils import timezone
 from airflow.utils.session import create_session
 from airflow.utils.state import State
 from airflow.utils.timezone import datetime
-from tests.test_utils import db
+
+from tests_common.test_utils import db
 
 pytestmark = pytest.mark.db_test
 
@@ -68,7 +70,7 @@ DEFAULT_DATE = datetime(2015, 1, 1)
 TEST_DAG_ID = "unit_test_dag"
 DUMMY_OP = "dummy_op"
 SENSOR_OP = "sensor_op"
-DEV_NULL = "dev/null"
+DEV_NULL = "/dev/null"
 
 
 @pytest.fixture
@@ -192,15 +194,49 @@ class TestBaseSensor:
 
     @pytest.mark.parametrize(
         "exception_cls",
+        (ValueError,),
+    )
+    def test_soft_fail_with_exception(self, make_sensor, exception_cls):
+        sensor, dr = make_sensor(False, soft_fail=True)
+        sensor.poke = Mock(side_effect=[exception_cls(None)])
+        with pytest.raises(ValueError):
+            self._run(sensor)
+
+        tis = dr.get_task_instances()
+        assert len(tis) == 2
+        for ti in tis:
+            if ti.task_id == SENSOR_OP:
+                assert ti.state == State.FAILED
+            if ti.task_id == DUMMY_OP:
+                assert ti.state == State.NONE
+
+    @pytest.mark.parametrize(
+        "exception_cls",
         (
             AirflowSensorTimeout,
             AirflowTaskTimeout,
             AirflowFailException,
-            Exception,
         ),
     )
-    def test_soft_fail_with_non_skip_exception(self, make_sensor, exception_cls):
+    def test_soft_fail_with_skip_exception(self, make_sensor, exception_cls):
         sensor, dr = make_sensor(False, soft_fail=True)
+        sensor.poke = Mock(side_effect=[exception_cls(None)])
+
+        self._run(sensor)
+        tis = dr.get_task_instances()
+        assert len(tis) == 2
+        for ti in tis:
+            if ti.task_id == SENSOR_OP:
+                assert ti.state == State.SKIPPED
+            if ti.task_id == DUMMY_OP:
+                assert ti.state == State.NONE
+
+    @pytest.mark.parametrize(
+        "exception_cls",
+        (AirflowSensorTimeout, AirflowTaskTimeout, AirflowFailException, Exception),
+    )
+    def test_never_fail_with_skip_exception(self, make_sensor, exception_cls):
+        sensor, dr = make_sensor(False, never_fail=True)
         sensor.poke = Mock(side_effect=[exception_cls(None)])
 
         self._run(sensor)
@@ -1025,6 +1061,15 @@ class TestBaseSensor:
             load_executor.return_value = (executor_cls, None)
             task = sensor.prepare_for_execution()
             assert task.mode == mode
+
+    def test_resume_execution(self):
+        op = BaseSensorOperator(task_id="hi")
+        with pytest.raises(AirflowSensorTimeout):
+            op.resume_execution(
+                next_method="__fail__",
+                next_kwargs={"error": TriggerFailureReason.TRIGGER_TIMEOUT},
+                context={},
+            )
 
 
 @poke_mode_only

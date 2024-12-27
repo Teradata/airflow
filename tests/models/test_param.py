@@ -21,12 +21,13 @@ from contextlib import nullcontext
 import pytest
 
 from airflow.decorators import task
-from airflow.exceptions import ParamValidationError, RemovedInAirflow3Warning
+from airflow.exceptions import ParamValidationError
 from airflow.models.param import Param, ParamsDict
 from airflow.serialization.serialized_objects import BaseSerialization
 from airflow.utils import timezone
 from airflow.utils.types import DagRunType
-from tests.test_utils.db import clear_db_dags, clear_db_runs, clear_db_xcom
+
+from tests_common.test_utils.db import clear_db_dags, clear_db_runs, clear_db_xcom
 
 
 class TestParam:
@@ -87,20 +88,6 @@ class TestParam:
     def test_string_rfc3339_datetime_format(self, dt):
         """Test valid rfc3339 datetime."""
         assert Param(dt, type="string", format="date-time").resolve() == dt
-
-    @pytest.mark.parametrize(
-        "dt",
-        [
-            pytest.param("2022-01-02 03:04:05.678901Z", id="space-sep"),
-            pytest.param("2022-01-02T03:04:05.678901", id="tz-naive"),
-            pytest.param("2022-01-02T03Z", id="datetime-with-day-only"),
-            pytest.param("20161001T143028+0530", id="not-formatted-date-time"),
-        ],
-    )
-    def test_string_iso8601_datetime_invalid_rfc3339_format(self, dt):
-        """Test valid iso8601 datetime but not valid rfc3339 datetime conversion."""
-        with pytest.warns(RemovedInAirflow3Warning):
-            assert Param(dt, type="string", format="date-time").resolve() == dt
 
     @pytest.mark.parametrize(
         "dt",
@@ -340,7 +327,7 @@ class TestDagParamRuntime:
             start_date=timezone.utcnow(),
         )
 
-        xcom_arg.operator.run(dr.execution_date, dr.execution_date)
+        xcom_arg.operator.run(dr.logical_date, dr.logical_date)
 
         ti = dr.get_task_instances()[0]
         assert ti.xcom_pull() == self.VALUE
@@ -365,7 +352,7 @@ class TestDagParamRuntime:
             conf={"value": new_value},
         )
 
-        xcom_arg.operator.run(dr.execution_date, dr.execution_date)
+        xcom_arg.operator.run(dr.logical_date, dr.logical_date)
 
         ti = dr.get_task_instances()[0]
         assert ti.xcom_pull() == new_value
@@ -384,26 +371,27 @@ class TestDagParamRuntime:
 
         dr = dag_maker.create_dagrun(run_id=DagRunType.MANUAL.value, start_date=timezone.utcnow())
 
-        xcom_arg.operator.run(dr.execution_date, dr.execution_date)
+        xcom_arg.operator.run(dr.logical_date, dr.logical_date)
 
         ti = dr.get_task_instances()[0]
         assert ti.xcom_pull() == "test"
 
     @pytest.mark.db_test
     @pytest.mark.parametrize(
-        "default, should_warn",
+        "default, should_raise",
         [
             pytest.param({0, 1, 2}, True, id="default-non-JSON-serializable"),
             pytest.param(None, False, id="default-None"),  # Param init should not warn
             pytest.param({"b": 1}, False, id="default-JSON-serializable"),  # Param init should not warn
         ],
     )
-    def test_param_json_warning(self, default, should_warn):
-        warning_msg = "The use of non-json-serializable params is deprecated"
-        cm = pytest.warns(DeprecationWarning, match=warning_msg) if should_warn else nullcontext()
+    def test_param_json_validation(self, default, should_raise):
+        exception_msg = "All provided parameters must be json-serializable"
+        cm = pytest.raises(ParamValidationError, match=exception_msg) if should_raise else nullcontext()
         with cm:
             p = Param(default=default)
-        p.resolve()  # when resolved with NOTSET, should not warn.
-        p.resolve(value={"a": 1})  # when resolved with JSON-serializable, should not warn.
-        with pytest.warns(DeprecationWarning, match=warning_msg):
-            p.resolve(value={1, 2, 3})  # when resolved with not JSON-serializable, should warn.
+        if not should_raise:
+            p.resolve()  # when resolved with NOTSET, should not warn.
+            p.resolve(value={"a": 1})  # when resolved with JSON-serializable, should not warn.
+            with pytest.raises(ParamValidationError, match=exception_msg):
+                p.resolve(value={1, 2, 3})  # when resolved with not JSON-serializable, should warn.

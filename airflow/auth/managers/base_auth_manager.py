@@ -18,12 +18,14 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Container, Sequence
 from functools import cached_property
-from typing import TYPE_CHECKING, Container, Literal, Sequence
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
 from flask_appbuilder.menu import MenuItem
 from sqlalchemy import select
 
+from airflow.auth.managers.models.base_user import BaseUser
 from airflow.auth.managers.models.resource_details import (
     DagDetails,
 )
@@ -34,10 +36,10 @@ from airflow.utils.log.logging_mixin import LoggingMixin
 from airflow.utils.session import NEW_SESSION, provide_session
 
 if TYPE_CHECKING:
+    from fastapi import FastAPI
     from flask import Blueprint
     from sqlalchemy.orm import Session
 
-    from airflow.auth.managers.models.base_user import BaseUser
     from airflow.auth.managers.models.batch_apis import (
         IsAuthorizedConnectionRequest,
         IsAuthorizedDagRequest,
@@ -46,45 +48,34 @@ if TYPE_CHECKING:
     )
     from airflow.auth.managers.models.resource_details import (
         AccessView,
+        AssetDetails,
         ConfigurationDetails,
         ConnectionDetails,
         DagAccessEntity,
-        DatasetDetails,
         PoolDetails,
         VariableDetails,
     )
     from airflow.cli.cli_config import CLICommand
-    from airflow.www.extensions.init_appbuilder import AirflowAppBuilder
     from airflow.www.security_manager import AirflowSecurityManagerV2
 
 ResourceMethod = Literal["GET", "POST", "PUT", "DELETE", "MENU"]
 
+T = TypeVar("T", bound=BaseUser)
 
-class BaseAuthManager(LoggingMixin):
+
+class BaseAuthManager(Generic[T], LoggingMixin):
     """
     Class to derive in order to implement concrete auth managers.
 
     Auth managers are responsible for any user management related operation such as login, logout, authz, ...
-
-    :param appbuilder: the flask app builder
     """
 
-    def __init__(self, appbuilder: AirflowAppBuilder) -> None:
-        super().__init__()
-        self.appbuilder = appbuilder
-
-    @staticmethod
-    def get_cli_commands() -> list[CLICommand]:
+    def init(self) -> None:
         """
-        Vends CLI commands to be included in Airflow CLI.
+        Run operations when Airflow is initializing.
 
-        Override this method to expose commands via Airflow CLI to manage this auth manager.
+        By default, do nothing.
         """
-        return []
-
-    def get_api_endpoints(self) -> None | Blueprint:
-        """Return API endpoint(s) definition for the auth manager."""
-        return None
 
     def get_user_name(self) -> str:
         """Return the username associated to the user in session."""
@@ -99,8 +90,16 @@ class BaseAuthManager(LoggingMixin):
         return self.get_user_name()
 
     @abstractmethod
-    def get_user(self) -> BaseUser | None:
+    def get_user(self) -> T | None:
         """Return the user associated to the user in session."""
+
+    @abstractmethod
+    def deserialize_user(self, token: dict[str, Any]) -> T:
+        """Create a user object from dict."""
+
+    @abstractmethod
+    def serialize_user(self, user: T) -> dict[str, Any]:
+        """Create a dict from a user object."""
 
     def get_user_id(self) -> str | None:
         """Return the user ID associated to the user in session."""
@@ -112,16 +111,25 @@ class BaseAuthManager(LoggingMixin):
             return str(user_id)
         return None
 
-    def init(self) -> None:
-        """
-        Run operations when Airflow is initializing.
-
-        By default, do nothing.
-        """
-
     @abstractmethod
     def is_logged_in(self) -> bool:
         """Return whether the user is logged in."""
+
+    @abstractmethod
+    def get_url_login(self, **kwargs) -> str:
+        """Return the login page url."""
+
+    @abstractmethod
+    def get_url_logout(self) -> str:
+        """Return the logout page url."""
+
+    def get_url_user_profile(self) -> str | None:
+        """
+        Return the url to a page displaying info about the current user.
+
+        By default, return None.
+        """
+        return None
 
     @abstractmethod
     def is_authorized_configuration(
@@ -129,7 +137,7 @@ class BaseAuthManager(LoggingMixin):
         *,
         method: ResourceMethod,
         details: ConfigurationDetails | None = None,
-        user: BaseUser | None = None,
+        user: T | None = None,
     ) -> bool:
         """
         Return whether the user is authorized to perform a given action on configuration.
@@ -145,7 +153,7 @@ class BaseAuthManager(LoggingMixin):
         *,
         method: ResourceMethod,
         details: ConnectionDetails | None = None,
-        user: BaseUser | None = None,
+        user: T | None = None,
     ) -> bool:
         """
         Return whether the user is authorized to perform a given action on a connection.
@@ -162,7 +170,7 @@ class BaseAuthManager(LoggingMixin):
         method: ResourceMethod,
         access_entity: DagAccessEntity | None = None,
         details: DagDetails | None = None,
-        user: BaseUser | None = None,
+        user: T | None = None,
     ) -> bool:
         """
         Return whether the user is authorized to perform a given action on a DAG.
@@ -175,18 +183,18 @@ class BaseAuthManager(LoggingMixin):
         """
 
     @abstractmethod
-    def is_authorized_dataset(
+    def is_authorized_asset(
         self,
         *,
         method: ResourceMethod,
-        details: DatasetDetails | None = None,
-        user: BaseUser | None = None,
+        details: AssetDetails | None = None,
+        user: T | None = None,
     ) -> bool:
         """
-        Return whether the user is authorized to perform a given action on a dataset.
+        Return whether the user is authorized to perform a given action on an asset.
 
         :param method: the method to perform
-        :param details: optional details about the dataset
+        :param details: optional details about the asset
         :param user: the user to perform the action on. If not provided (or None), it uses the current user
         """
 
@@ -196,7 +204,7 @@ class BaseAuthManager(LoggingMixin):
         *,
         method: ResourceMethod,
         details: PoolDetails | None = None,
-        user: BaseUser | None = None,
+        user: T | None = None,
     ) -> bool:
         """
         Return whether the user is authorized to perform a given action on a pool.
@@ -212,7 +220,7 @@ class BaseAuthManager(LoggingMixin):
         *,
         method: ResourceMethod,
         details: VariableDetails | None = None,
-        user: BaseUser | None = None,
+        user: T | None = None,
     ) -> bool:
         """
         Return whether the user is authorized to perform a given action on a variable.
@@ -227,7 +235,7 @@ class BaseAuthManager(LoggingMixin):
         self,
         *,
         access_view: AccessView,
-        user: BaseUser | None = None,
+        user: T | None = None,
     ) -> bool:
         """
         Return whether the user is authorized to access a read-only state of the installation.
@@ -238,7 +246,7 @@ class BaseAuthManager(LoggingMixin):
 
     @abstractmethod
     def is_authorized_custom_view(
-        self, *, method: ResourceMethod | str, resource_name: str, user: BaseUser | None = None
+        self, *, method: ResourceMethod | str, resource_name: str, user: T | None = None
     ):
         """
         Return whether the user is authorized to perform a given action on a custom view.
@@ -413,22 +421,6 @@ class BaseAuthManager(LoggingMixin):
             accessible_items.append(menu_item_copy)
         return accessible_items
 
-    @abstractmethod
-    def get_url_login(self, **kwargs) -> str:
-        """Return the login page url."""
-
-    @abstractmethod
-    def get_url_logout(self) -> str:
-        """Return the logout page url."""
-
-    def get_url_user_profile(self) -> str | None:
-        """
-        Return the url to a page displaying info about the current user.
-
-        By default, return None.
-        """
-        return None
-
     @cached_property
     def security_manager(self) -> AirflowSecurityManagerV2:
         """
@@ -442,4 +434,29 @@ class BaseAuthManager(LoggingMixin):
         """
         from airflow.www.security_manager import AirflowSecurityManagerV2
 
-        return AirflowSecurityManagerV2(self.appbuilder)
+        return AirflowSecurityManagerV2(getattr(self, "appbuilder"))
+
+    @staticmethod
+    def get_cli_commands() -> list[CLICommand]:
+        """
+        Vends CLI commands to be included in Airflow CLI.
+
+        Override this method to expose commands via Airflow CLI to manage this auth manager.
+        """
+        return []
+
+    def get_api_endpoints(self) -> None | Blueprint:
+        """Return API endpoint(s) definition for the auth manager."""
+        # TODO: Remove this method when legacy Airflow 2 UI is gone
+        return None
+
+    def get_fastapi_app(self) -> FastAPI | None:
+        """
+        Specify a sub FastAPI application specific to the auth manager.
+
+        This sub application, if specified, is mounted in the main FastAPI application.
+        """
+        return None
+
+    def register_views(self) -> None:
+        """Register views specific to the auth manager."""

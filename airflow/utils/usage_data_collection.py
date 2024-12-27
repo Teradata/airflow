@@ -25,6 +25,7 @@ This module is not part of the public interface and is subject to change at any 
 
 from __future__ import annotations
 
+import os
 import platform
 from urllib.parse import urlencode
 
@@ -41,6 +42,10 @@ def usage_data_collection():
 
     # Exclude pre-releases and dev versions
     if _version_is_prerelease(airflow_version):
+        return
+
+    # Exclude CI environments
+    if _is_ci_environ():
         return
 
     scarf_domain = "https://apacheairflow.gateway.scarf.sh/scheduler"
@@ -70,6 +75,26 @@ def _version_is_prerelease(version: str) -> bool:
     return parse(version).is_prerelease
 
 
+def _is_ci_environ() -> bool:
+    """Return True if running in any known CI environment."""
+    if os.getenv("CI") == "true":
+        # Generic CI variable set by many CI systems (GH Actions, Travis, GitLab, CircleCI, Jenkins, Heroku)
+        return True
+
+    # Other CI variables set by specific CI systems
+    ci_env_vars = {
+        "CIRCLECI",  # CircleCI
+        "CODEBUILD_BUILD_ID",  # AWS CodeBuild
+        "GITHUB_ACTIONS",  # GitHub Actions
+        "GITLAB_CI",  # GitLab CI
+        "JENKINS_URL",  # Jenkins
+        "TF_BUILD",  # Azure Pipelines
+        "TRAVIS",  # Travis CI
+    }
+
+    return any(var in os.environ for var in ci_env_vars)
+
+
 def get_platform_info() -> tuple[str, str]:
     return platform.system(), platform.machine()
 
@@ -79,8 +104,8 @@ def get_database_version() -> str:
         return "None"
 
     version_info = settings.engine.dialect.server_version_info
-    # Example: (1, 2, 3) -> "1.2.3"
-    return ".".join(map(str, version_info)) if version_info else "None"
+    # Example: (1, 2, 3) -> "1.2" (cut only major+minor w/o patch)
+    return ".".join(map(str, version_info[0:2])) if version_info else "None"
 
 
 def get_database_name() -> str:
@@ -94,4 +119,5 @@ def get_executor() -> str:
 
 
 def get_python_version() -> str:
-    return platform.python_version()
+    # Cut only major+minor from the python version string (e.g. 3.10.12 --> 3.10)
+    return ".".join(platform.python_version().split(".")[0:2])

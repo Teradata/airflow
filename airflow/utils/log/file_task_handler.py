@@ -19,37 +19,33 @@
 
 from __future__ import annotations
 
-import inspect
 import logging
 import os
-import warnings
+from collections.abc import Iterable
 from contextlib import suppress
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable, Iterable
+from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import urljoin
 
 import pendulum
 
-from airflow.api_internal.internal_api_call import internal_api_call
 from airflow.configuration import conf
-from airflow.exceptions import AirflowException, RemovedInAirflow3Warning
+from airflow.exceptions import AirflowException
 from airflow.executors.executor_loader import ExecutorLoader
 from airflow.utils.context import Context
 from airflow.utils.helpers import parse_template_string, render_template_to_string
 from airflow.utils.log.logging_mixin import SetContextPropagate
-from airflow.utils.log.non_caching_file_handler import NonCachingFileHandler
-from airflow.utils.session import provide_session
+from airflow.utils.log.non_caching_file_handler import NonCachingRotatingFileHandler
+from airflow.utils.session import NEW_SESSION, provide_session
 from airflow.utils.state import State, TaskInstanceState
 
 if TYPE_CHECKING:
     from pendulum import DateTime
 
-    from airflow.models import DagRun
-    from airflow.models.taskinstance import TaskInstance, TaskInstanceKey
-    from airflow.serialization.pydantic.dag_run import DagRunPydantic
-    from airflow.serialization.pydantic.taskinstance import TaskInstancePydantic
+    from airflow.models.taskinstance import TaskInstance
+    from airflow.models.taskinstancekey import TaskInstanceKey
 
 logger = logging.getLogger(__name__)
 
@@ -132,15 +128,15 @@ def _interleave_logs(*logs):
     for log in logs:
         records.extend(_parse_timestamps_in_log_file(log.splitlines()))
     last = None
-    for _, _, v in sorted(
+    for timestamp, _, line in sorted(
         records, key=lambda x: (x[0], x[1]) if x[0] else (pendulum.datetime(2000, 1, 1), x[1])
     ):
-        if v != last:  # dedupe
-            yield v
-        last = v
+        if line != last or not timestamp:  # dedupe
+            yield line
+        last = line
 
 
-def _ensure_ti(ti: TaskInstanceKey | TaskInstance | TaskInstancePydantic, session) -> TaskInstance:
+def _ensure_ti(ti: TaskInstanceKey | TaskInstance, session) -> TaskInstance:
     """
     Given TI | TIKey, return a TI object.
 
@@ -174,7 +170,9 @@ class FileTaskHandler(logging.Handler):
     instance context.  It reads logs from task instance's host machine.
 
     :param base_log_folder: Base log folder to place logs.
-    :param filename_template: template filename string
+    :param max_bytes: max bytes size for the log file
+    :param backup_count: backup file count for the log file
+    :param delay:  default False -> StreamHandler, True -> Handler
     """
 
     trigger_should_wrap = True
@@ -182,19 +180,20 @@ class FileTaskHandler(logging.Handler):
         "Operator inherits from empty operator and thus does not have logs"
     )
 
-    def __init__(self, base_log_folder: str, filename_template: str | None = None):
+    def __init__(
+        self,
+        base_log_folder: str,
+        max_bytes: int = 0,
+        backup_count: int = 0,
+        delay: bool = False,
+    ):
         super().__init__()
         self.handler: logging.Handler | None = None
         self.local_base = base_log_folder
-        if filename_template is not None:
-            warnings.warn(
-                "Passing filename_template to a log handler is deprecated and has no effect",
-                RemovedInAirflow3Warning,
-                # We want to reference the stack that actually instantiates the
-                # handler, not the one that calls super()__init__.
-                stacklevel=(2 if type(self) == FileTaskHandler else 3),
-            )
         self.maintain_propagate: bool = False
+        self.max_bytes = max_bytes
+        self.backup_count = backup_count
+        self.delay = delay
         """
         If true, overrides default behavior of setting propagate=False
 
@@ -223,15 +222,17 @@ class FileTaskHandler(logging.Handler):
             to task logs from a context other than task or trigger run
         """
         local_loc = self._init_file(ti, identifier=identifier)
-        self.handler = NonCachingFileHandler(local_loc, encoding="utf-8")
+        self.handler = NonCachingRotatingFileHandler(
+            local_loc,
+            encoding="utf-8",
+            maxBytes=self.max_bytes,
+            backupCount=self.backup_count,
+            delay=self.delay,
+        )
         if self.formatter:
             self.handler.setFormatter(self.formatter)
         self.handler.setLevel(self.level)
         return SetContextPropagate.MAINTAIN_PROPAGATE if self.maintain_propagate else None
-
-    @cached_property
-    def supports_task_context_logging(self) -> bool:
-        return "identifier" in inspect.signature(self.set_context).parameters
 
     @staticmethod
     def add_triggerer_suffix(full_path, job_id=None):
@@ -261,12 +262,9 @@ class FileTaskHandler(logging.Handler):
         if self.handler:
             self.handler.close()
 
-    @staticmethod
-    @internal_api_call
     @provide_session
-    def _render_filename_db_access(
-        *, ti, try_number: int, session=None
-    ) -> tuple[DagRun | DagRunPydantic, TaskInstance | TaskInstancePydantic, str | None, str | None]:
+    def _render_filename(self, ti: TaskInstance, try_number: int, session=NEW_SESSION) -> str:
+        """Return the worker log filename."""
         ti = _ensure_ti(ti, session)
         dag_run = ti.get_dagrun(session=session)
         template = dag_run.get_log_template(session=session).filename
@@ -279,13 +277,6 @@ class FileTaskHandler(logging.Handler):
                 context = Context(ti=ti, ts=dag_run.logical_date.isoformat())
             context["try_number"] = try_number
             filename = render_template_to_string(jinja_tpl, context)
-        return dag_run, ti, str_tpl, filename
-
-    def _render_filename(
-        self, ti: TaskInstance | TaskInstanceKey | TaskInstancePydantic, try_number: int
-    ) -> str:
-        """Return the worker log filename."""
-        dag_run, ti, str_tpl, filename = self._render_filename_db_access(ti=ti, try_number=try_number)
         if filename:
             return filename
         if str_tpl:
@@ -313,7 +304,7 @@ class FileTaskHandler(logging.Handler):
                 run_id=ti.run_id,
                 data_interval_start=data_interval_start,
                 data_interval_end=data_interval_end,
-                execution_date=ti.get_dagrun().logical_date.isoformat(),
+                logical_date=ti.get_dagrun().logical_date.isoformat(),
                 try_number=try_number,
             )
         else:
@@ -363,28 +354,23 @@ class FileTaskHandler(logging.Handler):
         executor_messages: list[str] = []
         executor_logs: list[str] = []
         served_logs: list[str] = []
-        is_in_running_or_deferred = ti.state in (
-            TaskInstanceState.RUNNING,
-            TaskInstanceState.DEFERRED,
-        )
-        is_up_for_retry = ti.state == TaskInstanceState.UP_FOR_RETRY
         with suppress(NotImplementedError):
             remote_messages, remote_logs = self._read_remote_logs(ti, try_number, metadata)
             messages_list.extend(remote_messages)
+        has_k8s_exec_pod = False
         if ti.state == TaskInstanceState.RUNNING:
             response = self._executor_get_task_log(ti, try_number)
             if response:
                 executor_messages, executor_logs = response
             if executor_messages:
                 messages_list.extend(executor_messages)
+                has_k8s_exec_pod = True
         if not (remote_logs and ti.state not in State.unfinished):
             # when finished, if we have remote logs, no need to check local
             worker_log_full_path = Path(self.local_base, worker_log_rel_path)
             local_messages, local_logs = self._read_from_local(worker_log_full_path)
             messages_list.extend(local_messages)
-        if (is_in_running_or_deferred or is_up_for_retry) and not executor_messages and not remote_logs:
-            # While task instance is still running and we don't have either executor nor remote logs, look for served logs
-            # This is for cases when users have not setup remote logging nor shared drive for logs
+        if ti.state in (TaskInstanceState.RUNNING, TaskInstanceState.DEFERRED) and not has_k8s_exec_pod:
             served_messages, served_logs = self._read_from_logs_server(ti, worker_log_rel_path)
             messages_list.extend(served_messages)
         elif ti.state not in State.unfinished and not (local_logs or remote_logs):
@@ -403,8 +389,15 @@ class FileTaskHandler(logging.Handler):
             )
         )
         log_pos = len(logs)
-        messages = "".join([f"*** {x}\n" for x in messages_list])
-        end_of_log = ti.try_number != try_number or not is_in_running_or_deferred
+        # Log message source details are grouped: they are not relevant for most users and can
+        # distract them from finding the root cause of their errors
+        messages = " INFO - ::group::Log message source details\n"
+        messages += "".join([f"*** {x}\n" for x in messages_list])
+        messages += " INFO - ::endgroup::\n"
+        end_of_log = ti.try_number != try_number or ti.state not in (
+            TaskInstanceState.RUNNING,
+            TaskInstanceState.DEFERRED,
+        )
         if metadata and "log_pos" in metadata:
             previous_chars = metadata["log_pos"]
             logs = logs[previous_chars:]  # Cut off previously passed log test as new tail
@@ -457,7 +450,7 @@ class FileTaskHandler(logging.Handler):
         # try number gets incremented in DB, i.e logs produced the time
         # after cli run and before try_number + 1 in DB will not be displayed.
         if try_number is None:
-            next_try = task_instance.next_try_number
+            next_try = task_instance.try_number + 1
             try_numbers = list(range(1, next_try))
         elif try_number < 1:
             logs = [

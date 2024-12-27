@@ -16,22 +16,24 @@
 # under the License.
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Iterator, NamedTuple, Sequence
-from warnings import warn
+from collections.abc import Iterator, Sequence
+from typing import TYPE_CHECKING, Any, NamedTuple
 
-from airflow.datasets import BaseDataset
+from airflow.sdk.definitions.asset import AssetUniqueKey, BaseAsset
 from airflow.typing_compat import Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from pendulum import DateTime
+    from sqlalchemy.orm import Session
 
-    from airflow.datasets import Dataset
+    from airflow.sdk.definitions.asset import Asset, AssetAlias, AssetRef
+    from airflow.serialization.dag_dependency import DagDependency
     from airflow.utils.types import DagRunType
 
 
-class _NullDataset(BaseDataset):
+class _NullAsset(BaseAsset):
     """
-    Sentinel type that represents "no datasets".
+    Sentinel type that represents "no assets".
 
     This is only implemented to make typing easier in timetables, and not
     expected to be used anywhere else.
@@ -42,19 +44,28 @@ class _NullDataset(BaseDataset):
     def __bool__(self) -> bool:
         return False
 
-    def __or__(self, other: BaseDataset) -> BaseDataset:
+    def __or__(self, other: BaseAsset) -> BaseAsset:
         return NotImplemented
 
-    def __and__(self, other: BaseDataset) -> BaseDataset:
+    def __and__(self, other: BaseAsset) -> BaseAsset:
         return NotImplemented
 
     def as_expression(self) -> Any:
         return None
 
-    def evaluate(self, statuses: dict[str, bool]) -> bool:
+    def evaluate(self, statuses: dict[AssetUniqueKey, bool], *, session: Session | None = None) -> bool:
         return False
 
-    def iter_datasets(self) -> Iterator[tuple[str, Dataset]]:
+    def iter_assets(self) -> Iterator[tuple[AssetUniqueKey, Asset]]:
+        return iter(())
+
+    def iter_asset_aliases(self) -> Iterator[tuple[str, AssetAlias]]:
+        return iter(())
+
+    def iter_asset_refs(self) -> Iterator[AssetRef]:
+        return iter(())
+
+    def iter_dag_dependencies(self, source, target) -> Iterator[DagDependency]:
         return iter(())
 
 
@@ -159,27 +170,16 @@ class Timetable(Protocol):
     like ``schedule=None`` and ``"@once"`` set it to *False*.
     """
 
-    _can_be_scheduled: bool = True
+    can_be_scheduled: bool = True
+    """
+    Whether this timetable can actually schedule runs in an automated manner.
 
-    @property
-    def can_be_scheduled(self):
-        """
-        Whether this timetable can actually schedule runs in an automated manner.
+    This defaults to and should generally be *True* (including non periodic
+    execution types like *@once* and data triggered tables), but
+    ``NullTimetable`` sets this to *False*.
+    """
 
-        This defaults to and should generally be *True* (including non periodic
-        execution types like *@once* and data triggered tables), but
-        ``NullTimetable`` sets this to *False*.
-        """
-        if hasattr(self, "can_run"):
-            warn(
-                'can_run class variable is deprecated. Use "can_be_scheduled" instead.',
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            return self.can_run
-        return self._can_be_scheduled
-
-    run_ordering: Sequence[str] = ("data_interval_end", "execution_date")
+    run_ordering: Sequence[str] = ("data_interval_end", "logical_date")
     """How runs triggered from this timetable should be ordered in UI.
 
     This should be a list of field names on the DAG run object.
@@ -194,11 +194,11 @@ class Timetable(Protocol):
     as for :class:`~airflow.timetable.simple.ContinuousTimetable`.
     """
 
-    dataset_condition: BaseDataset = _NullDataset()
-    """The dataset condition that triggers a DAG using this timetable.
+    asset_condition: BaseAsset = _NullAsset()
+    """The asset condition that triggers a DAG using this timetable.
 
-    If this is not *None*, this should be a dataset, or a combination of, that
-    controls the DAG's dataset triggers.
+    If this is not *None*, this should be an asset, or a combination of, that
+    controls the DAG's asset triggers.
     """
 
     @classmethod

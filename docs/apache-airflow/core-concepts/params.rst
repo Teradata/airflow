@@ -220,7 +220,7 @@ The following features are supported in the Trigger UI Form:
     If no ``title`` is defined the parameter name/key is used instead.
   - The :class:`~airflow.models.param.Param` attribute ``description`` is rendered below an entry field as help text in gray color.
     If you want to provide special formatting or links you need to use the Param attribute
-    ``description_md``. See tutorial DAG ``example_params_ui_tutorial`` for an example.
+    ``description_md``. See tutorial DAG :ref:`Params UI example DAG <params-ui-tutorial>` for an example.
   - The :class:`~airflow.models.param.Param` attribute ``type`` influences how a field is rendered. The following types are supported:
 
       .. list-table::
@@ -232,7 +232,7 @@ The following features are supported in the Trigger UI Form:
           - Example
 
         * - ``string``
-          - Generates a single-line text box to edit text.
+          - Generates a single-line text box or a text area to edit text.
           - * ``minLength``: Minimum text length
             * ``maxLength``: Maximum text length
             * | ``format="date"``: Generate a date-picker
@@ -240,6 +240,7 @@ The following features are supported in the Trigger UI Form:
             * | ``format="date-time"``: Generate a date and
               | time-picker with calendar pop-up
             * ``format="time"``: Generate a time-picker
+            * ``format="multiline"``: Generate a multi-line textarea
             * | ``enum=["a", "b", "c"]``: Generates a
               | drop-down select list for scalar values.
               | As of JSON validation, a value must be
@@ -350,12 +351,37 @@ The following features are supported in the Trigger UI Form:
 - To pre-populate values in the form when publishing a link to the trigger form you can call the trigger URL ``/dags/<dag_name>/trigger``
   and add query parameter to the URL in the form ``name=value``, for example ``/dags/example_params_ui_tutorial/trigger?required_field=some%20text``.
   To pre-define the run id of the DAG run, use the URL parameter ``run_id``.
+- Fields can be required or optional. Typed fields are required by default to ensure they pass JSON schema validation. To make typed fields optional, you must allow the "null" type.
+- Fields without a "section" will be rendered in the default area. Additional sections will be collapsed by default.
 
 .. note::
     If the field is required the default value must be valid according to the schema as well. If the DAG is defined with
     ``schedule=None`` the parameter value validation is made at time of trigger.
 
-For examples also please take a look to two example DAGs provided: ``example_params_trigger_ui`` and ``example_params_ui_tutorial``.
+For examples, please take a look at the two example DAGs provided: :ref:`Params trigger example DAG <params-trigger-ui>` and :ref:`Params UI example DAG <params-ui-tutorial>`.
+
+.. _params-trigger-ui:
+.. exampleinclude:: /../../airflow/example_dags/example_params_trigger_ui.py
+    :language: python
+    :start-after: [START params_trigger]
+    :end-before: [END params_trigger]
+
+
+.. _params-ui-tutorial:
+.. exampleinclude:: /../../airflow/example_dags/example_params_ui_tutorial.py
+    :language: python
+    :start-after: [START section_1]
+    :end-before: [END section_1]
+
+.. exampleinclude:: /../../airflow/example_dags/example_params_ui_tutorial.py
+    :language: python
+    :start-after: [START section_2]
+    :end-before: [END section_2]
+
+.. exampleinclude:: /../../airflow/example_dags/example_params_ui_tutorial.py
+    :language: python
+    :start-after: [START section_3]
+    :end-before: [END section_3]
 
 .. image:: ../img/trigger-dag-tutorial-form.png
 
@@ -363,14 +389,10 @@ For examples also please take a look to two example DAGs provided: ``example_par
     The trigger form can also be forced to be displayed also if no params are defined using the configuration switch
     ``webserver.show_trigger_form_if_no_params``.
 
-.. versionchanged:: 2.8.0
-    By default custom HTML is not allowed to prevent injection of scripts or other malicious HTML code. If you trust your DAG authors
-    you can change the trust level of parameter descriptions to allow raw HTML by setting the configuration entry
-    ``webserver.allow_raw_html_descriptions`` to ``True``. With the default setting all HTML will be displayed as plain text.
-    This relates to the previous feature to enable rich formatting with the attribute ``description_html`` which is now super-seeded
-    with the attribute ``description_md``.
-    Custom form elements using the attribute ``custom_html_form`` allow a DAG author to specify raw HTML form templates. These
-    custom HTML form elements are deprecated as of version 2.8.0.
+.. versionchanged:: 3.0.0
+    By default custom HTML is not allowed to prevent injection of scripts or other malicious HTML code. The previous field named
+    ``description_html`` is now super-seeded with the attribute ``description_md``. ``description_html`` is not supported anymore.
+    Custom form elements using the attribute ``custom_html_form`` was deprecated in version 2.8.0 and support was removed in 3.0.0.
 
 Disabling Runtime Param Modification
 ------------------------------------

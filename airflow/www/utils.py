@@ -18,9 +18,11 @@
 from __future__ import annotations
 
 import json
+import logging
 import textwrap
 import time
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from collections.abc import Sequence
+from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import urlencode
 
 from flask import request, url_for
@@ -35,11 +37,10 @@ from markdown_it import MarkdownIt
 from markupsafe import Markup
 from pygments import highlight, lexers
 from pygments.formatters import HtmlFormatter
-from sqlalchemy import delete, func, select, types
+from sqlalchemy import delete, func, select, tuple_, types
 from sqlalchemy.ext.associationproxy import AssociationProxy
 
-from airflow.configuration import conf
-from airflow.exceptions import RemovedInAirflow3Warning
+from airflow.api_fastapi.app import get_auth_manager
 from airflow.models.dagrun import DagRun
 from airflow.models.dagwarning import DagWarning
 from airflow.models.errors import ParseImportError
@@ -48,9 +49,7 @@ from airflow.utils import timezone
 from airflow.utils.code_utils import get_python_source
 from airflow.utils.helpers import alchemy_to_dict
 from airflow.utils.json import WebEncoder
-from airflow.utils.sqlalchemy import tuple_in_condition
 from airflow.utils.state import State, TaskInstanceState
-from airflow.www.extensions.init_auth_manager import get_auth_manager
 from airflow.www.forms import DateTimeWithTimezoneField
 from airflow.www.widgets import AirflowDateTimePickerWidget
 
@@ -62,10 +61,10 @@ if TYPE_CHECKING:
     from sqlalchemy.sql import Select
     from sqlalchemy.sql.operators import ColumnOperators
 
-    from airflow.www.extensions.init_appbuilder import AirflowAppBuilder
-
 
 TI = TaskInstance
+
+logger = logging.getLogger(__name__)
 
 
 def datetime_to_string(value: DateTime | None) -> str | None:
@@ -89,8 +88,8 @@ def get_mapped_instances(task_instance, session):
 def get_instance_with_map(task_instance, session):
     if task_instance.map_index == -1:
         data = alchemy_to_dict(task_instance)
-        # Fetch execution_date explicitly since it's not a column and a proxy
-        data["execution_date"] = task_instance.execution_date
+        # Fetch logical_date explicitly since it's not a column and a proxy
+        data["logical_date"] = task_instance.logical_date
         return data
     mapped_instances = get_mapped_instances(task_instance, session)
     return get_mapped_summary(task_instance, mapped_instances)
@@ -142,7 +141,7 @@ def get_mapped_summary(parent_instance, task_instances):
         "end_date": group_end_date,
         "mapped_states": mapped_states,
         "try_number": parent_instance.try_number,
-        "execution_date": parent_instance.execution_date,
+        "logical_date": parent_instance.logical_date,
     }
 
 
@@ -163,28 +162,40 @@ def get_dag_run_conf(
 
 def encode_dag_run(
     dag_run: DagRun | None, *, json_encoder: type[json.JSONEncoder] = json.JSONEncoder
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, None | str]:
     if not dag_run:
-        return None
+        return None, None
 
-    dag_run_conf, conf_is_json = get_dag_run_conf(dag_run.conf, json_encoder=json_encoder)
+    try:
+        dag_run_conf, conf_is_json = get_dag_run_conf(dag_run.conf, json_encoder=json_encoder)
+        encoded_dag_run = {
+            "run_id": dag_run.run_id,
+            "queued_at": datetime_to_string(dag_run.queued_at),
+            "start_date": datetime_to_string(dag_run.start_date),
+            "end_date": datetime_to_string(dag_run.end_date),
+            "state": dag_run.state,
+            "logical_date": datetime_to_string(dag_run.logical_date),
+            "data_interval_start": datetime_to_string(dag_run.data_interval_start),
+            "data_interval_end": datetime_to_string(dag_run.data_interval_end),
+            "run_type": dag_run.run_type,
+            "last_scheduling_decision": datetime_to_string(dag_run.last_scheduling_decision),
+            "external_trigger": dag_run.external_trigger,
+            "conf": dag_run_conf,
+            "conf_is_json": conf_is_json,
+            "note": dag_run.note,
+            "triggered_by": dag_run.triggered_by.value,
+        }
+    except ValueError as e:
+        logger.error("Error while encoding the DAG Run!", exc_info=e)
+        if str(e) == "Circular reference detected":
+            return None, (
+                f"Circular reference detected in the DAG Run config (#{dag_run.run_id}). "
+                f"You should check your webserver logs for more details."
+            )
+        else:
+            raise e
 
-    return {
-        "run_id": dag_run.run_id,
-        "queued_at": datetime_to_string(dag_run.queued_at),
-        "start_date": datetime_to_string(dag_run.start_date),
-        "end_date": datetime_to_string(dag_run.end_date),
-        "state": dag_run.state,
-        "execution_date": datetime_to_string(dag_run.execution_date),
-        "data_interval_start": datetime_to_string(dag_run.data_interval_start),
-        "data_interval_end": datetime_to_string(dag_run.data_interval_end),
-        "run_type": dag_run.run_type,
-        "last_scheduling_decision": datetime_to_string(dag_run.last_scheduling_decision),
-        "external_trigger": dag_run.external_trigger,
-        "conf": dag_run_conf,
-        "conf_is_json": conf_is_json,
-        "note": dag_run.note,
-    }
+    return encoded_dag_run, None
 
 
 def check_import_errors(fileloc, session):
@@ -202,34 +213,6 @@ def check_dag_warnings(dag_id, session):
     if dag_warnings:
         for dag_warning in dag_warnings:
             flash(dag_warning.message, "warning")
-
-
-def get_sensitive_variables_fields():
-    import warnings
-
-    from airflow.utils.log.secrets_masker import get_sensitive_variables_fields
-
-    warnings.warn(
-        "This function is deprecated. Please use "
-        "`airflow.utils.log.secrets_masker.get_sensitive_variables_fields`",
-        RemovedInAirflow3Warning,
-        stacklevel=2,
-    )
-    return get_sensitive_variables_fields()
-
-
-def should_hide_value_for_key(key_name):
-    import warnings
-
-    from airflow.utils.log.secrets_masker import should_hide_value_for_key
-
-    warnings.warn(
-        "This function is deprecated. Please use "
-        "`airflow.utils.log.secrets_masker.should_hide_value_for_key`",
-        RemovedInAirflow3Warning,
-        stacklevel=2,
-    )
-    return should_hide_value_for_key(key_name)
 
 
 def get_params(**kwargs):
@@ -418,6 +401,8 @@ def task_instance_link(attr):
     task_id = attr.get("task_id")
     run_id = attr.get("run_id")
     map_index = attr.get("map_index", None)
+    logical_date = attr.get("logical_date") or attr.get("dag_run.logical_date")
+
     if map_index == -1:
         map_index = None
 
@@ -427,6 +412,7 @@ def task_instance_link(attr):
         task_id=task_id,
         dag_run_id=run_id,
         map_index=map_index,
+        logical_date=logical_date,
         tab="graph",
     )
     url_root = url_for(
@@ -436,6 +422,7 @@ def task_instance_link(attr):
         root=task_id,
         dag_run_id=run_id,
         map_index=map_index,
+        logical_date=logical_date,
         tab="graph",
     )
     return Markup(
@@ -515,10 +502,10 @@ def json_f(attr_name):
 def dag_link(attr):
     """Generate a URL to the Graph view for a Dag."""
     dag_id = attr.get("dag_id")
-    execution_date = attr.get("execution_date")
+    logical_date = attr.get("logical_date") or attr.get("dag_run.logical_date")
     if not dag_id:
         return Markup("None")
-    url = url_for("Airflow.graph", dag_id=dag_id, execution_date=execution_date)
+    url = url_for("Airflow.grid", dag_id=dag_id, logical_date=logical_date)
     return Markup('<a href="{}">{}</a>').format(url, dag_id)
 
 
@@ -526,10 +513,15 @@ def dag_run_link(attr):
     """Generate a URL to the Graph view for a DagRun."""
     dag_id = attr.get("dag_id")
     run_id = attr.get("run_id")
+    logical_date = attr.get("logical_date") or attr.get("dag_run.logical_date")
+
+    if not dag_id:
+        return Markup("None")
 
     url = url_for(
         "Airflow.grid",
         dag_id=dag_id,
+        logical_date=logical_date,
         dag_run_id=run_id,
         tab="graph",
     )
@@ -537,14 +529,14 @@ def dag_run_link(attr):
 
 
 def _get_run_ordering_expr(name: str) -> ColumnOperators:
-    expr = DagRun.__table__.columns[name]
+    expr = DagRun.__mapper__.columns[name]
     # Data interval columns are NULL for runs created before 2.3, but SQL's
     # NULL-sorting logic would make those old runs always appear first. In a
     # perfect world we'd want to sort by ``get_run_data_interval()``, but that's
-    # not efficient, so instead the columns are coalesced into execution_date,
+    # not efficient, so instead the columns are coalesced into logical_date,
     # which is good enough in most cases.
     if name in ("data_interval_start", "data_interval_end"):
-        expr = func.coalesce(expr, DagRun.execution_date)
+        expr = func.coalesce(expr, DagRun.logical_date)
     return expr.desc()
 
 
@@ -625,7 +617,7 @@ def json_render(obj, lexer):
 
 def wrapped_markdown(s, css_class="rich_doc"):
     """Convert a Markdown string to HTML."""
-    md = MarkdownIt("gfm-like", {"html": conf.getboolean("webserver", "allow_raw_html_descriptions")})
+    md = MarkdownIt("gfm-like", {"html": False})
     if s is None:
         return None
     s = textwrap.dedent(s)
@@ -773,10 +765,8 @@ class AirflowFilterConverter(fab_sqlafilters.SQLAFilterConverter):
         ),
         # FAB will try to create filters for extendedjson fields even though we
         # exclude them from all UI, so we add this here to make it ignore them.
-        (
-            "is_extendedjson",
-            [],
-        ),
+        ("is_extendedjson", []),
+        ("is_json", []),
         *fab_sqlafilters.SQLAFilterConverter.conversion_table,
     )
 
@@ -841,6 +831,17 @@ class CustomSQLAInterface(SQLAInterface):
             )
         return False
 
+    def is_json(self, col_name):
+        """Check if it is a JSON type."""
+        from sqlalchemy import JSON
+
+        if col_name in self.list_columns:
+            obj = self.list_columns[col_name].type
+            return (
+                isinstance(obj, JSON) or isinstance(obj, types.TypeDecorator) and isinstance(obj.impl, JSON)
+            )
+        return False
+
     def get_col_default(self, col_name: str) -> Any:
         if col_name not in self.list_columns:
             # Handle AssociationProxy etc, or anything that isn't a "real" column
@@ -865,12 +866,7 @@ class DagRunCustomSQLAInterface(CustomSQLAInterface):
 
     def delete_all(self, items: list[Model]) -> bool:
         self.session.execute(
-            delete(TI).where(
-                tuple_in_condition(
-                    (TI.dag_id, TI.run_id),
-                    ((x.dag_id, x.run_id) for x in items),
-                )
-            )
+            delete(TI).where(tuple_(TI.dag_id, TI.run_id).in_((x.dag_id, x.run_id) for x in items))
         )
         return super().delete_all(items)
 
@@ -930,21 +926,16 @@ class UIAlert:
         self.html = html
         self.message = Markup(message) if html else message
 
-    def should_show(self, appbuilder: AirflowAppBuilder) -> bool:
+    def should_show(self) -> bool:
         """
         Determine if the user should see the message.
 
-        The decision is based on the user's role. If ``AUTH_ROLE_PUBLIC`` is
-        set in ``webserver_config.py``, An anonymous user would have the
-        ``AUTH_ROLE_PUBLIC`` role.
+        The decision is based on the user's role.
         """
         if self.roles:
             current_user = get_auth_manager().get_user()
             if current_user is not None:
                 user_roles = {r.name for r in getattr(current_user, "roles", [])}
-            elif "AUTH_ROLE_PUBLIC" in appbuilder.get_app.config:
-                # If the current_user is anonymous, assign AUTH_ROLE_PUBLIC role (if it exists) to them
-                user_roles = {appbuilder.get_app.config["AUTH_ROLE_PUBLIC"]}
             else:
                 # Unable to obtain user role - default to not showing
                 return False

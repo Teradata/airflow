@@ -20,12 +20,11 @@ from __future__ import annotations
 import contextlib
 import copy
 import datetime
-import json
 import logging
+from collections.abc import Generator, Iterable
 from importlib import metadata
-from typing import TYPE_CHECKING, Any, Generator, Iterable, overload
+from typing import TYPE_CHECKING, Any
 
-from dateutil import relativedelta
 from packaging import version
 from sqlalchemy import TIMESTAMP, PickleType, event, nullsfirst, tuple_
 from sqlalchemy.dialects import mysql
@@ -42,6 +41,7 @@ if TYPE_CHECKING:
     from sqlalchemy.sql import ColumnElement, Select
     from sqlalchemy.sql.expression import ColumnOperators
     from sqlalchemy.types import TypeEngine
+
 
 log = logging.getLogger(__name__)
 
@@ -109,6 +109,8 @@ class ExtendedJSON(TypeDecorator):
     impl = Text
 
     cache_ok = True
+
+    should_evaluate_none = True
 
     def load_dialect_impl(self, dialect) -> TypeEngine:
         return dialect.type_descriptor(JSON)
@@ -208,12 +210,8 @@ def ensure_pod_is_valid_after_unpickling(pod: V1Pod) -> V1Pod | None:
     if not isinstance(pod, V1Pod):
         return None
     try:
-        try:
-            from airflow.providers.cncf.kubernetes.pod_generator import PodGenerator
-        except ImportError:
-            from airflow.kubernetes.pre_7_4_0_compatibility.pod_generator import (  # type: ignore[assignment]
-                PodGenerator,
-            )
+        from airflow.providers.cncf.kubernetes.pod_generator import PodGenerator
+
         # now we actually reserialize / deserialize the pod
         pod_dict = sanitize_for_serialization(pod)
         return PodGenerator.deserialize_model_dict(pod_dict)
@@ -293,50 +291,6 @@ class ExecutorConfigType(PickleType):
                 return False
 
 
-class Interval(TypeDecorator):
-    """Base class representing a time interval."""
-
-    impl = Text
-
-    cache_ok = True
-
-    attr_keys = {
-        datetime.timedelta: ("days", "seconds", "microseconds"),
-        relativedelta.relativedelta: (
-            "years",
-            "months",
-            "days",
-            "leapdays",
-            "hours",
-            "minutes",
-            "seconds",
-            "microseconds",
-            "year",
-            "month",
-            "day",
-            "hour",
-            "minute",
-            "second",
-            "microsecond",
-        ),
-    }
-
-    def process_bind_param(self, value, dialect):
-        if isinstance(value, tuple(self.attr_keys)):
-            attrs = {key: getattr(value, key) for key in self.attr_keys[type(value)]}
-            return json.dumps({"type": type(value).__name__, "attrs": attrs})
-        return json.dumps(value)
-
-    def process_result_value(self, value, dialect):
-        if not value:
-            return value
-        data = json.loads(value)
-        if isinstance(data, dict):
-            type_map = {key.__name__: key for key in self.attr_keys}
-            return type_map[data["type"]](**data["attrs"])
-        return data
-
-
 def nulls_first(col, session: Session) -> dict[str, Any]:
     """
     Specify *NULLS FIRST* to the column ordering.
@@ -360,6 +314,7 @@ def with_row_locks(
     *,
     nowait: bool = False,
     skip_locked: bool = False,
+    key_share: bool = True,
     **kwargs,
 ) -> Query:
     """
@@ -377,6 +332,7 @@ def with_row_locks(
     :param session: ORM Session
     :param nowait: If set to True, will pass NOWAIT to supported database backends.
     :param skip_locked: If set to True, will pass SKIP LOCKED to supported database backends.
+    :param key_share: If true, will lock with FOR KEY SHARE UPDATE (at least on postgres).
     :param kwargs: Extra kwargs to pass to with_for_update (of, nowait, skip_locked, etc)
     :return: updated query
     """
@@ -391,6 +347,8 @@ def with_row_locks(
         kwargs["nowait"] = True
     if skip_locked:
         kwargs["skip_locked"] = True
+    if key_share:
+        kwargs["key_share"] = True
     return query.with_for_update(**kwargs)
 
 
@@ -480,22 +438,6 @@ def is_lock_not_available_error(error: OperationalError):
     return False
 
 
-@overload
-def tuple_in_condition(
-    columns: tuple[ColumnElement, ...],
-    collection: Iterable[Any],
-) -> ColumnOperators: ...
-
-
-@overload
-def tuple_in_condition(
-    columns: tuple[ColumnElement, ...],
-    collection: Select,
-    *,
-    session: Session,
-) -> ColumnOperators: ...
-
-
 def tuple_in_condition(
     columns: tuple[ColumnElement, ...],
     collection: Iterable[Any] | Select,
@@ -505,44 +447,12 @@ def tuple_in_condition(
     """
     Generate a tuple-in-collection operator to use in ``.where()``.
 
-    For most SQL backends, this generates a simple ``([col, ...]) IN [condition]``
-    clause.
+    Kept for backward compatibility. Remove when providers drop support for
+    apache-airflow<3.0.
 
     :meta private:
     """
     return tuple_(*columns).in_(collection)
-
-
-@overload
-def tuple_not_in_condition(
-    columns: tuple[ColumnElement, ...],
-    collection: Iterable[Any],
-) -> ColumnOperators: ...
-
-
-@overload
-def tuple_not_in_condition(
-    columns: tuple[ColumnElement, ...],
-    collection: Select,
-    *,
-    session: Session,
-) -> ColumnOperators: ...
-
-
-def tuple_not_in_condition(
-    columns: tuple[ColumnElement, ...],
-    collection: Iterable[Any] | Select,
-    *,
-    session: Session | None = None,
-) -> ColumnOperators:
-    """
-    Generate a tuple-not-in-collection operator to use in ``.where()``.
-
-    This is similar to ``tuple_in_condition`` except generating ``NOT IN``.
-
-    :meta private:
-    """
-    return tuple_(*columns).not_in(collection)
 
 
 def get_orm_mapper():

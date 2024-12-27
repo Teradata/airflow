@@ -23,7 +23,6 @@ import json
 import logging
 import os
 import sys
-import traceback
 import warnings
 from importlib import metadata
 from typing import TYPE_CHECKING, Any, Callable
@@ -31,12 +30,13 @@ from typing import TYPE_CHECKING, Any, Callable
 import pluggy
 from packaging.version import Version
 from sqlalchemy import create_engine, exc, text
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession as SAAsyncSession, create_async_engine
 from sqlalchemy.orm import scoped_session, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from airflow import __version__ as airflow_version, policies
 from airflow.configuration import AIRFLOW_HOME, WEBSERVER_CONFIG, conf  # noqa: F401
-from airflow.exceptions import AirflowInternalRuntimeError, RemovedInAirflow3Warning
+from airflow.exceptions import AirflowInternalRuntimeError
 from airflow.executors import executor_constants
 from airflow.logging_config import configure_logging
 from airflow.utils.orm_event_handlers import setup_event_handlers
@@ -62,6 +62,14 @@ except Exception:
 
 log.info("Configured default timezone %s", TIMEZONE)
 
+if conf.has_option("database", "sql_alchemy_session_maker"):
+    log.info(
+        '[Warning] Found config "sql_alchemy_session_maker", make sure you know what you are doing.\n'
+        "[Warning] Improper configuration of sql_alchemy_session_maker can lead to serious issues, "
+        "including data corruption, unrecoverable application crashes.\n"
+        "[Warning] Please review the SQLAlchemy documentation for detailed guidance on "
+        "proper configuration and best practices."
+    )
 
 HEADER = "\n".join(
     [
@@ -87,8 +95,22 @@ LOGGING_CLASS_PATH: str | None = None
 DONOT_MODIFY_HANDLERS: bool | None = None
 DAGS_FOLDER: str = os.path.expanduser(conf.get_mandatory_value("core", "DAGS_FOLDER"))
 
+AIO_LIBS_MAPPING = {"sqlite": "aiosqlite", "postgresql": "asyncpg", "mysql": "aiomysql"}
+"""
+Mapping of sync scheme to async scheme.
+
+:meta private:
+"""
+
 engine: Engine
 Session: Callable[..., SASession]
+# NonScopedSession creates global sessions and is not safe to use in multi-threaded environment without
+# additional precautions. The only use case is when the session lifecycle needs
+# custom handling. Most of the time we only want one unique thread local session object,
+# this is achieved by the Session factory above.
+NonScopedSession: Callable[..., SASession]
+async_engine: AsyncEngine
+AsyncSession: Callable[..., SAAsyncSession]
 
 # The JSON library to use for DAG Serialization and De-Serialization
 json = json
@@ -108,11 +130,10 @@ STATE_COLORS = {
     "up_for_reschedule": "turquoise",
     "up_for_retry": "gold",
     "upstream_failed": "orange",
-    "shutdown": "blue",
 }
 
 
-@functools.lru_cache(maxsize=None)
+@functools.cache
 def _get_rich_console(file):
     # Delay imports until we need it
     import rich.console
@@ -192,13 +213,25 @@ def load_policy_plugins(pm: pluggy.PluginManager):
     pm.load_setuptools_entrypoints("airflow.policy")
 
 
+def _get_async_conn_uri_from_sync(sync_uri):
+    scheme, rest = sync_uri.split(":", maxsplit=1)
+    scheme = scheme.split("+", maxsplit=1)[0]
+    aiolib = AIO_LIBS_MAPPING.get(scheme)
+    if aiolib:
+        return f"{scheme}+{aiolib}:{rest}"
+    else:
+        return sync_uri
+
+
 def configure_vars():
     """Configure Global Variables from airflow.cfg."""
     global SQL_ALCHEMY_CONN
+    global SQL_ALCHEMY_CONN_ASYNC
     global DAGS_FOLDER
     global PLUGINS_FOLDER
     global DONOT_MODIFY_HANDLERS
     SQL_ALCHEMY_CONN = conf.get("database", "SQL_ALCHEMY_CONN")
+    SQL_ALCHEMY_CONN_ASYNC = _get_async_conn_uri_from_sync(sync_uri=SQL_ALCHEMY_CONN)
 
     DAGS_FOLDER = os.path.expanduser(conf.get("core", "DAGS_FOLDER"))
 
@@ -256,29 +289,22 @@ class SkipDBTestsSession:
     def remove(*args, **kwargs):
         pass
 
-
-class TracebackSession:
-    """
-    Session that throws error when you try to use it.
-
-    Also stores stack at instantiation call site.
-
-    :meta private:
-    """
-
-    def __init__(self):
-        self.traceback = traceback.extract_stack()
-
-    def __getattr__(self, item):
-        raise RuntimeError(
-            "TracebackSession object was used but internal API is enabled. "
-            "You'll need to ensure you are making only RPC calls with this object. "
-            "The stack list below will show where the TracebackSession object was created."
-            + "\n".join(traceback.format_list(self.traceback))
-        )
-
-    def remove(*args, **kwargs):
+    def get_bind(
+        self,
+        mapper=None,
+        clause=None,
+        bind=None,
+        _sa_skip_events=None,
+        _sa_skip_for_implicit_returning=False,
+    ):
         pass
+
+
+AIRFLOW_PATH = os.path.dirname(os.path.dirname(__file__))
+AIRFLOW_TESTS_PATH = os.path.join(AIRFLOW_PATH, "tests")
+AIRFLOW_SETTINGS_PATH = os.path.join(AIRFLOW_PATH, "airflow", "settings.py")
+AIRFLOW_UTILS_SESSION_PATH = os.path.join(AIRFLOW_PATH, "airflow", "utils", "session.py")
+AIRFLOW_MODELS_BASEOPERATOR_PATH = os.path.join(AIRFLOW_PATH, "airflow", "models", "baseoperator.py")
 
 
 def _is_sqlite_db_path_relative(sqla_conn_str: str) -> bool:
@@ -314,13 +340,11 @@ def configure_orm(disable_connection_pool=False, pool_class=None):
 
     global Session
     global engine
-    from airflow.api_internal.internal_api_call import InternalApiConfig
+    global async_engine
+    global AsyncSession
+    global NonScopedSession
 
-    if InternalApiConfig.get_use_internal_api():
-        Session = TracebackSession
-        engine = None
-        return
-    elif os.environ.get("_AIRFLOW_SKIP_DB_TESTS") == "true":
+    if os.environ.get("_AIRFLOW_SKIP_DB_TESTS") == "true":
         # Skip DB initialization in unit tests, if DB tests are skipped
         Session = SkipDBTestsSession
         engine = None
@@ -333,20 +357,39 @@ def configure_orm(disable_connection_pool=False, pool_class=None):
     else:
         connect_args = {}
 
-    engine = create_engine(SQL_ALCHEMY_CONN, connect_args=connect_args, **engine_args, future=True)
+    if SQL_ALCHEMY_CONN.startswith("sqlite"):
+        # FastAPI runs sync endpoints in a separate thread. SQLite does not allow
+        # to use objects created in another threads by default. Allowing that in test
+        # to so the `test` thread and the tested endpoints can use common objects.
+        connect_args["check_same_thread"] = False
 
+    engine = create_engine(SQL_ALCHEMY_CONN, connect_args=connect_args, **engine_args, future=True)
+    async_engine = create_async_engine(SQL_ALCHEMY_CONN_ASYNC, future=True)
+    AsyncSession = sessionmaker(
+        bind=async_engine,
+        autocommit=False,
+        autoflush=False,
+        class_=SAAsyncSession,
+        expire_on_commit=False,
+    )
     mask_secret(engine.url.password)
 
     setup_event_handlers(engine)
 
-    Session = scoped_session(
-        sessionmaker(
-            autocommit=False,
-            autoflush=False,
-            bind=engine,
-            expire_on_commit=False,
-        )
-    )
+    if conf.has_option("database", "sql_alchemy_session_maker"):
+        _session_maker = conf.getimport("database", "sql_alchemy_session_maker")
+    else:
+
+        def _session_maker(_engine):
+            return sessionmaker(
+                autocommit=False,
+                autoflush=False,
+                bind=_engine,
+                expire_on_commit=False,
+            )
+
+    NonScopedSession = _session_maker(engine)
+    Session = scoped_session(NonScopedSession)
 
 
 DEFAULT_ENGINE_ARGS = {
@@ -467,7 +510,15 @@ def configure_adapters():
 
     if SQL_ALCHEMY_CONN.startswith("mysql"):
         try:
-            import MySQLdb.converters
+            try:
+                import MySQLdb.converters
+            except ImportError:
+                raise RuntimeError(
+                    "You do not have `mysqlclient` package installed. "
+                    "Please install it with `pip install mysqlclient` and make sure you have system "
+                    "mysql libraries installed, as well as well as `pkg-config` system package "
+                    "installed in case you see compilation error during installation."
+                )
 
             MySQLdb.converters.conversions[Pendulum] = MySQLdb.converters.DateTime2literal
         except ImportError:
@@ -504,11 +555,8 @@ def configure_action_logging() -> None:
     """Any additional configuration (register callback) for airflow.utils.action_loggers module."""
 
 
-def prepare_syspath():
-    """Ensure certain subfolders of AIRFLOW_HOME are on the classpath."""
-    if DAGS_FOLDER not in sys.path:
-        sys.path.append(DAGS_FOLDER)
-
+def prepare_syspath_for_config_and_plugins():
+    """Update sys.path for the config and plugins directories."""
     # Add ./config/ for loading custom log parsers etc, or
     # airflow_local_settings etc.
     config_path = os.path.join(AIRFLOW_HOME, "config")
@@ -519,28 +567,16 @@ def prepare_syspath():
         sys.path.append(PLUGINS_FOLDER)
 
 
+def prepare_syspath_for_dags_folder():
+    """Update sys.path to include the DAGs folder."""
+    if DAGS_FOLDER not in sys.path:
+        sys.path.append(DAGS_FOLDER)
+
+
 def get_session_lifetime_config():
     """Get session timeout configs and handle outdated configs gracefully."""
     session_lifetime_minutes = conf.get("webserver", "session_lifetime_minutes", fallback=None)
-    session_lifetime_days = conf.get("webserver", "session_lifetime_days", fallback=None)
-    uses_deprecated_lifetime_configs = session_lifetime_days or conf.get(
-        "webserver", "force_log_out_after", fallback=None
-    )
-
     minutes_per_day = 24 * 60
-    default_lifetime_minutes = "43200"
-    if uses_deprecated_lifetime_configs and session_lifetime_minutes == default_lifetime_minutes:
-        warnings.warn(
-            "`session_lifetime_days` option from `[webserver]` section has been "
-            "renamed to `session_lifetime_minutes`. The new option allows to configure "
-            "session lifetime in minutes. The `force_log_out_after` option has been removed "
-            "from `[webserver]` section. Please update your configuration.",
-            category=RemovedInAirflow3Warning,
-            stacklevel=2,
-        )
-        if session_lifetime_days:
-            session_lifetime_minutes = minutes_per_day * int(session_lifetime_days)
-
     if not session_lifetime_minutes:
         session_lifetime_days = 30
         session_lifetime_minutes = minutes_per_day * session_lifetime_days
@@ -572,16 +608,6 @@ def import_local_settings():
         else:
             names = {n for n in airflow_local_settings.__dict__ if not n.startswith("__")}
 
-        if "policy" in names and "task_policy" not in names:
-            warnings.warn(
-                "Using `policy` in airflow_local_settings.py is deprecated. "
-                "Please rename your `policy` to `task_policy`.",
-                RemovedInAirflow3Warning,
-                stacklevel=2,
-            )
-            setattr(airflow_local_settings, "task_policy", airflow_local_settings.policy)
-            names.remove("policy")
-
         plugin_functions = policies.make_plugin_from_local_settings(
             POLICY_PLUGIN_MANAGER, airflow_local_settings, names
         )
@@ -600,12 +626,13 @@ def import_local_settings():
 def initialize():
     """Initialize Airflow with all the settings from this file."""
     configure_vars()
-    prepare_syspath()
+    prepare_syspath_for_config_and_plugins()
     configure_policy_plugin_manager()
     # Load policy plugins _before_ importing airflow_local_settings, as Pluggy uses LIFO and we want anything
     # in airflow_local_settings to take precendec
     load_policy_plugins(POLICY_PLUGIN_MANAGER)
     import_local_settings()
+    prepare_syspath_for_dags_folder()
     global LOGGING_CLASS_PATH
     LOGGING_CLASS_PATH = configure_logging()
     State.state_color.update(STATE_COLORS)
@@ -614,6 +641,9 @@ def initialize():
     # The webservers import this file from models.py with the default settings.
     configure_orm()
     configure_action_logging()
+
+    # mask the sensitive_config_values
+    conf.mask_secrets()
 
     # Run any custom runtime checks that needs to be executed for providers
     run_providers_custom_runtime_checks()
@@ -635,7 +665,6 @@ KILOBYTE = 1024
 MEGABYTE = KILOBYTE * KILOBYTE
 WEB_COLORS = {"LIGHTBLUE": "#4d9de0", "LIGHTORANGE": "#FF9933"}
 
-
 # Updating serialized DAG can not be faster than a minimum interval to reduce database
 # write rate.
 MIN_SERIALIZED_DAG_UPDATE_INTERVAL = conf.getint("core", "min_serialized_dag_update_interval", fallback=30)
@@ -655,10 +684,7 @@ EXECUTE_TASKS_NEW_PYTHON_INTERPRETER = not CAN_FORK or conf.getboolean(
     fallback=False,
 )
 
-ALLOW_FUTURE_EXEC_DATES = conf.getboolean("scheduler", "allow_trigger_in_future", fallback=False)
-
-# Whether or not to check each dagrun against defined SLAs
-CHECK_SLAS = conf.getboolean("core", "check_slas", fallback=True)
+ALLOW_FUTURE_LOGICAL_DATES = conf.getboolean("scheduler", "allow_trigger_in_future", fallback=False)
 
 USE_JOB_SCHEDULE = conf.getboolean("scheduler", "use_job_schedule", fallback=True)
 
@@ -709,13 +735,3 @@ DASHBOARD_UIALERTS: list[UIAlert] = []
 AIRFLOW_MOVED_TABLE_PREFIX = "_airflow_moved"
 
 DAEMON_UMASK: str = conf.get("core", "daemon_umask", fallback="0o077")
-
-# AIP-44: internal_api (experimental)
-# This feature is not complete yet, so we disable it by default.
-_ENABLE_AIP_44: bool = os.environ.get("AIRFLOW_ENABLE_AIP_44", "false").lower() in {
-    "true",
-    "t",
-    "yes",
-    "y",
-    "1",
-}

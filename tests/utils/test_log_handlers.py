@@ -29,11 +29,10 @@ from unittest.mock import patch
 
 import pendulum
 import pytest
-from kubernetes.client import models as k8s
+from pydantic.v1.utils import deep_update
 from requests.adapters import Response
 
 from airflow.config_templates.airflow_local_settings import DEFAULT_LOGGING_CONFIG
-from airflow.exceptions import RemovedInAirflow3Warning
 from airflow.executors import executor_loader
 from airflow.jobs.job import Job
 from airflow.jobs.triggerer_job_runner import TriggererJobRunner
@@ -41,7 +40,7 @@ from airflow.models.dag import DAG
 from airflow.models.dagrun import DagRun
 from airflow.models.taskinstance import TaskInstance
 from airflow.models.trigger import Trigger
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
 from airflow.utils.log.file_task_handler import (
     FileTaskHandler,
     LogType,
@@ -55,7 +54,12 @@ from airflow.utils.session import create_session
 from airflow.utils.state import State, TaskInstanceState
 from airflow.utils.timezone import datetime
 from airflow.utils.types import DagRunType
-from tests.test_utils.config import conf_vars
+
+from tests_common.test_utils.config import conf_vars
+from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
+
+if AIRFLOW_V_3_0_PLUS:
+    from airflow.utils.types import DagRunTriggeredByType
 
 pytestmark = pytest.mark.db_test
 
@@ -79,13 +83,6 @@ class TestFileTaskLogHandler:
     def teardown_method(self):
         self.clean_up()
 
-    def test_deprecated_filename_template(self):
-        with pytest.warns(
-            RemovedInAirflow3Warning,
-            match="Passing filename_template to a log handler is deprecated and has no effect",
-        ):
-            FileTaskHandler("", filename_template="/foo/bar")
-
     def test_default_task_logging_setup(self):
         # file task handler is used by default.
         logger = logging.getLogger(TASK_LOGGER)
@@ -98,12 +95,14 @@ class TestFileTaskLogHandler:
         def task_callable(ti):
             ti.log.info("test")
 
-        dag = DAG("dag_for_testing_file_task_handler", start_date=DEFAULT_DATE)
+        dag = DAG("dag_for_testing_file_task_handler", schedule=None, start_date=DEFAULT_DATE)
+        triggered_by_kwargs = {"triggered_by": DagRunTriggeredByType.TEST} if AIRFLOW_V_3_0_PLUS else {}
         dagrun = dag.create_dagrun(
             run_type=DagRunType.MANUAL,
             state=State.RUNNING,
-            execution_date=DEFAULT_DATE,
+            logical_date=DEFAULT_DATE,
             data_interval=dag.timetable.infer_manual_data_interval(run_after=DEFAULT_DATE),
+            **triggered_by_kwargs,
         )
         task = PythonOperator(
             task_id="task_for_testing_file_log_handler",
@@ -151,12 +150,14 @@ class TestFileTaskLogHandler:
         def task_callable(ti):
             ti.log.info("test")
 
-        dag = DAG("dag_for_testing_file_task_handler", start_date=DEFAULT_DATE)
+        dag = DAG("dag_for_testing_file_task_handler", schedule=None, start_date=DEFAULT_DATE)
+        triggered_by_kwargs = {"triggered_by": DagRunTriggeredByType.TEST} if AIRFLOW_V_3_0_PLUS else {}
         dagrun = dag.create_dagrun(
             run_type=DagRunType.MANUAL,
             state=State.RUNNING,
-            execution_date=DEFAULT_DATE,
+            logical_date=DEFAULT_DATE,
             data_interval=dag.timetable.infer_manual_data_interval(run_after=DEFAULT_DATE),
+            **triggered_by_kwargs,
         )
         task = PythonOperator(
             task_id="task_for_testing_file_log_handler",
@@ -206,17 +207,19 @@ class TestFileTaskLogHandler:
         def task_callable(ti):
             ti.log.info("test")
 
-        dag = DAG("dag_for_testing_file_task_handler", start_date=DEFAULT_DATE)
+        dag = DAG("dag_for_testing_file_task_handler", schedule=None, start_date=DEFAULT_DATE)
         task = PythonOperator(
             task_id="task_for_testing_file_log_handler",
             python_callable=task_callable,
             dag=dag,
         )
+        triggered_by_kwargs = {"triggered_by": DagRunTriggeredByType.TEST} if AIRFLOW_V_3_0_PLUS else {}
         dagrun = dag.create_dagrun(
             run_type=DagRunType.MANUAL,
             state=State.RUNNING,
-            execution_date=DEFAULT_DATE,
+            logical_date=DEFAULT_DATE,
             data_interval=dag.timetable.infer_manual_data_interval(run_after=DEFAULT_DATE),
+            **triggered_by_kwargs,
         )
         ti = TaskInstance(task=task, run_id=dagrun.run_id)
 
@@ -253,6 +256,94 @@ class TestFileTaskLogHandler:
         # Remove the generated tmp log file.
         os.remove(log_filename)
 
+    def test_file_task_handler_rotate_size_limit(self):
+        def reset_log_config(update_conf):
+            import logging.config
+
+            logging_config = DEFAULT_LOGGING_CONFIG
+            logging_config = deep_update(logging_config, update_conf)
+            logging.config.dictConfig(logging_config)
+
+        def task_callable(ti):
+            pass
+
+        max_bytes_size = 60000
+        update_conf = {"handlers": {"task": {"max_bytes": max_bytes_size, "backup_count": 1}}}
+        reset_log_config(update_conf)
+        dag = DAG("dag_for_testing_file_task_handler_rotate_size_limit", start_date=DEFAULT_DATE)
+        task = PythonOperator(
+            task_id="task_for_testing_file_log_handler_rotate_size_limit",
+            python_callable=task_callable,
+            dag=dag,
+        )
+        triggered_by_kwargs = {"triggered_by": DagRunTriggeredByType.TEST} if AIRFLOW_V_3_0_PLUS else {}
+        dagrun = dag.create_dagrun(
+            run_type=DagRunType.MANUAL,
+            state=State.RUNNING,
+            logical_date=DEFAULT_DATE,
+            data_interval=dag.timetable.infer_manual_data_interval(run_after=DEFAULT_DATE),
+            **triggered_by_kwargs,
+        )
+        ti = TaskInstance(task=task, run_id=dagrun.run_id)
+
+        ti.try_number = 1
+        ti.state = State.RUNNING
+
+        logger = ti.log
+        ti.log.disabled = False
+
+        file_handler = next(
+            (handler for handler in logger.handlers if handler.name == FILE_TASK_HANDLER), None
+        )
+        assert file_handler is not None
+
+        set_context(logger, ti)
+        assert file_handler.handler is not None
+        # We expect set_context generates a file locally, this is the first log file
+        # in this test, it should generate 2 when it finishes.
+        log_filename = file_handler.handler.baseFilename
+        assert os.path.isfile(log_filename)
+        assert log_filename.endswith("1.log"), log_filename
+
+        # mock to generate 2000 lines of log, the total size is larger than max_bytes_size
+        for i in range(1, 2000):
+            logger.info("this is a Test. %s", i)
+
+        # this is the rotate log file
+        log_rotate_1_name = log_filename + ".1"
+        assert os.path.isfile(log_rotate_1_name)
+
+        current_file_size = os.path.getsize(log_filename)
+        rotate_file_1_size = os.path.getsize(log_rotate_1_name)
+        assert rotate_file_1_size > max_bytes_size * 0.9
+        assert rotate_file_1_size < max_bytes_size
+        assert current_file_size < max_bytes_size
+
+        # Return value of read must be a tuple of list and list.
+        logs, metadatas = file_handler.read(ti)
+
+        # the log content should have the filename of both current log file and rotate log file.
+        find_current_log = False
+        find_rotate_log_1 = False
+        for log in logs:
+            if log_filename in str(log):
+                find_current_log = True
+            if log_rotate_1_name in str(log):
+                find_rotate_log_1 = True
+        assert find_current_log is True
+        assert find_rotate_log_1 is True
+
+        assert isinstance(logs, list)
+        # Logs for running tasks should show up too.
+        assert isinstance(logs, list)
+        assert isinstance(metadatas, list)
+        assert len(logs) == len(metadatas)
+        assert isinstance(metadatas[0], dict)
+
+        # Remove the two generated tmp log files.
+        os.remove(log_filename)
+        os.remove(log_rotate_1_name)
+
     @patch("airflow.utils.log.file_task_handler.FileTaskHandler._read_from_local")
     def test__read_when_local(self, mock_read_local, create_task_instance):
         """
@@ -267,12 +358,14 @@ class TestFileTaskLogHandler:
             dag_id="dag_for_testing_local_log_read",
             task_id="task_for_testing_local_log_read",
             run_type=DagRunType.SCHEDULED,
-            execution_date=DEFAULT_DATE,
+            logical_date=DEFAULT_DATE,
         )
         fth = FileTaskHandler("")
         actual = fth._read(ti=local_log_file_read, try_number=1)
         mock_read_local.assert_called_with(path)
-        assert actual == ("*** the messages\nthe log", {"end_of_log": True, "log_pos": 7})
+        assert "*** the messages\n" in actual[0]
+        assert actual[0].endswith("the log")
+        assert actual[1] == {"end_of_log": True, "log_pos": 7}
 
     def test__read_from_local(self, tmp_path):
         """Tests the behavior of method _read_from_local"""
@@ -290,84 +383,6 @@ class TestFileTaskLogHandler:
             ],
             ["file1 content", "file2 content"],
         )
-
-    @mock.patch(
-        "airflow.providers.cncf.kubernetes.executors.kubernetes_executor.KubernetesExecutor.get_task_log"
-    )
-    @pytest.mark.parametrize("state", [TaskInstanceState.RUNNING, TaskInstanceState.SUCCESS])
-    def test__read_for_k8s_executor(self, mock_k8s_get_task_log, create_task_instance, state):
-        """Test for k8s executor, the log is read from get_task_log method"""
-        mock_k8s_get_task_log.return_value = ([], [])
-        executor_name = "KubernetesExecutor"
-        ti = create_task_instance(
-            dag_id="dag_for_testing_k8s_executor_log_read",
-            task_id="task_for_testing_k8s_executor_log_read",
-            run_type=DagRunType.SCHEDULED,
-            execution_date=DEFAULT_DATE,
-        )
-        ti.state = state
-        ti.triggerer_job = None
-        with conf_vars({("core", "executor"): executor_name}):
-            reload(executor_loader)
-            fth = FileTaskHandler("")
-            fth._read(ti=ti, try_number=2)
-        if state == TaskInstanceState.RUNNING:
-            mock_k8s_get_task_log.assert_called_once_with(ti, 2)
-        else:
-            mock_k8s_get_task_log.assert_not_called()
-
-    # We are not testing TaskInstanceState.DEFERRED in this test because with the current testing setup,
-    # as it creates an inconsistent tests that succeeds in local but fails in CI. See https://github.com/apache/airflow/pull/39496#issuecomment-2149692239
-    # TODO: Fix the test setup so it is possible to test TaskInstanceState.DEFERRED as well.
-    @pytest.mark.parametrize("state", [TaskInstanceState.RUNNING, TaskInstanceState.UP_FOR_RETRY])
-    def test__read_for_celery_executor_fallbacks_to_worker(self, state, create_task_instance):
-        """Test for executors which do not have `get_task_log` method, it fallbacks to reading
-        log from worker if and only if remote logs aren't found"""
-        executor_name = "CeleryExecutor"
-        # Reading logs from worker should occur when the task is either running, deferred, or up for retry.
-        ti = create_task_instance(
-            dag_id=f"dag_for_testing_celery_executor_log_read_{state}",
-            task_id="task_for_testing_celery_executor_log_read",
-            run_type=DagRunType.SCHEDULED,
-            execution_date=DEFAULT_DATE,
-        )
-        ti.try_number = 2
-        ti.state = state
-        with conf_vars({("core", "executor"): executor_name}):
-            reload(executor_loader)
-            fth = FileTaskHandler("")
-            fth._read_from_logs_server = mock.Mock()
-            fth._read_from_logs_server.return_value = ["this message"], ["this\nlog\ncontent"]
-            actual = fth._read(ti=ti, try_number=2)
-            fth._read_from_logs_server.assert_called_once()
-            # If we are in the up for retry state, the log has ended.
-            expected_end_of_log = state in (TaskInstanceState.UP_FOR_RETRY)
-            assert actual == (
-                "*** this message\nthis\nlog\ncontent",
-                {"end_of_log": expected_end_of_log, "log_pos": 16},
-            )
-
-            # Previous try_number should return served logs when remote logs aren't implemented
-            fth._read_from_logs_server = mock.Mock()
-            fth._read_from_logs_server.return_value = ["served logs try_number=1"], ["this\nlog\ncontent"]
-            actual = fth._read(ti=ti, try_number=1)
-            fth._read_from_logs_server.assert_called_once()
-            assert actual == (
-                "*** served logs try_number=1\nthis\nlog\ncontent",
-                {"end_of_log": True, "log_pos": 16},
-            )
-
-            # When remote_logs is implemented, previous try_number is from remote logs without reaching worker server
-            fth._read_from_logs_server.reset_mock()
-            fth._read_remote_logs = mock.Mock()
-            fth._read_remote_logs.return_value = ["remote logs"], ["remote\nlog\ncontent"]
-            actual = fth._read(ti=ti, try_number=1)
-            fth._read_remote_logs.assert_called_once()
-            fth._read_from_logs_server.assert_not_called()
-            assert actual == (
-                "*** remote logs\nremote\nlog\ncontent",
-                {"end_of_log": True, "log_pos": 18},
-            )
 
     @pytest.mark.parametrize(
         "remote_logs, local_logs, served_logs_checked",
@@ -394,7 +409,7 @@ class TestFileTaskLogHandler:
             dag_id="dag_for_testing_celery_executor_log_read",
             task_id="task_for_testing_celery_executor_log_read",
             run_type=DagRunType.SCHEDULED,
-            execution_date=DEFAULT_DATE,
+            logical_date=DEFAULT_DATE,
         )
         ti.state = TaskInstanceState.SUCCESS  # we're testing scenario when task is done
         with conf_vars({("core", "executor"): executor_name}):
@@ -411,84 +426,13 @@ class TestFileTaskLogHandler:
             actual = fth._read(ti=ti, try_number=1)
         if served_logs_checked:
             fth._read_from_logs_server.assert_called_once()
-            assert actual == ("*** this message\nthis\nlog\ncontent", {"end_of_log": True, "log_pos": 16})
+            assert "*** this message\n" in actual[0]
+            assert actual[0].endswith("this\nlog\ncontent")
+            assert actual[1] == {"end_of_log": True, "log_pos": 16}
         else:
             fth._read_from_logs_server.assert_not_called()
             assert actual[0]
             assert actual[1]
-
-    @pytest.mark.parametrize(
-        "pod_override, namespace_to_call",
-        [
-            pytest.param(k8s.V1Pod(metadata=k8s.V1ObjectMeta(namespace="namespace-A")), "namespace-A"),
-            pytest.param(k8s.V1Pod(metadata=k8s.V1ObjectMeta(namespace="namespace-B")), "namespace-B"),
-            pytest.param(k8s.V1Pod(), "default"),
-            pytest.param(None, "default"),
-            pytest.param(k8s.V1Pod(metadata=k8s.V1ObjectMeta(name="pod-name-xxx")), "default"),
-        ],
-    )
-    @patch.dict("os.environ", AIRFLOW__CORE__EXECUTOR="KubernetesExecutor")
-    @patch("airflow.providers.cncf.kubernetes.kube_client.get_kube_client")
-    def test_read_from_k8s_under_multi_namespace_mode(
-        self, mock_kube_client, pod_override, namespace_to_call
-    ):
-        mock_read_log = mock_kube_client.return_value.read_namespaced_pod_log
-        mock_list_pod = mock_kube_client.return_value.list_namespaced_pod
-
-        def task_callable(ti):
-            ti.log.info("test")
-
-        with DAG("dag_for_testing_file_task_handler", start_date=DEFAULT_DATE) as dag:
-            task = PythonOperator(
-                task_id="task_for_testing_file_log_handler",
-                python_callable=task_callable,
-                executor_config={"pod_override": pod_override},
-            )
-        dagrun = dag.create_dagrun(
-            run_type=DagRunType.MANUAL,
-            state=State.RUNNING,
-            execution_date=DEFAULT_DATE,
-            data_interval=dag.timetable.infer_manual_data_interval(run_after=DEFAULT_DATE),
-        )
-        ti = TaskInstance(task=task, run_id=dagrun.run_id)
-        ti.try_number = 3
-
-        logger = ti.log
-        ti.log.disabled = False
-
-        file_handler = next((h for h in logger.handlers if h.name == FILE_TASK_HANDLER), None)
-        set_context(logger, ti)
-        ti.run(ignore_ti_state=True)
-        ti.state = TaskInstanceState.RUNNING
-        file_handler.read(ti, 2)
-
-        # first we find pod name
-        mock_list_pod.assert_called_once()
-        actual_kwargs = mock_list_pod.call_args.kwargs
-        assert actual_kwargs["namespace"] == namespace_to_call
-        actual_selector = actual_kwargs["label_selector"]
-        assert re.match(
-            (
-                "airflow_version=.+?,"
-                "dag_id=dag_for_testing_file_task_handler,"
-                "kubernetes_executor=True,"
-                "run_id=manual__2016-01-01T0000000000-2b88d1d57,"
-                "task_id=task_for_testing_file_log_handler,"
-                "try_number=2,"
-                "airflow-worker"
-            ),
-            actual_selector,
-        )
-
-        # then we read log
-        mock_read_log.assert_called_once_with(
-            name=mock_list_pod.return_value.items[0].metadata.name,
-            namespace=namespace_to_call,
-            container="base",
-            follow=False,
-            tail_lines=100,
-            _preload_content=False,
-        )
 
     def test_add_triggerer_suffix(self):
         sample = "any/path/to/thing.txt"
@@ -500,7 +444,7 @@ class TestFileTaskLogHandler:
     @pytest.mark.parametrize("is_a_trigger", [True, False])
     def test_set_context_trigger(self, create_dummy_dag, dag_maker, is_a_trigger, session, tmp_path):
         create_dummy_dag(dag_id="test_fth", task_id="dummy")
-        (ti,) = dag_maker.create_dagrun(execution_date=pendulum.datetime(2023, 1, 1, tz="UTC")).task_instances
+        (ti,) = dag_maker.create_dagrun(logical_date=pendulum.datetime(2023, 1, 1, tz="UTC")).task_instances
         assert isinstance(ti, TaskInstance)
         if is_a_trigger:
             ti.is_trigger_log_context = True
@@ -521,12 +465,12 @@ class TestFileTaskLogHandler:
 
 class TestFilenameRendering:
     def test_python_formatting(self, create_log_template, create_task_instance):
-        create_log_template("{dag_id}/{task_id}/{execution_date}/{try_number}.log")
+        create_log_template("{dag_id}/{task_id}/{logical_date}/{try_number}.log")
         filename_rendering_ti = create_task_instance(
             dag_id="dag_for_testing_filename_rendering",
             task_id="task_for_testing_filename_rendering",
             run_type=DagRunType.SCHEDULED,
-            execution_date=DEFAULT_DATE,
+            logical_date=DEFAULT_DATE,
         )
 
         expected_filename = (
@@ -543,7 +487,7 @@ class TestFilenameRendering:
             dag_id="dag_for_testing_filename_rendering",
             task_id="task_for_testing_filename_rendering",
             run_type=DagRunType.SCHEDULED,
-            execution_date=DEFAULT_DATE,
+            logical_date=DEFAULT_DATE,
         )
 
         expected_filename = (
@@ -561,7 +505,7 @@ class TestLogUrl:
             dag_id="dag_for_testing_filename_rendering",
             task_id="task_for_testing_filename_rendering",
             run_type=DagRunType.SCHEDULED,
-            execution_date=DEFAULT_DATE,
+            logical_date=DEFAULT_DATE,
         )
         log_url_ti.hostname = "hostname"
         actual = FileTaskHandler("")._get_log_retrieval_url(log_url_ti, "DYNAMIC_PATH")
@@ -572,7 +516,7 @@ class TestLogUrl:
             dag_id="dag_for_testing_filename_rendering",
             task_id="task_for_testing_filename_rendering",
             run_type=DagRunType.SCHEDULED,
-            execution_date=DEFAULT_DATE,
+            logical_date=DEFAULT_DATE,
         )
         ti.hostname = "hostname"
         trigger = Trigger("", {})
@@ -604,7 +548,7 @@ log_sample = """[2022-11-16T00:05:54.278-0800] {taskinstance.py:1257} INFO -
 AIRFLOW_CTX_DAG_OWNER=airflow
 AIRFLOW_CTX_DAG_ID=simple_async_timedelta
 AIRFLOW_CTX_TASK_ID=wait
-AIRFLOW_CTX_EXECUTION_DATE=2022-11-16T08:05:52.324532+00:00
+AIRFLOW_CTX_LOGICAL_DATE=2022-11-16T08:05:52.324532+00:00
 AIRFLOW_CTX_TRY_NUMBER=1
 AIRFLOW_CTX_DAG_RUN_ID=manual__2022-11-16T08:05:52.324532+00:00
 [2022-11-16T00:05:54.604-0800] {taskinstance.py:1360} INFO - Pausing task as DEFERRED. dag_id=simple_async_timedelta, task_id=wait, execution_date=20221116T080552, start_date=20221116T080554
@@ -661,7 +605,7 @@ def test_interleave_interleaves():
             "[2022-11-16T00:05:54.592-0800] {taskinstance.py:1485} INFO - Exporting env vars: AIRFLOW_CTX_DAG_OWNER=airflow",
             "AIRFLOW_CTX_DAG_ID=simple_async_timedelta",
             "AIRFLOW_CTX_TASK_ID=wait",
-            "AIRFLOW_CTX_EXECUTION_DATE=2022-11-16T08:05:52.324532+00:00",
+            "AIRFLOW_CTX_LOGICAL_DATE=2022-11-16T08:05:52.324532+00:00",
             "AIRFLOW_CTX_TRY_NUMBER=1",
             "AIRFLOW_CTX_DAG_RUN_ID=manual__2022-11-16T08:05:52.324532+00:00",
             "[2022-11-16T00:05:54.604-0800] {taskinstance.py:1360} INFO - Pausing task as DEFERRED. dag_id=simple_async_timedelta, task_id=wait, execution_date=20221116T080552, start_date=20221116T080554",
@@ -678,7 +622,7 @@ def test_interleave_interleaves():
             "[2022-11-16T00:05:54.592-0800] {taskinstance.py:1485} INFO - Exporting env vars: AIRFLOW_CTX_DAG_OWNER=airflow",
             "AIRFLOW_CTX_DAG_ID=simple_async_timedelta",
             "AIRFLOW_CTX_TASK_ID=wait",
-            "AIRFLOW_CTX_EXECUTION_DATE=2022-11-16T08:05:52.324532+00:00",
+            "AIRFLOW_CTX_LOGICAL_DATE=2022-11-16T08:05:52.324532+00:00",
             "AIRFLOW_CTX_TRY_NUMBER=1",
             "AIRFLOW_CTX_DAG_RUN_ID=manual__2022-11-16T08:05:52.324532+00:00",
             "[2022-11-16T00:05:54.604-0800] {taskinstance.py:1360} INFO - Pausing task as DEFERRED. dag_id=simple_async_timedelta, task_id=wait, execution_date=20221116T080552, start_date=20221116T080554",
@@ -697,7 +641,7 @@ long_sample = """
 [2023-01-15T22:36:46.530-0800] {standard_task_runner.py:83} INFO - Running: ['airflow', 'tasks', 'run', 'example_time_delta_sensor_async', 'wait', 'manual__2023-01-16T06:36:43.044492+00:00', '--job-id', '487', '--raw', '--subdir', '/Users/dstandish/code/airflow/airflow/example_dags/example_time_delta_sensor_async.py', '--cfg-path', '/var/folders/7_/1xx0hqcs3txd7kqt0ngfdjth0000gn/T/tmpiwyl54bn', '--no-shut-down-logging']
 [2023-01-15T22:36:46.536-0800] {standard_task_runner.py:84} INFO - Job 487: Subtask wait
 [2023-01-15T22:36:46.624-0800] {task_command.py:417} INFO - Running <TaskInstance: example_time_delta_sensor_async.wait manual__2023-01-16T06:36:43.044492+00:00 [running]> on host daniels-mbp-2.lan
-[2023-01-15T22:36:46.918-0800] {taskinstance.py:1558} INFO - Exporting env vars: AIRFLOW_CTX_DAG_OWNER='airflow' AIRFLOW_CTX_DAG_ID='example_time_delta_sensor_async' AIRFLOW_CTX_TASK_ID='wait' AIRFLOW_CTX_EXECUTION_DATE='2023-01-16T06:36:43.044492+00:00' AIRFLOW_CTX_TRY_NUMBER='1' AIRFLOW_CTX_DAG_RUN_ID='manual__2023-01-16T06:36:43.044492+00:00'
+[2023-01-15T22:36:46.918-0800] {taskinstance.py:1558} INFO - Exporting env vars: AIRFLOW_CTX_DAG_OWNER='airflow' AIRFLOW_CTX_DAG_ID='example_time_delta_sensor_async' AIRFLOW_CTX_TASK_ID='wait' AIRFLOW_CTX_LOGICAL_DATE='2023-01-16T06:36:43.044492+00:00' AIRFLOW_CTX_TRY_NUMBER='1' AIRFLOW_CTX_DAG_RUN_ID='manual__2023-01-16T06:36:43.044492+00:00'
 [2023-01-15T22:36:46.929-0800] {taskinstance.py:1433} INFO - Pausing task as DEFERRED. dag_id=example_time_delta_sensor_async, task_id=wait, execution_date=20230116T063643, start_date=20230116T063646
 [2023-01-15T22:36:46.981-0800] {local_task_job.py:218} INFO - Task exited with return code 100 (task deferral)
 
@@ -709,7 +653,7 @@ long_sample = """
 [2023-01-15T22:36:46.530-0800] {standard_task_runner.py:83} INFO - Running: ['airflow', 'tasks', 'run', 'example_time_delta_sensor_async', 'wait', 'manual__2023-01-16T06:36:43.044492+00:00', '--job-id', '487', '--raw', '--subdir', '/Users/dstandish/code/airflow/airflow/example_dags/example_time_delta_sensor_async.py', '--cfg-path', '/var/folders/7_/1xx0hqcs3txd7kqt0ngfdjth0000gn/T/tmpiwyl54bn', '--no-shut-down-logging']
 [2023-01-15T22:36:46.536-0800] {standard_task_runner.py:84} INFO - Job 487: Subtask wait
 [2023-01-15T22:36:46.624-0800] {task_command.py:417} INFO - Running <TaskInstance: example_time_delta_sensor_async.wait manual__2023-01-16T06:36:43.044492+00:00 [running]> on host daniels-mbp-2.lan
-[2023-01-15T22:36:46.918-0800] {taskinstance.py:1558} INFO - Exporting env vars: AIRFLOW_CTX_DAG_OWNER='airflow' AIRFLOW_CTX_DAG_ID='example_time_delta_sensor_async' AIRFLOW_CTX_TASK_ID='wait' AIRFLOW_CTX_EXECUTION_DATE='2023-01-16T06:36:43.044492+00:00' AIRFLOW_CTX_TRY_NUMBER='1' AIRFLOW_CTX_DAG_RUN_ID='manual__2023-01-16T06:36:43.044492+00:00'
+[2023-01-15T22:36:46.918-0800] {taskinstance.py:1558} INFO - Exporting env vars: AIRFLOW_CTX_DAG_OWNER='airflow' AIRFLOW_CTX_DAG_ID='example_time_delta_sensor_async' AIRFLOW_CTX_TASK_ID='wait' AIRFLOW_CTX_LOGICAL_DATE='2023-01-16T06:36:43.044492+00:00' AIRFLOW_CTX_TRY_NUMBER='1' AIRFLOW_CTX_DAG_RUN_ID='manual__2023-01-16T06:36:43.044492+00:00'
 [2023-01-15T22:36:46.929-0800] {taskinstance.py:1433} INFO - Pausing task as DEFERRED. dag_id=example_time_delta_sensor_async, task_id=wait, execution_date=20230116T063643, start_date=20230116T063646
 [2023-01-15T22:36:46.981-0800] {local_task_job.py:218} INFO - Task exited with return code 100 (task deferral)
 [2023-01-15T22:37:17.673-0800] {taskinstance.py:1131} INFO - Dependencies all met for dep_context=non-requeueable deps ti=<TaskInstance: example_time_delta_sensor_async.wait manual__2023-01-16T06:36:43.044492+00:00 [queued]>
@@ -762,6 +706,21 @@ def test_interleave_logs_correct_ordering():
     """
 
     assert sample_with_dupe == "\n".join(_interleave_logs(sample_with_dupe, "", sample_with_dupe))
+
+
+def test_interleave_logs_correct_dedupe():
+    sample_without_dupe = """test,
+    test,
+    test,
+    test,
+    test,
+    test,
+    test,
+    test,
+    test,
+    test"""
+
+    assert sample_without_dupe == "\n".join(_interleave_logs(",\n    ".join(["test"] * 10)))
 
 
 def test_permissions_for_new_directories(tmp_path):

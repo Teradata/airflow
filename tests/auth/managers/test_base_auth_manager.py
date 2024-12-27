@@ -16,14 +16,14 @@
 # under the License.
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, Mock, patch
 
 import pytest
-from flask import Flask
 from flask_appbuilder.menu import Menu
 
 from airflow.auth.managers.base_auth_manager import BaseAuthManager, ResourceMethod
+from airflow.auth.managers.models.base_user import BaseUser
 from airflow.auth.managers.models.resource_details import (
     ConnectionDetails,
     DagDetails,
@@ -31,21 +31,27 @@ from airflow.auth.managers.models.resource_details import (
     VariableDetails,
 )
 from airflow.exceptions import AirflowException
-from airflow.www.extensions.init_appbuilder import init_appbuilder
-from airflow.www.security_manager import AirflowSecurityManagerV2
 
 if TYPE_CHECKING:
-    from airflow.auth.managers.models.base_user import BaseUser
     from airflow.auth.managers.models.resource_details import (
         AccessView,
+        AssetDetails,
         ConfigurationDetails,
         DagAccessEntity,
-        DatasetDetails,
     )
+    from airflow.www.extensions.init_appbuilder import AirflowAppBuilder
 
 
-class EmptyAuthManager(BaseAuthManager):
+class EmptyAuthManager(BaseAuthManager[BaseUser]):
+    appbuilder: AirflowAppBuilder | None = None
+
     def get_user(self) -> BaseUser:
+        raise NotImplementedError()
+
+    def deserialize_user(self, token: dict[str, Any]) -> BaseUser:
+        raise NotImplementedError()
+
+    def serialize_user(self, user: BaseUser) -> dict[str, Any]:
         raise NotImplementedError()
 
     def is_authorized_configuration(
@@ -76,8 +82,8 @@ class EmptyAuthManager(BaseAuthManager):
     ) -> bool:
         raise NotImplementedError()
 
-    def is_authorized_dataset(
-        self, *, method: ResourceMethod, details: DatasetDetails | None = None, user: BaseUser | None = None
+    def is_authorized_asset(
+        self, *, method: ResourceMethod, details: AssetDetails | None = None, user: BaseUser | None = None
     ) -> bool:
         raise NotImplementedError()
 
@@ -111,14 +117,7 @@ class EmptyAuthManager(BaseAuthManager):
 
 @pytest.fixture
 def auth_manager():
-    return EmptyAuthManager(None)
-
-
-@pytest.fixture
-def auth_manager_with_appbuilder():
-    flask_app = Flask(__name__)
-    appbuilder = init_appbuilder(flask_app)
-    return EmptyAuthManager(appbuilder)
+    return EmptyAuthManager()
 
 
 class TestBaseAuthManager:
@@ -127,6 +126,9 @@ class TestBaseAuthManager:
 
     def test_get_api_endpoints_return_none(self, auth_manager):
         assert auth_manager.get_api_endpoints() is None
+
+    def test_get_fastapi_app_return_none(self, auth_manager):
+        assert auth_manager.get_fastapi_app() is None
 
     def test_get_user_name(self, auth_manager):
         user = Mock()
@@ -238,9 +240,11 @@ class TestBaseAuthManager:
         )
         assert result == expected
 
-    @pytest.mark.db_test
-    def test_security_manager_return_default_security_manager(self, auth_manager_with_appbuilder):
-        assert isinstance(auth_manager_with_appbuilder.security_manager, AirflowSecurityManagerV2)
+    @patch("airflow.www.security_manager.AirflowSecurityManagerV2")
+    def test_security_manager_return_default_security_manager(
+        self, mock_airflow_security_manager, auth_manager
+    ):
+        assert auth_manager.security_manager == mock_airflow_security_manager()
 
     @pytest.mark.parametrize(
         "access_all, access_per_dag, dag_ids, expected",

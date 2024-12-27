@@ -32,6 +32,33 @@ class JobState(str, Enum):
         return self.value
 
 
+class TerminalTIState(str, Enum):
+    """States that a Task Instance can be in that indicate it has reached a terminal state."""
+
+    SUCCESS = "success"
+    FAILED = "failed"
+    SKIPPED = "skipped"  # A user can raise a AirflowSkipException from a task & it will be marked as skipped
+    REMOVED = "removed"
+
+    def __str__(self) -> str:
+        return self.value
+
+
+class IntermediateTIState(str, Enum):
+    """States that a Task Instance can be in that indicate it is not yet in a terminal or running state."""
+
+    SCHEDULED = "scheduled"
+    QUEUED = "queued"
+    RESTARTING = "restarting"
+    UP_FOR_RETRY = "up_for_retry"
+    UP_FOR_RESCHEDULE = "up_for_reschedule"
+    UPSTREAM_FAILED = "upstream_failed"
+    DEFERRED = "deferred"
+
+    def __str__(self) -> str:
+        return self.value
+
+
 class TaskInstanceState(str, Enum):
     """
     All possible states that a Task Instance can be in.
@@ -44,28 +71,20 @@ class TaskInstanceState(str, Enum):
     # Use None instead if need this state.
 
     # Set by the scheduler
-    REMOVED = "removed"  # Task vanished from DAG before it ran
-    SCHEDULED = "scheduled"  # Task should run and will be handed to executor soon
+    REMOVED = TerminalTIState.REMOVED  # Task vanished from DAG before it ran
+    SCHEDULED = IntermediateTIState.SCHEDULED  # Task should run and will be handed to executor soon
 
     # Set by the task instance itself
-    QUEUED = "queued"  # Executor has enqueued the task
+    QUEUED = IntermediateTIState.QUEUED  # Executor has enqueued the task
     RUNNING = "running"  # Task is executing
-    SUCCESS = "success"  # Task completed
-    RESTARTING = "restarting"  # External request to restart (e.g. cleared when running)
-    FAILED = "failed"  # Task errored out
-    UP_FOR_RETRY = "up_for_retry"  # Task failed but has retries left
-    UP_FOR_RESCHEDULE = "up_for_reschedule"  # A waiting `reschedule` sensor
-    UPSTREAM_FAILED = "upstream_failed"  # One or more upstream deps failed
-    SKIPPED = "skipped"  # Skipped by branching or some other mechanism
-    DEFERRED = "deferred"  # Deferrable operator waiting on a trigger
-
-    # Not used anymore, kept for compatibility.
-    # TODO: Remove in Airflow 3.0.
-    SHUTDOWN = "shutdown"
-    """The task instance is being shut down.
-
-    :meta private:
-    """
+    SUCCESS = TerminalTIState.SUCCESS  # Task completed
+    RESTARTING = IntermediateTIState.RESTARTING  # External request to restart (e.g. cleared when running)
+    FAILED = TerminalTIState.FAILED  # Task errored out
+    UP_FOR_RETRY = IntermediateTIState.UP_FOR_RETRY  # Task failed but has retries left
+    UP_FOR_RESCHEDULE = IntermediateTIState.UP_FOR_RESCHEDULE  # A waiting `reschedule` sensor
+    UPSTREAM_FAILED = IntermediateTIState.UPSTREAM_FAILED  # One or more upstream deps failed
+    SKIPPED = TerminalTIState.SKIPPED  # Skipped by branching or some other mechanism
+    DEFERRED = IntermediateTIState.DEFERRED  # Deferrable operator waiting on a trigger
 
     def __str__(self) -> str:
         return self.value
@@ -109,14 +128,6 @@ class State:
     UPSTREAM_FAILED = TaskInstanceState.UPSTREAM_FAILED
     SKIPPED = TaskInstanceState.SKIPPED
     DEFERRED = TaskInstanceState.DEFERRED
-
-    # Not used anymore, kept for compatibility.
-    # TODO: Remove in Airflow 3.0.
-    SHUTDOWN = TaskInstanceState.SHUTDOWN
-    """The task instance is being shut down.
-
-    :meta private:
-    """
 
     finished_dr_states: frozenset[DagRunState] = frozenset([DagRunState.SUCCESS, DagRunState.FAILED])
     unfinished_dr_states: frozenset[DagRunState] = frozenset([DagRunState.QUEUED, DagRunState.RUNNING])
@@ -206,15 +217,6 @@ class State:
     )
     """
     A list of states indicating that a task or dag is a success state.
-    """
-
-    # Kept for compatibility. DO NOT USE.
-    # TODO: Remove in Airflow 3.0.
-    terminating_states = frozenset([TaskInstanceState.SHUTDOWN, TaskInstanceState.RESTARTING])
-    """
-    A list of states indicating that a task has been terminated.
-
-    :meta private:
     """
 
     adoptable_states = frozenset(

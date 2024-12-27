@@ -22,17 +22,17 @@ import logging
 import os
 import smtplib
 import ssl
-import warnings
+from collections.abc import Iterable
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formatdate
-from typing import Any, Iterable
+from typing import Any
 
 import re2
 
 from airflow.configuration import conf
-from airflow.exceptions import AirflowConfigException, AirflowException, RemovedInAirflow3Warning
+from airflow.exceptions import AirflowException
 
 log = logging.getLogger(__name__)
 
@@ -255,17 +255,7 @@ def send_mime_email(
         except AirflowException:
             pass
     if smtp_user is None or smtp_password is None:
-        warnings.warn(
-            "Fetching SMTP credentials from configuration variables will be deprecated in a future "
-            "release. Please set credentials using a connection instead.",
-            RemovedInAirflow3Warning,
-            stacklevel=2,
-        )
-        try:
-            smtp_user = conf.get("smtp", "SMTP_USER")
-            smtp_password = conf.get("smtp", "SMTP_PASSWORD")
-        except AirflowConfigException:
-            log.debug("No user/password found for SMTP, so logging in with no authentication.")
+        log.debug("No user/password found for SMTP, so logging in with no authentication.")
 
     if not dryrun:
         for attempt in range(1, smtp_retry_limit + 1):

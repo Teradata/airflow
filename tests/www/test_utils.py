@@ -28,14 +28,27 @@ import pendulum
 import pytest
 from bs4 import BeautifulSoup
 from flask_appbuilder.models.sqla.filters import get_field_setup_query, set_value_to_type
+from flask_wtf import FlaskForm
 from markupsafe import Markup
 from sqlalchemy.orm import Query
+from wtforms.fields import StringField, TextAreaField
 
 from airflow.models import DagRun
 from airflow.utils import json as utils_json
 from airflow.www import utils
-from airflow.www.utils import CustomSQLAInterface, DagRunCustomSQLAInterface, json_f, wrapped_markdown
-from tests.test_utils.config import conf_vars
+from airflow.www.utils import (
+    CustomSQLAInterface,
+    DagRunCustomSQLAInterface,
+    encode_dag_run,
+    json_f,
+    wrapped_markdown,
+)
+from airflow.www.widgets import AirflowDateTimePickerROWidget, BS3TextAreaROWidget, BS3TextFieldROWidget
+
+from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
+
+if AIRFLOW_V_3_0_PLUS:
+    from airflow.utils.types import DagRunTriggeredByType
 
 
 class TestUtils:
@@ -99,7 +112,7 @@ class TestUtils:
             if node_text == str(current_page + 1):
                 if check_middle:
                     assert mid == i
-                assert "javascript:void(0)" == href_link
+                assert href_link == "javascript:void(0)"
                 assert "active" in item["class"]
             else:
                 assert re.search(r"^\?", href_link), "Link is page-relative"
@@ -129,29 +142,30 @@ class TestUtils:
 
     def test_params_no_values(self):
         """Should return an empty string if no params are passed"""
-        assert "" == utils.get_params()
+        assert utils.get_params() == ""
 
     def test_params_search(self):
-        assert "search=bash_" == utils.get_params(search="bash_")
+        assert utils.get_params(search="bash_") == "search=bash_"
 
     def test_params_none_and_zero(self):
         query_str = utils.get_params(a=0, b=None, c="true")
         # The order won't be consistent, but that doesn't affect behaviour of a browser
         pairs = sorted(query_str.split("&"))
-        assert ["a=0", "c=true"] == pairs
+        assert pairs == ["a=0", "c=true"]
 
     def test_params_all(self):
         query = utils.get_params(tags=["tag1", "tag2"], status="active", page=3, search="bash_")
-        assert {
+        assert parse_qs(query) == {
             "tags": ["tag1", "tag2"],
             "page": ["3"],
             "search": ["bash_"],
             "status": ["active"],
-        } == parse_qs(query)
+        }
 
     def test_params_escape(self):
-        assert "search=%27%3E%22%2F%3E%3Cimg+src%3Dx+onerror%3Dalert%281%29%3E" == utils.get_params(
-            search="'>\"/><img src=x onerror=alert(1)>"
+        assert (
+            utils.get_params(search="'>\"/><img src=x onerror=alert(1)>")
+            == "search=%27%3E%22%2F%3E%3Cimg+src%3Dx+onerror%3Dalert%281%29%3E"
         )
 
     def test_state_token(self):
@@ -220,13 +234,13 @@ class TestUtils:
         with cached_app(testing=True).test_request_context():
             html = str(
                 utils.task_instance_link(
-                    {"dag_id": "<a&1>", "task_id": "<b2>", "map_index": 1, "execution_date": datetime.now()}
+                    {"dag_id": "<a&1>", "task_id": "<b2>", "map_index": 1, "logical_date": datetime.now()}
                 )
             )
 
             html_map_index_none = str(
                 utils.task_instance_link(
-                    {"dag_id": "<a&1>", "task_id": "<b2>", "map_index": -1, "execution_date": datetime.now()}
+                    {"dag_id": "<a&1>", "task_id": "<b2>", "map_index": -1, "logical_date": datetime.now()}
                 )
             )
 
@@ -247,7 +261,7 @@ class TestUtils:
         from airflow.www.app import cached_app
 
         with cached_app(testing=True).test_request_context():
-            html = str(utils.dag_link({"dag_id": "<a&1>", "execution_date": datetime.now()}))
+            html = str(utils.dag_link({"dag_id": "<a&1>", "logical_date": datetime.now()}))
 
         assert "%3Ca%261%3E" in html
         assert "<a&1>" not in html
@@ -269,7 +283,7 @@ class TestUtils:
 
         with cached_app(testing=True).test_request_context():
             html = str(
-                utils.dag_run_link({"dag_id": "<a&1>", "run_id": "<b2>", "execution_date": datetime.now()})
+                utils.dag_run_link({"dag_id": "<a&1>", "run_id": "<b2>", "logical_date": datetime.now()})
             )
 
         assert "%3Ca%261%3E" in html
@@ -291,7 +305,7 @@ class TestAttrRenderer:
 
     def test_python_callable_none(self):
         rendered = self.attr_renderer["python_callable"](None)
-        assert "" == rendered
+        assert rendered == ""
 
     def test_markdown(self):
         markdown = "* foo\n* bar"
@@ -321,7 +335,7 @@ class TestAttrRenderer:
 
     def test_encode_dag_run_none(self):
         no_dag_run_result = utils.encode_dag_run(None)
-        assert no_dag_run_result is None
+        assert no_dag_run_result == (None, None)
 
     def test_json_f_webencoder(self):
         dag_run_conf = {
@@ -344,45 +358,20 @@ class TestAttrRenderer:
         assert formatter(dagrun) == expected_markup
 
 
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
-def test_get_sensitive_variables_fields():
-    with pytest.warns(DeprecationWarning) as warning:
-        result = utils.get_sensitive_variables_fields()
-
-        # assert deprecation warning
-        assert len(warning) == 1
-        assert "This function is deprecated." in str(warning[-1].message)
-
-    from airflow.utils.log.secrets_masker import get_sensitive_variables_fields
-
-    expected_result = get_sensitive_variables_fields()
-    assert result == expected_result
-
-
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
-def test_should_hide_value_for_key():
-    key_name = "key"
-
-    with pytest.warns(DeprecationWarning) as warning:
-        result = utils.should_hide_value_for_key(key_name)
-
-        # assert deprecation warning
-        assert len(warning) == 1
-        assert "This function is deprecated." in str(warning[-1].message)
-
-    from airflow.utils.log.secrets_masker import should_hide_value_for_key
-
-    expected_result = should_hide_value_for_key(key_name)
-    assert result == expected_result
+def create_dag_run_for_markdown():
+    params = dict(run_id="run_id_1", conf={})
+    if AIRFLOW_V_3_0_PLUS:
+        params.update(triggered_by=DagRunTriggeredByType.TEST)
+    return DagRun(**params)
 
 
 class TestWrappedMarkdown:
     def test_wrapped_markdown_with_docstring_curly_braces(self):
         rendered = wrapped_markdown("{braces}", css_class="a_class")
         assert (
-            """<div class="a_class" ><p>{braces}</p>
+            rendered
+            == """<div class="a_class" ><p>{braces}</p>
 </div>"""
-            == rendered
         )
 
     def test_wrapped_markdown_with_some_markdown(self):
@@ -394,10 +383,10 @@ class TestWrappedMarkdown:
         )
 
         assert (
-            """<div class="a_class" ><p><em>italic</em>
+            rendered
+            == """<div class="a_class" ><p><em>italic</em>
 <strong>bold</strong></p>
 </div>"""
-            == rendered
         )
 
     def test_wrapped_markdown_with_table(self):
@@ -410,7 +399,8 @@ class TestWrappedMarkdown:
         )
 
         assert (
-            """<div class="rich_doc" ><table>
+            rendered
+            == """<div class="rich_doc" ><table>
 <thead>
 <tr>
 <th>Job</th>
@@ -425,7 +415,6 @@ class TestWrappedMarkdown:
 </tbody>
 </table>
 </div>"""
-            == rendered
         )
 
     def test_wrapped_markdown_with_indented_lines(self):
@@ -438,9 +427,9 @@ class TestWrappedMarkdown:
         )
 
         assert (
-            """<div class="rich_doc" ><h1>header</h1>\n<p>1st line\n2nd line</p>
+            rendered
+            == """<div class="rich_doc" ><h1>header</h1>\n<p>1st line\n2nd line</p>
 </div>"""
-            == rendered
         )
 
     def test_wrapped_markdown_with_raw_code_block(self):
@@ -459,11 +448,11 @@ class TestWrappedMarkdown:
         )
 
         assert (
-            """<div class="rich_doc" ><h1>Markdown code block</h1>
+            rendered
+            == """<div class="rich_doc" ><h1>Markdown code block</h1>
 <p>Inline <code>code</code> works well.</p>
 <pre><code>Code block\ndoes not\nrespect\nnewlines\n</code></pre>
 </div>"""
-            == rendered
         )
 
     def test_wrapped_markdown_with_nested_list(self):
@@ -477,7 +466,8 @@ class TestWrappedMarkdown:
         )
 
         assert (
-            """<div class="rich_doc" ><h3>Docstring with a code block</h3>
+            rendered
+            == """<div class="rich_doc" ><h3>Docstring with a code block</h3>
 <ul>
 <li>And
 <ul>
@@ -486,56 +476,65 @@ class TestWrappedMarkdown:
 </li>
 </ul>
 </div>"""
-            == rendered
         )
 
-    def test_wrapped_markdown_with_collapsible_section(self):
-        with conf_vars({("webserver", "allow_raw_html_descriptions"): "true"}):
-            rendered = wrapped_markdown(
-                """
-# A collapsible section with markdown
-<details>
-  <summary>Click to expand!</summary>
+    @pytest.mark.parametrize(
+        "html",
+        [
+            "test <code>raw HTML</code>",
+            "hidden <script>alert(1)</script> nuggets.",
+        ],
+    )
+    def test_wrapped_markdown_with_raw_html(self, html):
+        """Ensure that HTML code is not ending-up in markdown but is always escaped."""
+        from markupsafe import escape
 
-  ## Heading
-  1. A numbered
-  2. list
-     * With some
-     * Sub bullets
-</details>
-            """
-            )
+        rendered = wrapped_markdown(html)
+        assert escape(html) in rendered
 
-            assert (
-                """<div class="rich_doc" ><h1>A collapsible section with markdown</h1>
-<details>
-  <summary>Click to expand!</summary>
-<h2>Heading</h2>
-<ol>
-<li>A numbered</li>
-<li>list
-<ul>
-<li>With some</li>
-<li>Sub bullets</li>
-</ul>
-</li>
-</ol>
-</details>
-</div>"""
-                == rendered
-            )
+    @pytest.mark.parametrize(
+        "dag_run,expected_val",
+        [
+            [None, (None, None)],
+            [
+                create_dag_run_for_markdown(),
+                (
+                    {
+                        "conf": None,
+                        "conf_is_json": False,
+                        "data_interval_end": None,
+                        "data_interval_start": None,
+                        "end_date": None,
+                        "logical_date": None,
+                        "external_trigger": None,
+                        "last_scheduling_decision": None,
+                        "note": None,
+                        "queued_at": None,
+                        "run_id": "run_id_1",
+                        "run_type": None,
+                        "start_date": None,
+                        "state": None,
+                        "triggered_by": "test",
+                    },
+                    None,
+                ),
+            ],
+        ],
+    )
+    def test_encode_dag_run(self, dag_run, expected_val):
+        val = encode_dag_run(dag_run)
+        assert val == expected_val
 
-    @pytest.mark.parametrize("allow_html", [False, True])
-    def test_wrapped_markdown_with_raw_html(self, allow_html):
-        with conf_vars({("webserver", "allow_raw_html_descriptions"): str(allow_html)}):
-            HTML = "test <code>raw HTML</code>"
-            rendered = wrapped_markdown(HTML)
-            if allow_html:
-                assert HTML in rendered
-            else:
-                from markupsafe import escape
-
-                assert escape(HTML) in rendered
+    def test_encode_dag_run_circular_reference(self):
+        conf = {}
+        conf["a"] = conf
+        dr = DagRun(run_id="run_id_1", conf=conf)
+        encoded_dr, error = encode_dag_run(dr)
+        assert encoded_dr is None
+        assert error == (
+            f"Circular reference detected in the DAG Run config (#{dr.run_id}). "
+            f"You should check your webserver logs for more details."
+        )
 
 
 class TestFilter:
@@ -617,10 +616,15 @@ def test_dag_run_custom_sqla_interface_delete_no_collateral_damage(dag_maker, se
     interface = DagRunCustomSQLAInterface(obj=DagRun, session=session)
     dag_ids = (f"test_dag_{x}" for x in range(1, 4))
     dates = (pendulum.datetime(2023, 1, x) for x in range(1, 4))
+    triggered_by_kwargs = {"triggered_by": DagRunTriggeredByType.TEST} if AIRFLOW_V_3_0_PLUS else {}
     for dag_id, date in itertools.product(dag_ids, dates):
         with dag_maker(dag_id=dag_id) as dag:
             dag.create_dagrun(
-                execution_date=date, state="running", run_type="scheduled", data_interval=(date, date)
+                logical_date=date,
+                state="running",
+                run_type="scheduled",
+                data_interval=(date, date),
+                **triggered_by_kwargs,
             )
     dag_runs = session.query(DagRun).all()
     assert len(dag_runs) == 9
@@ -654,3 +658,52 @@ def test_dag_run_custom_sqla_interface_delete_no_collateral_damage(dag_maker, se
     assert len(dag_runs) == 6
     assert len(set(x.dag_id for x in dag_runs)) == 3
     assert len(set(x.run_id for x in dag_runs)) == 3
+
+
+@pytest.fixture
+def app():
+    from flask import Flask
+
+    app = Flask(__name__)
+    app.config["WTF_CSRF_ENABLED"] = False
+    app.config["SECRET_KEY"] = "secret"
+    with app.app_context():
+        yield app
+
+
+class TestWidgets:
+    def test_airflow_datetime_picker_ro_widget(self, app):
+        class TestForm(FlaskForm):
+            datetime_field = StringField(widget=AirflowDateTimePickerROWidget())
+
+        form = TestForm()
+        field = form.datetime_field
+
+        html_output = field()
+
+        assert 'readonly="true"' in html_output
+        assert "input-group datetime datetimepicker" in html_output
+
+    def test_bs3_text_field_ro_widget(self, app):
+        class TestForm(FlaskForm):
+            text_field = StringField(widget=BS3TextFieldROWidget())
+
+        form = TestForm()
+        field = form.text_field
+
+        html_output = field()
+
+        assert 'readonly="true"' in html_output
+        assert "form-control" in html_output
+
+    def test_bs3_text_area_ro_widget(self, app):
+        class TestForm(FlaskForm):
+            textarea_field = TextAreaField(widget=BS3TextAreaROWidget())
+
+        form = TestForm()
+        field = form.textarea_field
+
+        html_output = field()
+
+        assert 'readonly="true"' in html_output
+        assert "form-control" in html_output

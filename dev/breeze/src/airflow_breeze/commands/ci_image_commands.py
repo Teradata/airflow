@@ -41,6 +41,7 @@ from airflow_breeze.commands.common_image_options import (
     option_debian_version,
     option_dev_apt_command,
     option_dev_apt_deps,
+    option_disable_airflow_repo_cache,
     option_docker_cache,
     option_image_tag_for_building,
     option_image_tag_for_pulling,
@@ -296,6 +297,7 @@ option_version_suffix_for_pypi_ci = click.option(
 @option_debug_resources
 @option_dev_apt_command
 @option_dev_apt_deps
+@option_disable_airflow_repo_cache
 @option_docker_cache
 @option_docker_host
 @option_dry_run
@@ -339,6 +341,7 @@ def build(
     debug_resources: bool,
     dev_apt_command: str | None,
     dev_apt_deps: str | None,
+    disable_airflow_repo_cache: bool,
     docker_cache: str,
     docker_host: str | None,
     eager_upgrade_additional_requirements: str | None,
@@ -413,6 +416,7 @@ def build(
         debian_version=debian_version,
         dev_apt_command=dev_apt_command,
         dev_apt_deps=dev_apt_deps,
+        disable_airflow_repo_cache=disable_airflow_repo_cache,
         docker_cache=docker_cache,
         docker_host=docker_host,
         eager_upgrade_additional_requirements=eager_upgrade_additional_requirements,
@@ -726,7 +730,7 @@ def should_we_run_the_build(build_ci_params: BuildCiParams) -> bool:
                     get_console().print(
                         f"[info]Please rebase your code to latest {build_ci_params.airflow_branch} "
                         "before continuing.[/]\nCheck this link to find out how "
-                        "https://github.com/apache/airflow/blob/main/contributing-docs/11_working_with_git.rst\n"
+                        "https://github.com/apache/airflow/blob/main/contributing-docs/10_working_with_git.rst\n"
                     )
                     get_console().print("[error]Exiting the process[/]\n")
                     sys.exit(1)

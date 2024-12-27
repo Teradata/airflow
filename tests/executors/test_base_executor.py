@@ -26,10 +26,11 @@ import pendulum
 import pytest
 import time_machine
 
-from airflow.callbacks.callback_requests import CallbackRequest
 from airflow.cli.cli_config import DefaultHelpParser, GroupCommand
 from airflow.cli.cli_parser import AirflowHelpFormatter
 from airflow.executors.base_executor import BaseExecutor, RunningRetryAttemptType
+from airflow.executors.local_executor import LocalExecutor
+from airflow.executors.sequential_executor import SequentialExecutor
 from airflow.models.baseoperator import BaseOperator
 from airflow.models.taskinstance import TaskInstance, TaskInstanceKey
 from airflow.utils import timezone
@@ -40,16 +41,8 @@ def test_supports_sentry():
     assert not BaseExecutor.supports_sentry
 
 
-def test_supports_pickling():
-    assert BaseExecutor.supports_pickling
-
-
 def test_is_local_default_value():
     assert not BaseExecutor.is_local
-
-
-def test_is_single_threaded_default_value():
-    assert not BaseExecutor.is_single_threaded
 
 
 def test_is_production_default_value():
@@ -59,6 +52,11 @@ def test_is_production_default_value():
 def test_infinite_slotspool():
     executor = BaseExecutor(0)
     assert executor.slots_available == sys.maxsize
+
+
+def test_new_exec_no_slots_occupied():
+    executor = BaseExecutor(0)
+    assert executor.slots_occupied == 0
 
 
 def test_get_task_log():
@@ -108,13 +106,14 @@ def test_fail_and_success():
     executor.success(key3, success_state)
 
     assert len(executor.running) == 0
+    assert executor.slots_occupied == 0
     assert len(executor.get_event_buffer()) == 3
 
 
 @mock.patch("airflow.executors.base_executor.BaseExecutor.sync")
 @mock.patch("airflow.executors.base_executor.BaseExecutor.trigger_tasks")
 @mock.patch("airflow.executors.base_executor.Stats.gauge")
-def test_gauge_executor_metrics(mock_stats_gauge, mock_trigger_tasks, mock_sync):
+def test_gauge_executor_metrics_single_executor(mock_stats_gauge, mock_trigger_tasks, mock_sync):
     executor = BaseExecutor()
     executor.heartbeat()
     calls = [
@@ -122,6 +121,50 @@ def test_gauge_executor_metrics(mock_stats_gauge, mock_trigger_tasks, mock_sync)
         mock.call("executor.queued_tasks", value=mock.ANY, tags={"status": "queued", "name": "BaseExecutor"}),
         mock.call(
             "executor.running_tasks", value=mock.ANY, tags={"status": "running", "name": "BaseExecutor"}
+        ),
+    ]
+    mock_stats_gauge.assert_has_calls(calls)
+
+
+@pytest.mark.parametrize(
+    "executor_class, executor_name",
+    [(LocalExecutor, "LocalExecutor"), (SequentialExecutor, "SequentialExecutor")],
+)
+@mock.patch("airflow.executors.local_executor.LocalExecutor.sync")
+@mock.patch("airflow.executors.sequential_executor.SequentialExecutor.sync")
+@mock.patch("airflow.executors.base_executor.BaseExecutor.trigger_tasks")
+@mock.patch("airflow.executors.base_executor.Stats.gauge")
+@mock.patch("airflow.executors.base_executor.ExecutorLoader.get_executor_names")
+def test_gauge_executor_metrics_with_multiple_executors(
+    mock_get_executor_names,
+    mock_stats_gauge,
+    mock_trigger_tasks,
+    mock_sequential_sync,
+    mock_local_sync,
+    executor_class,
+    executor_name,
+):
+    # The names of the executors aren't relevant for this test, so long as a list of length > 1
+    # is returned. This forces the executor to use the multiple executors gauge logic.
+    mock_get_executor_names.return_value = ["Exec1", "Exec2"]
+    executor = executor_class()
+    executor.heartbeat()
+
+    calls = [
+        mock.call(
+            f"executor.open_slots.{executor_name}",
+            value=mock.ANY,
+            tags={"status": "open", "name": executor_name},
+        ),
+        mock.call(
+            f"executor.queued_tasks.{executor_name}",
+            value=mock.ANY,
+            tags={"status": "queued", "name": executor_name},
+        ),
+        mock.call(
+            f"executor.running_tasks.{executor_name}",
+            value=mock.ANY,
+            tags={"status": "running", "name": executor_name},
         ),
     ]
     mock_stats_gauge.assert_has_calls(calls)
@@ -152,7 +195,7 @@ def setup_dagrun(dag_maker):
         BaseOperator(task_id="task_2", start_date=start_date)
         BaseOperator(task_id="task_3", start_date=start_date)
 
-    return dag_maker.create_dagrun(execution_date=date)
+    return dag_maker.create_dagrun(logical_date=date)
 
 
 @pytest.mark.db_test
@@ -168,9 +211,12 @@ def enqueue_tasks(executor, dagrun):
         executor.queue_command(task_instance, ["airflow"])
 
 
-def setup_trigger_tasks(dag_maker):
+def setup_trigger_tasks(dag_maker, parallelism=None):
     dagrun = setup_dagrun(dag_maker)
-    executor = BaseExecutor()
+    if parallelism:
+        executor = BaseExecutor(parallelism=parallelism)
+    else:
+        executor = BaseExecutor()
     executor.execute_async = mock.Mock()
     enqueue_tasks(executor, dagrun)
     return executor, dagrun
@@ -179,8 +225,21 @@ def setup_trigger_tasks(dag_maker):
 @pytest.mark.db_test
 @pytest.mark.parametrize("open_slots", [1, 2, 3])
 def test_trigger_queued_tasks(dag_maker, open_slots):
-    executor, _ = setup_trigger_tasks(dag_maker)
+    executor_parallelism = 10
+    executor, dagrun = setup_trigger_tasks(dag_maker, executor_parallelism)
+    num_tasks = len(dagrun.task_instances)
+
+    # All tasks are queued in setup method
+    assert executor.slots_occupied == num_tasks
+    assert executor.slots_available == executor_parallelism - num_tasks
+    assert len(executor.queued_tasks) == num_tasks
+    assert len(executor.running) == 0
     executor.trigger_tasks(open_slots)
+    assert executor.slots_available == executor_parallelism - num_tasks
+    assert executor.slots_occupied == num_tasks
+    assert len(executor.queued_tasks) == num_tasks - open_slots
+    # Only open_slots number of tasks are allowed through to running
+    assert len(executor.running) == open_slots
     assert executor.execute_async.call_count == open_slots
 
 
@@ -292,14 +351,6 @@ def test_empty_airflow_tasks_run_command(generate_command_mock, dag_maker):
     assert dag_id is None, task_id is None
 
 
-@pytest.mark.db_test
-def test_deprecate_validate_api(dag_maker):
-    dagrun = setup_dagrun(dag_maker)
-    tis = dagrun.task_instances
-    with pytest.warns(DeprecationWarning):
-        BaseExecutor.validate_command(tis[0].command_as_list())
-
-
 def test_debug_dump(caplog):
     executor = BaseExecutor()
     with caplog.at_level(logging.INFO):
@@ -310,10 +361,9 @@ def test_debug_dump(caplog):
 
 
 def test_base_executor_cannot_send_callback():
-    cbr = CallbackRequest("some_file_path_for_callback")
     executor = BaseExecutor()
     with pytest.raises(ValueError):
-        executor.send_callback(cbr)
+        executor.send_callback(mock.Mock())
 
 
 def test_parser_and_formatter_class():

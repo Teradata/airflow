@@ -18,9 +18,9 @@ from __future__ import annotations
 
 import functools
 import logging
-import warnings
+from collections.abc import Sequence
 from functools import wraps
-from typing import TYPE_CHECKING, Callable, Sequence, TypeVar, cast
+from typing import TYPE_CHECKING, Callable, TypeVar, cast
 
 from flask import flash, redirect, render_template, request, url_for
 from flask_appbuilder._compat import as_unicode
@@ -30,6 +30,7 @@ from flask_appbuilder.const import (
     PERMISSION_PREFIX,
 )
 
+from airflow.api_fastapi.app import get_auth_manager
 from airflow.auth.managers.models.resource_details import (
     AccessView,
     ConnectionDetails,
@@ -39,9 +40,7 @@ from airflow.auth.managers.models.resource_details import (
     VariableDetails,
 )
 from airflow.configuration import conf
-from airflow.exceptions import RemovedInAirflow3Warning
 from airflow.utils.net import get_hostname
-from airflow.www.extensions.init_auth_manager import get_auth_manager
 
 if TYPE_CHECKING:
     from airflow.auth.managers.base_auth_manager import ResourceMethod
@@ -51,7 +50,7 @@ if TYPE_CHECKING:
         IsAuthorizedPoolRequest,
         IsAuthorizedVariableRequest,
     )
-    from airflow.models import DagRun, Pool, SlaMiss, TaskInstance, Variable
+    from airflow.models import DagRun, Pool, TaskInstance, Variable
     from airflow.models.connection import Connection
     from airflow.models.xcom import BaseXCom
 
@@ -62,28 +61,6 @@ log = logging.getLogger(__name__)
 
 def get_access_denied_message():
     return conf.get("webserver", "access_denied_message")
-
-
-def has_access(permissions: Sequence[tuple[str, str]] | None = None) -> Callable[[T], T]:
-    """
-    Check current user's permissions against required permissions.
-
-    Deprecated. Do not use this decorator, use one of the decorator `has_access_*` defined in
-    airflow/www/auth.py instead.
-    This decorator will only work with FAB authentication and not with other auth providers.
-
-    This decorator is widely used in user plugins, do not remove it. See
-    https://github.com/apache/airflow/pull/33213#discussion_r1346287224
-    """
-    warnings.warn(
-        "The 'has_access' decorator is deprecated. Please use one of the decorator `has_access_*`"
-        "defined in airflow/www/auth.py instead.",
-        RemovedInAirflow3Warning,
-        stacklevel=2,
-    )
-    from airflow.providers.fab.auth_manager.decorators.auth import _has_access_fab
-
-    return _has_access_fab(permissions)
 
 
 def has_access_with_pk(f):
@@ -263,7 +240,7 @@ def has_access_dag_entities(method: ResourceMethod, access_entity: DagAccessEnti
     def has_access_decorator(func: T):
         @wraps(func)
         def decorated(*args, **kwargs):
-            items: set[SlaMiss | BaseXCom | DagRun | TaskInstance] = set(args[1])
+            items: set[BaseXCom | DagRun | TaskInstance] = set(args[1])
             requests: Sequence[IsAuthorizedDagRequest] = [
                 {
                     "method": method,
@@ -286,9 +263,9 @@ def has_access_dag_entities(method: ResourceMethod, access_entity: DagAccessEnti
     return has_access_decorator
 
 
-def has_access_dataset(method: ResourceMethod) -> Callable[[T], T]:
-    """Check current user's permissions against required permissions for datasets."""
-    return _has_access_no_details(lambda: get_auth_manager().is_authorized_dataset(method=method))
+def has_access_asset(method: ResourceMethod) -> Callable[[T], T]:
+    """Check current user's permissions against required permissions for assets."""
+    return _has_access_no_details(lambda: get_auth_manager().is_authorized_asset(method=method))
 
 
 def has_access_pool(method: ResourceMethod) -> Callable[[T], T]:

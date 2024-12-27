@@ -28,9 +28,9 @@ from unittest import mock
 import pytest
 
 from airflow.configuration import conf
-from airflow.exceptions import RemovedInAirflow3Warning
 from airflow.utils import email
-from tests.test_utils.config import conf_vars
+
+from tests_common.test_utils.config import conf_vars
 
 EMAILS = ["test1@example.com", "test2@example.com"]
 
@@ -164,11 +164,11 @@ class TestEmailSmtp:
         assert mock_send_mime.called
         _, call_args = mock_send_mime.call_args
         assert conf.get("smtp", "SMTP_MAIL_FROM") == call_args["e_from"]
-        assert ["to"] == call_args["e_to"]
+        assert call_args["e_to"] == ["to"]
         msg = call_args["mime_msg"]
-        assert "subject" == msg["Subject"]
+        assert msg["Subject"] == "subject"
         assert conf.get("smtp", "SMTP_MAIL_FROM") == msg["From"]
-        assert 2 == len(msg.get_payload())
+        assert len(msg.get_payload()) == 2
         filename = f'attachment; filename="{path.name}"'
         assert filename == msg.get_payload()[-1].get("Content-Disposition")
         mimeapp = MIMEApplication("attachment")
@@ -199,11 +199,11 @@ class TestEmailSmtp:
         assert mock_send_mime.called
         _, call_args = mock_send_mime.call_args
         assert conf.get("smtp", "SMTP_MAIL_FROM") == call_args["e_from"]
-        assert ["to", "cc", "bcc"] == call_args["e_to"]
+        assert call_args["e_to"] == ["to", "cc", "bcc"]
         msg = call_args["mime_msg"]
-        assert "subject" == msg["Subject"]
+        assert msg["Subject"] == "subject"
         assert conf.get("smtp", "SMTP_MAIL_FROM") == msg["From"]
-        assert 2 == len(msg.get_payload())
+        assert len(msg.get_payload()) == 2
         assert f'attachment; filename="{path.name}"' == msg.get_payload()[-1].get("Content-Disposition")
         mimeapp = MIMEApplication("attachment")
         assert mimeapp.get_payload() == msg.get_payload()[-1].get_payload()
@@ -215,11 +215,7 @@ class TestEmailSmtp:
         monkeypatch.delenv("AIRFLOW_CONN_SMTP_DEFAULT", raising=False)
         mock_smtp.return_value = mock.Mock()
         msg = MIMEMultipart()
-        with pytest.warns(
-            RemovedInAirflow3Warning,
-            match="Fetching SMTP credentials from configuration variables.*deprecated",
-        ):
-            email.send_mime_email("from", "to", msg, dryrun=False)
+        email.send_mime_email("from", "to", msg, dryrun=False)
         mock_smtp.assert_called_once_with(
             host=conf.get("smtp", "SMTP_HOST"),
             port=conf.getint("smtp", "SMTP_PORT"),
@@ -227,10 +223,6 @@ class TestEmailSmtp:
         )
         assert not mock_smtp_ssl.called
         assert mock_smtp.return_value.starttls.called
-        mock_smtp.return_value.login.assert_called_once_with(
-            conf.get("smtp", "SMTP_USER"),
-            conf.get("smtp", "SMTP_PASSWORD"),
-        )
         mock_smtp.return_value.sendmail.assert_called_once_with("from", "to", msg.as_string())
         assert mock_smtp.return_value.quit.called
 

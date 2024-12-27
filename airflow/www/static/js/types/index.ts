@@ -54,9 +54,9 @@ interface Dag {
 
 interface DagRun {
   runId: string;
-  runType: "manual" | "backfill" | "scheduled" | "dataset_triggered";
+  runType: "manual" | "backfill" | "scheduled" | "asset_triggered";
   state: RunState;
-  executionDate: string;
+  logicalDate: string;
   dataIntervalStart: string;
   dataIntervalEnd: string;
   queuedAt: string | null;
@@ -104,16 +104,12 @@ interface Task {
   extraLinks?: string[];
   isMapped?: boolean;
   operator?: string;
-  hasOutletDatasets?: boolean;
+  hasOutletAssets?: boolean;
   triggerRule?: API.TriggerRule;
   setupTeardownType?: "setup" | "teardown";
 }
 
-type RunOrdering = (
-  | "dataIntervalStart"
-  | "executionDate"
-  | "dataIntervalEnd"
-)[];
+type RunOrdering = ("dataIntervalStart" | "logicalDate" | "dataIntervalEnd")[];
 
 export interface MidEdge {
   id: string;
@@ -133,7 +129,14 @@ interface DepNode {
   id: string;
   value: {
     id?: string;
-    class: "dag" | "dataset" | "trigger" | "sensor";
+    class:
+      | "dag"
+      | "asset"
+      | "trigger"
+      | "sensor"
+      | "or-gate"
+      | "and-gate"
+      | "asset-alias";
     label: string;
     rx?: number;
     ry?: number;
@@ -167,7 +170,7 @@ export interface EdgeData {
     isSetupTeardown?: boolean;
     parentNode?: string;
     isZoomedOut?: boolean;
-    isSourceDataset?: boolean;
+    isSourceAsset?: boolean;
   };
 }
 
@@ -183,11 +186,11 @@ export interface WebserverEdge {
   targetId: string;
   isSetupTeardown?: boolean;
   parentNode?: string;
-  isSourceDataset?: boolean;
+  isSourceAsset?: boolean;
 }
 
-interface DatasetListItem extends API.Dataset {
-  lastDatasetUpdate: string | null;
+interface AssetListItem extends API.Asset {
+  lastAssetUpdate: string | null;
   totalUpdates: number;
 }
 
@@ -221,7 +224,7 @@ export type {
   API,
   Dag,
   DagRun,
-  DatasetListItem,
+  AssetListItem,
   DepEdge,
   DepNode,
   HistoricalMetricsData,

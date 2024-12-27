@@ -24,16 +24,24 @@ on:  # yamllint disable-line rule:truthy
         description: "The array of labels (in json form) determining default runner used for the build."
         required: true
         type: string
+      default-branch:
+        description: "The default branch for the repository"
+        required: true
+        type: string
+      test-groups:
+        description: "The json representing list of test test groups to run"
+        required: true
+        type: string
       image-tag:
         description: "Tag to set for the image"
         required: true
         type: string
-      parallel-test-types-list-as-string:
-        description: "The list of parallel test types to run separated by spaces"
+      core-test-types-list-as-string:
+        description: "The list of core test types to run separated by spaces"
         required: true
         type: string
-      separate-test-types-list-as-string:
-        description: "The list of separate provider test types to run separated by spaces"
+      providers-test-types-list-as-string:
+        description: "The list of providers test types to run separated by spaces"
         required: true
         type: string
       run-coverage:
@@ -42,6 +50,10 @@ on:  # yamllint disable-line rule:truthy
         type: string
       default-python-version:
         description: "Which version of python should be used by default"
+        required: true
+        type: string
+      excluded-providers-as-string:
+        description: "Excluded providers (per Python version) as json string"
         required: true
         type: string
       python-versions:
@@ -60,10 +72,15 @@ on:  # yamllint disable-line rule:truthy
         description: "Whether to upgrade to newer dependencies or not (true/false)"
         required: true
         type: string
+      include-success-outputs:
+        description: "Whether to include success outputs or not (true/false)"
+        required: true
+        type: string
       debug-resources:
         description: "Whether to debug resources or not (true/false)"
         required: true
         type: string
+
 jobs:
   tests-min-sqlalchemy:
     name: "Min SQLAlchemy test"
@@ -77,13 +94,15 @@ jobs:
       downgrade-sqlalchemy: "true"
       test-name: "MinSQLAlchemy-Postgres"
       test-scope: "DB"
+      test-groups: ${{ inputs.test-groups }}
       backend: "postgres"
       image-tag: ${{ inputs.image-tag }}
       python-versions: "['${{ inputs.default-python-version }}']"
       backend-versions: "['${{ inputs.default-postgres-version }}']"
+      excluded-providers-as-string: ${{ inputs.excluded-providers-as-string }}
       excludes: "[]"
-      parallel-test-types-list-as-string: ${{ inputs.parallel-test-types-list-as-string }}
-      include-success-outputs: ${{ needs.build-info.outputs.include-success-outputs }}
+      core-test-types-list-as-string: ${{ inputs.core-test-types-list-as-string }}
+      providers-test-types-list-as-string: ${{ inputs.providers-test-types-list-as-string }}
       run-coverage: ${{ inputs.run-coverage }}
       debug-resources: ${{ inputs.debug-resources }}
 
@@ -99,57 +118,16 @@ jobs:
       upgrade-boto: "true"
       test-name: "LatestBoto-Postgres"
       test-scope: "All"
+      test-groups: ${{ inputs.test-groups }}
       backend: "postgres"
       image-tag: ${{ inputs.image-tag }}
       python-versions: "['${{ inputs.default-python-version }}']"
       backend-versions: "['${{ inputs.default-postgres-version }}']"
+      excluded-providers-as-string: ${{ inputs.excluded-providers-as-string }}
       excludes: "[]"
-      parallel-test-types-list-as-string: ${{ inputs.parallel-test-types-list-as-string }}
-      include-success-outputs: ${{ needs.build-info.outputs.include-success-outputs }}
-      run-coverage: ${{ inputs.run-coverage }}
-      debug-resources: ${{ inputs.debug-resources }}
-
-  tests-pydantic-v1:
-    name: "Pydantic v1 test"
-    uses: ./.github/workflows/run-unit-tests.yml
-    permissions:
-      contents: read
-      packages: read
-    secrets: inherit
-    with:
-      runs-on-as-json-default: ${{ inputs.runs-on-as-json-default }}
-      pydantic: "v1"
-      test-name: "Pydantic-V1-Postgres"
-      test-scope: "All"
-      backend: "postgres"
-      image-tag: ${{ inputs.image-tag }}
-      python-versions: "['${{ inputs.default-python-version }}']"
-      backend-versions: "['${{ inputs.default-postgres-version }}']"
-      excludes: "[]"
-      parallel-test-types-list-as-string: ${{ inputs.parallel-test-types-list-as-string }}
-      include-success-outputs: ${{ needs.build-info.outputs.include-success-outputs }}
-      run-coverage: ${{ inputs.run-coverage }}
-      debug-resources: ${{ inputs.debug-resources }}
-
-  tests-pydantic-none:
-    name: "Pydantic removed test"
-    uses: ./.github/workflows/run-unit-tests.yml
-    permissions:
-      contents: read
-      packages: read
-    secrets: inherit
-    with:
-      runs-on-as-json-default: ${{ inputs.runs-on-as-json-default }}
-      pydantic: "none"
-      test-name: "Pydantic-Removed-Postgres"
-      test-scope: "All"
-      backend: "postgres"
-      image-tag: ${{ inputs.image-tag }}
-      python-versions: "['${{ inputs.default-python-version }}']"
-      backend-versions: "['${{ inputs.default-postgres-version }}']"
-      excludes: "[]"
-      parallel-test-types-list-as-string: ${{ inputs.parallel-test-types-list-as-string }}
-      include-success-outputs: ${{ needs.build-info.outputs.include-success-outputs }}
+      core-test-types-list-as-string: ${{ inputs.core-test-types-list-as-string }}
+      providers-test-types-list-as-string: ${{ inputs.providers-test-types-list-as-string }}
+      include-success-outputs: ${{ inputs.include-success-outputs }}
       run-coverage: ${{ inputs.run-coverage }}
       debug-resources: ${{ inputs.debug-resources }}
 
@@ -165,60 +143,18 @@ jobs:
       downgrade-pendulum: "true"
       test-name: "Pendulum2-Postgres"
       test-scope: "All"
+      test-groups: ${{ inputs.test-groups }}
       backend: "postgres"
       image-tag: ${{ inputs.image-tag }}
       python-versions: "['${{ inputs.default-python-version }}']"
       backend-versions: "['${{ inputs.default-postgres-version }}']"
+      excluded-providers-as-string: ${{ inputs.excluded-providers-as-string }}
       excludes: "[]"
-      parallel-test-types-list-as-string: ${{ inputs.parallel-test-types-list-as-string }}
-      include-success-outputs: ${{ needs.build-info.outputs.include-success-outputs }}
+      core-test-types-list-as-string: ${{ inputs.core-test-types-list-as-string }}
+      providers-test-types-list-as-string: ${{ inputs.providers-test-types-list-as-string }}
+      include-success-outputs: ${{ inputs.include-success-outputs }}
       run-coverage: ${{ inputs.run-coverage }}
       debug-resources: ${{ inputs.debug-resources }}
-
-  tests-in-progress-disabled:
-    name: "In progress disabled test"
-    uses: ./.github/workflows/run-unit-tests.yml
-    permissions:
-      contents: read
-      packages: read
-    secrets: inherit
-    with:
-      runs-on-as-json-default: ${{ inputs.runs-on-as-json-default }}
-      enable-aip-44: "false"
-      test-name: "InProgressDisabled-Postgres"
-      test-scope: "All"
-      backend: "postgres"
-      image-tag: ${{ inputs.image-tag }}
-      python-versions: "['${{ inputs.default-python-version }}']"
-      backend-versions: "['${{ inputs.default-postgres-version }}']"
-      excludes: "[]"
-      parallel-test-types-list-as-string: ${{ inputs.parallel-test-types-list-as-string }}
-      include-success-outputs: ${{ needs.build-info.outputs.include-success-outputs }}
-      run-coverage: ${{ inputs.run-coverage }}
-      debug-resources: ${{ inputs.debug-resources }}
-
-  tests-with-lowest-direct-resolution:
-    name: "Lowest direct dependency resolution tests"
-    uses: ./.github/workflows/run-unit-tests.yml
-    permissions:
-      contents: read
-      packages: read
-    secrets: inherit
-    with:
-      runs-on-as-json-default: ${{ inputs.runs-on-as-json-default }}
-      test-name: "LowestDeps-Postgres"
-      force-lowest-dependencies: "true"
-      test-scope: "All"
-      backend: "postgres"
-      image-tag: ${{ inputs.image-tag }}
-      python-versions: ${{ inputs.python-versions }}
-      backend-versions: "['${{ inputs.default-postgres-version }}']"
-      excludes: "[]"
-      parallel-test-types-list-as-string: ${{ inputs.separate-test-types-list-as-string }}
-      include-success-outputs: ${{ needs.build-info.outputs.include-success-outputs }}
-      run-coverage: ${{ inputs.run-coverage }}
-      debug-resources: ${{ inputs.debug-resources }}
-      monitor-delay-time-in-seconds: 120
 
   tests-quarantined:
     name: "Quarantined test"
@@ -231,13 +167,16 @@ jobs:
       runs-on-as-json-default: ${{ inputs.runs-on-as-json-default }}
       test-name: "Postgres"
       test-scope: "Quarantined"
+      test-groups: ${{ inputs.test-groups }}
       backend: "postgres"
       image-tag: ${{ inputs.image-tag }}
       python-versions: "['${{ inputs.default-python-version }}']"
       backend-versions: "['${{ inputs.default-postgres-version }}']"
+      excluded-providers-as-string: ${{ inputs.excluded-providers-as-string }}
       excludes: "[]"
-      parallel-test-types-list-as-string: ${{ inputs.parallel-test-types-list-as-string }}
-      include-success-outputs: ${{ needs.build-info.outputs.include-success-outputs }}
+      core-test-types-list-as-string: ${{ inputs.core-test-types-list-as-string }}
+      providers-test-types-list-as-string: ${{ inputs.providers-test-types-list-as-string }}
+      include-success-outputs: ${{ inputs.include-success-outputs }}
       run-coverage: ${{ inputs.run-coverage }}
       debug-resources: ${{ inputs.debug-resources }}
 
@@ -252,18 +191,22 @@ jobs:
       runs-on-as-json-default: ${{ inputs.runs-on-as-json-default }}
       test-name: "Postgres"
       test-scope: "ARM collection"
+      test-groups: ${{ inputs.test-groups }}
       backend: "postgres"
       image-tag: ${{ inputs.image-tag }}
       python-versions: "['${{ inputs.default-python-version }}']"
       backend-versions: "['${{ inputs.default-postgres-version }}']"
+      excluded-providers-as-string: ${{ inputs.excluded-providers-as-string }}
       excludes: "[]"
-      parallel-test-types-list-as-string: ${{ inputs.parallel-test-types-list-as-string }}
-      include-success-outputs: ${{ needs.build-info.outputs.include-success-outputs }}
+      core-test-types-list-as-string: ${{ inputs.core-test-types-list-as-string }}
+      providers-test-types-list-as-string: ${{ inputs.providers-test-types-list-as-string }}
+      include-success-outputs: ${{ inputs.include-success-outputs }}
       run-coverage: ${{ inputs.run-coverage }}
       debug-resources: ${{ inputs.debug-resources }}
+    if: ${{ inputs.default-branch == 'main' }}
 
   tests-system:
-    name: "System test"
+    name: "System test: ${{ matrix.test-group }}"
     uses: ./.github/workflows/run-unit-tests.yml
     permissions:
       contents: read
@@ -273,12 +216,15 @@ jobs:
       runs-on-as-json-default: ${{ inputs.runs-on-as-json-default }}
       test-name: "SystemTest"
       test-scope: "System"
+      test-groups: ${{ inputs.test-groups }}
       backend: "postgres"
       image-tag: ${{ inputs.image-tag }}
       python-versions: "['${{ inputs.default-python-version }}']"
       backend-versions: "['${{ inputs.default-postgres-version }}']"
+      excluded-providers-as-string: ${{ inputs.excluded-providers-as-string }}
       excludes: "[]"
-      parallel-test-types-list-as-string: ${{ inputs.parallel-test-types-list-as-string }}
-      include-success-outputs: ${{ needs.build-info.outputs.include-success-outputs }}
+      core-test-types-list-as-string: ${{ inputs.core-test-types-list-as-string }}
+      providers-test-types-list-as-string: ${{ inputs.providers-test-types-list-as-string }}
+      include-success-outputs: ${{ inputs.include-success-outputs }}
       run-coverage: ${{ inputs.run-coverage }}
       debug-resources: ${{ inputs.debug-resources }}

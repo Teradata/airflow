@@ -24,7 +24,8 @@ from sqlalchemy.pool import NullPool
 
 from airflow import settings
 from airflow.exceptions import AirflowConfigException
-from tests.test_utils.config import conf_vars
+
+from tests_common.test_utils.config import conf_vars
 
 SQL_ALCHEMY_CONNECT_ARGS = {"test": 43503, "dict": {"is": 1, "supported": "too"}}
 
@@ -53,7 +54,9 @@ class TestSqlAlchemySettings:
         settings.configure_orm()
         mock_create_engine.assert_called_once_with(
             settings.SQL_ALCHEMY_CONN,
-            connect_args={},
+            connect_args={}
+            if not settings.SQL_ALCHEMY_CONN.startswith("sqlite")
+            else {"check_same_thread": False},
             encoding="utf-8",
             max_overflow=10,
             pool_pre_ping=True,

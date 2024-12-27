@@ -18,7 +18,7 @@
 Setting up the database
 -----------------------
 
-Apache Airflow™ requires a database. If you're just experimenting and learning Airflow, you can stick with the
+Apache Airflow® requires a database. If you're just experimenting and learning Airflow, you can stick with the
 default SQLite option. If you don't want to use SQLite, then take a look at
 :doc:`/howto/set-up-database` to setup a different database.
 
@@ -26,7 +26,7 @@ Usually, you need to run ``airflow db migrate`` in order to create the database 
 or migrate to the latest version if it does. You should make sure that Airflow components are
 not running while the database migration is being executed.
 
-.. note::
+.. warning::
 
     Prior to Airflow version 2.7.0, ``airflow db upgrade`` was used to apply migrations,
     however, it has been deprecated in favor of ``airflow db migrate``.

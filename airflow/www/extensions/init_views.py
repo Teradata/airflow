@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import logging
-import warnings
 from functools import cached_property
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -28,12 +27,11 @@ from connexion.exceptions import BadRequestProblem
 from flask import request
 
 from airflow.api_connexion.exceptions import common_error_handler
+from airflow.api_fastapi.app import get_auth_manager
 from airflow.configuration import conf
-from airflow.exceptions import RemovedInAirflow3Warning
 from airflow.security import permissions
 from airflow.utils.yaml import safe_load
 from airflow.www.constants import SWAGGER_BUNDLE, SWAGGER_ENABLED
-from airflow.www.extensions.init_auth_manager import get_auth_manager
 
 if TYPE_CHECKING:
     from flask import Flask
@@ -106,9 +104,6 @@ def init_appbuilder_views(app):
         views.ConnectionModelView, permissions.RESOURCE_CONNECTION, category=permissions.RESOURCE_ADMIN_MENU
     )
     appbuilder.add_view(
-        views.SlaMissModelView, permissions.RESOURCE_SLA_MISS, category=permissions.RESOURCE_BROWSE_MENU
-    )
-    appbuilder.add_view(
         views.PluginView, permissions.RESOURCE_PLUGIN, category=permissions.RESOURCE_ADMIN_MENU
     )
     appbuilder.add_view(
@@ -137,7 +132,7 @@ def init_plugins(app):
     """Integrate Flask and FAB with plugins."""
     from airflow import plugins_manager
 
-    plugins_manager.initialize_web_ui_plugins()
+    plugins_manager.initialize_flask_plugins()
 
     appbuilder = app.appbuilder
 
@@ -312,24 +307,6 @@ def init_api_internal(app: Flask, standalone_api: bool = False) -> None:
     app.register_blueprint(api_bp)
     app.after_request_funcs.setdefault(api_bp.name, []).append(set_cors_headers_on_response)
     app.extensions["csrf"].exempt(api_bp)
-
-
-def init_api_experimental(app):
-    """Initialize Experimental API."""
-    if not conf.getboolean("api", "enable_experimental_api", fallback=False):
-        return
-    from airflow.www.api.experimental import endpoints
-
-    warnings.warn(
-        "The experimental REST API is deprecated. Please migrate to the stable REST API. "
-        "Please note that the experimental API do not have access control. "
-        "The authenticated user has full access.",
-        RemovedInAirflow3Warning,
-        stacklevel=2,
-    )
-    base_paths.append("/api/experimental")
-    app.register_blueprint(endpoints.api_experimental, url_prefix="/api/experimental")
-    app.extensions["csrf"].exempt(endpoints.api_experimental)
 
 
 def init_api_auth_provider(app):

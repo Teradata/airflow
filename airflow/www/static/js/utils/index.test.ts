@@ -25,6 +25,10 @@ import {
   getTaskSummary,
   highlightByKeywords,
 } from ".";
+import {
+  logGroupStart,
+  logGroupEnd,
+} from "../dag/details/taskInstance/Logs/utils";
 
 const sampleTasks = {
   id: null,
@@ -135,21 +139,21 @@ describe("Test getDagRunLabel", () => {
     endDate: "2021-11-08T21:17:13.206426+00:00",
     state: "failed",
     runType: "scheduled",
-    executionDate: "2021-12-09T21:14:19.704433+00:00",
+    logicalDate: "2021-12-09T21:14:19.704433+00:00",
     lastSchedulingDecision: "2021-11-08T21:14:19.704433+00:00",
     externalTrigger: false,
     conf: null,
     note: "someRandomValue",
   } as DagRun;
 
-  test("Defaults to dataIntervalStart", async () => {
+  test("Defaults to executionDate", async () => {
     const runLabel = getDagRunLabel({ dagRun });
-    expect(runLabel).toBe(dagRun.dataIntervalStart);
+    expect(runLabel).toBe(dagRun.logicalDate);
   });
 
   test("Passing an order overrides default", async () => {
-    const runLabel = getDagRunLabel({ dagRun, ordering: ["executionDate"] });
-    expect(runLabel).toBe(dagRun.executionDate);
+    const runLabel = getDagRunLabel({ dagRun, ordering: ["dataIntervalEnd"] });
+    expect(runLabel).toBe(dagRun.dataIntervalEnd);
   });
 });
 
@@ -160,7 +164,9 @@ describe("Test highlightByKeywords", () => {
     const highlightedLine = highlightByKeywords(
       originalLine,
       ["error"],
-      ["warn"]
+      ["warn"],
+      logGroupStart,
+      logGroupEnd
     );
     expect(highlightedLine).toBe(expected);
   });
@@ -170,7 +176,9 @@ describe("Test highlightByKeywords", () => {
     const highlightedLine = highlightByKeywords(
       originalLine,
       ["error"],
-      ["warn"]
+      ["warn"],
+      logGroupStart,
+      logGroupEnd
     );
     expect(highlightedLine).toBe(expected);
   });
@@ -180,16 +188,42 @@ describe("Test highlightByKeywords", () => {
     const highlightedLine = highlightByKeywords(
       originalLine,
       ["error"],
-      ["warn"]
+      ["warn"],
+      logGroupStart,
+      logGroupEnd
     );
     expect(highlightedLine).toBe(expected);
+  });
+  test("No highlight for line with start log marker", async () => {
+    const originalLine = " INFO - ::group::error";
+    const highlightedLine = highlightByKeywords(
+      originalLine,
+      ["error"],
+      ["warn"],
+      logGroupStart,
+      logGroupEnd
+    );
+    expect(highlightedLine).toBe(originalLine);
+  });
+  test("No highlight for line with end log marker", async () => {
+    const originalLine = " INFO - ::endgroup::";
+    const highlightedLine = highlightByKeywords(
+      originalLine,
+      ["endgroup"],
+      ["warn"],
+      logGroupStart,
+      logGroupEnd
+    );
+    expect(highlightedLine).toBe(originalLine);
   });
   test("No highlight", async () => {
     const originalLine = "sample line";
     const highlightedLine = highlightByKeywords(
       originalLine,
       ["error"],
-      ["warn"]
+      ["warn"],
+      logGroupStart,
+      logGroupEnd
     );
     expect(highlightedLine).toBe(originalLine);
   });

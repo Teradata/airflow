@@ -36,9 +36,9 @@ from airflow.models import DagModel, DagRun, TaskInstance, Trigger
 from airflow.models.baseoperator import BaseOperator
 from airflow.models.dag import DAG
 from airflow.operators.empty import EmptyOperator
-from airflow.operators.python import PythonOperator
+from airflow.providers.standard.operators.python import PythonOperator
+from airflow.providers.standard.triggers.temporal import DateTimeTrigger, TimeDeltaTrigger
 from airflow.triggers.base import TriggerEvent
-from airflow.triggers.temporal import DateTimeTrigger, TimeDeltaTrigger
 from airflow.triggers.testing import FailureTrigger, SuccessTrigger
 from airflow.utils import timezone
 from airflow.utils.log.logging_mixin import RedirectStdHandler
@@ -46,8 +46,10 @@ from airflow.utils.log.trigger_handler import LocalQueueHandler
 from airflow.utils.session import create_session
 from airflow.utils.state import State, TaskInstanceState
 from airflow.utils.types import DagRunType
+
 from tests.core.test_logging_config import reset_logging
-from tests.test_utils.db import clear_db_dags, clear_db_runs
+from tests_common.test_utils.db import clear_db_dags, clear_db_runs
+from tests_common.test_utils.log_handlers import non_pytest_handlers
 
 pytestmark = pytest.mark.db_test
 
@@ -90,11 +92,11 @@ def session():
 
 def create_trigger_in_db(session, trigger, operator=None):
     dag_model = DagModel(dag_id="test_dag")
-    dag = DAG(dag_id=dag_model.dag_id, start_date=pendulum.datetime(2023, 1, 1))
+    dag = DAG(dag_id=dag_model.dag_id, schedule="@daily", start_date=pendulum.datetime(2023, 1, 1))
     run = DagRun(
         dag_id=dag_model.dag_id,
         run_id="test_run",
-        execution_date=pendulum.datetime(2023, 1, 1),
+        logical_date=pendulum.datetime(2023, 1, 1),
         run_type=DagRunType.MANUAL,
     )
     trigger_orm = Trigger.from_object(trigger)
@@ -103,7 +105,7 @@ def create_trigger_in_db(session, trigger, operator=None):
         operator.dag = dag
     else:
         operator = BaseOperator(task_id="test_ti", dag=dag)
-    task_instance = TaskInstance(operator, execution_date=run.execution_date, run_id=run.run_id)
+    task_instance = TaskInstance(operator, run_id=run.run_id)
     task_instance.trigger_id = trigger_orm.id
     session.add(dag_model)
     session.add(run)
@@ -512,7 +514,7 @@ def test_trigger_from_dead_triggerer(session, create_task_instance):
     session.add(trigger_orm)
     ti_orm = create_task_instance(
         task_id="ti_orm",
-        execution_date=timezone.utcnow(),
+        logical_date=timezone.utcnow(),
         run_id="orm_run_id",
     )
     ti_orm.trigger_id = trigger_orm.id
@@ -539,7 +541,7 @@ def test_trigger_from_expired_triggerer(session, create_task_instance):
     session.add(trigger_orm)
     ti_orm = create_task_instance(
         task_id="ti_orm",
-        execution_date=timezone.utcnow(),
+        logical_date=timezone.utcnow(),
         run_id="orm_run_id",
     )
     ti_orm.trigger_id = trigger_orm.id
@@ -758,9 +760,6 @@ def test_queue_listener():
     reset_logging()
     importlib.reload(airflow_local_settings)
     configure_logging()
-
-    def non_pytest_handlers(val):
-        return [h for h in val if "pytest" not in h.__module__]
 
     import logging
 

@@ -43,6 +43,11 @@ from airflow.utils.sqlalchemy import (
 from airflow.utils.state import State
 from airflow.utils.timezone import utcnow
 
+from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
+
+if AIRFLOW_V_3_0_PLUS:
+    from airflow.utils.types import DagRunTriggeredByType
+
 pytestmark = pytest.mark.db_test
 
 
@@ -68,27 +73,26 @@ class TestSqlAlchemyUtils:
         dag_id = "test_utc_transformations"
         start_date = utcnow()
         iso_date = start_date.isoformat()
-        execution_date = start_date + datetime.timedelta(hours=1, days=1)
+        logical_date = start_date + datetime.timedelta(hours=1, days=1)
 
-        dag = DAG(
-            dag_id=dag_id,
-            start_date=start_date,
-        )
+        dag = DAG(dag_id=dag_id, schedule=datetime.timedelta(days=1), start_date=start_date)
         dag.clear()
 
+        triggered_by_kwargs = {"triggered_by": DagRunTriggeredByType.TEST} if AIRFLOW_V_3_0_PLUS else {}
         run = dag.create_dagrun(
             run_id=iso_date,
             state=State.NONE,
-            execution_date=execution_date,
+            logical_date=logical_date,
             start_date=start_date,
             session=self.session,
-            data_interval=dag.timetable.infer_manual_data_interval(run_after=execution_date),
+            data_interval=dag.timetable.infer_manual_data_interval(run_after=logical_date),
+            **triggered_by_kwargs,
         )
 
-        assert execution_date == run.execution_date
+        assert logical_date == run.logical_date
         assert start_date == run.start_date
 
-        assert execution_date.utcoffset().total_seconds() == 0.0
+        assert logical_date.utcoffset().total_seconds() == 0.0
         assert start_date.utcoffset().total_seconds() == 0.0
 
         assert iso_date == run.run_id
@@ -104,17 +108,19 @@ class TestSqlAlchemyUtils:
 
         # naive
         start_date = datetime.datetime.now()
-        dag = DAG(dag_id=dag_id, start_date=start_date)
+        dag = DAG(dag_id=dag_id, start_date=start_date, schedule=datetime.timedelta(days=1))
         dag.clear()
+        triggered_by_kwargs = {"triggered_by": DagRunTriggeredByType.TEST} if AIRFLOW_V_3_0_PLUS else {}
 
         with pytest.raises((ValueError, StatementError)):
             dag.create_dagrun(
                 run_id=start_date.isoformat,
                 state=State.NONE,
-                execution_date=start_date,
+                logical_date=start_date,
                 start_date=start_date,
                 session=self.session,
                 data_interval=dag.timetable.infer_manual_data_interval(run_after=start_date),
+                **triggered_by_kwargs,
             )
         dag.clear()
 
@@ -141,7 +147,7 @@ class TestSqlAlchemyUtils:
             returned_value = with_row_locks(query=query, session=session, nowait=True)
 
         if expected_use_row_level_lock:
-            query.with_for_update.assert_called_once_with(nowait=True)
+            query.with_for_update.assert_called_once_with(nowait=True, key_share=True)
         else:
             assert returned_value == query
             query.with_for_update.assert_not_called()

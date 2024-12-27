@@ -47,7 +47,7 @@ Once that is done, you can run -
 
 ``migrate`` keeps track of migrations already applied, so it's safe to run as often as you need.
 
-.. note::
+.. warning::
 
     Prior to Airflow version 2.7.0, ``airflow db upgrade`` was used to apply migrations,
     however, it has been deprecated in favor of ``airflow db migrate``.
@@ -71,7 +71,7 @@ DAGs and configs across your nodes, e.g., checkout DAGs from git repo every 5 mi
 
 
 Logging
-=======
+========
 
 If you are using disposable nodes in your cluster, configure the log storage to be a distributed file system
 (DFS) such as ``S3`` and ``GCS``, or external services such as Stackdriver Logging, Elasticsearch or

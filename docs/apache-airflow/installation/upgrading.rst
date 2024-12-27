@@ -15,7 +15,7 @@
     specific language governing permissions and limitations
     under the License.
 
-Upgrading Airflow™ to a newer version
+Upgrading Airflow® to a newer version
 -------------------------------------
 
 Why you need to upgrade
@@ -57,7 +57,7 @@ when you choose to upgrade airflow via their UI.
 How to upgrade
 ==============
 
-Reinstall Apache Airflow™, specifying the desired new version.
+Reinstall Apache Airflow®, specifying the desired new version.
 
 To upgrade a bootstrapped local instance, you can set the ``AIRFLOW_VERSION`` environment variable to the
 intended version prior to rerunning the installation command. Upgrade incrementally by patch version: e.g.,
@@ -81,7 +81,7 @@ Sample usage for Airflow version 2.7.0 or greater:
    ``airflow db migrate -s --from-version "2.4.3" -n "2.7.3"``
    ``airflow db migrate --show-sql-only --from-version "2.4.3" --to-version "2.7.3"``
 
-.. note::
+.. warning::
     ``airflow db upgrade`` has been replaced by ``airflow db migrate`` since Airflow version 2.7.0
     and former has been deprecated.
 

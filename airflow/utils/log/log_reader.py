@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterator
 from functools import cached_property
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING
 
 from airflow.configuration import conf
 from airflow.utils.helpers import render_log_filename
@@ -74,7 +75,7 @@ class TaskLogReader:
         :param metadata: A dictionary containing information about how to read the task log
         """
         if try_number is None:
-            next_try = ti.next_try_number
+            next_try = ti.try_number + 1
             try_numbers = list(range(1, next_try))
         else:
             try_numbers = [try_number]

@@ -20,17 +20,14 @@ import inspect
 import itertools
 import textwrap
 import warnings
-from functools import cached_property
+from collections.abc import Collection, Iterator, Mapping, Sequence
+from functools import cached_property, update_wrapper
 from typing import (
     TYPE_CHECKING,
     Any,
     Callable,
     ClassVar,
-    Collection,
     Generic,
-    Iterator,
-    Mapping,
-    Sequence,
     TypeVar,
     cast,
     overload,
@@ -40,8 +37,6 @@ import attr
 import re2
 import typing_extensions
 
-from airflow.datasets import Dataset
-from airflow.models.abstractoperator import DEFAULT_RETRIES, DEFAULT_RETRY_DELAY
 from airflow.models.baseoperator import (
     BaseOperator,
     coerce_resources,
@@ -49,7 +44,6 @@ from airflow.models.baseoperator import (
     get_merged_defaults,
     parse_retries,
 )
-from airflow.models.dag import DagContext
 from airflow.models.expandinput import (
     EXPAND_INPUT_EMPTY,
     DictOfListsExpandInput,
@@ -57,27 +51,28 @@ from airflow.models.expandinput import (
     is_mappable,
 )
 from airflow.models.mappedoperator import MappedOperator, ensure_xcomarg_return_value
-from airflow.models.pool import Pool
 from airflow.models.xcom_arg import XComArg
+from airflow.sdk.definitions.asset import Asset
+from airflow.sdk.definitions.baseoperator import BaseOperator as TaskSDKBaseOperator
+from airflow.sdk.definitions.contextmanager import DagContext, TaskGroupContext
 from airflow.typing_compat import ParamSpec, Protocol
 from airflow.utils import timezone
 from airflow.utils.context import KNOWN_CONTEXT_KEYS
 from airflow.utils.decorators import remove_task_decorator
 from airflow.utils.helpers import prevent_duplicates
-from airflow.utils.task_group import TaskGroupContext
 from airflow.utils.trigger_rule import TriggerRule
 from airflow.utils.types import NOTSET
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from airflow.models.dag import DAG
     from airflow.models.expandinput import (
         ExpandInput,
         OperatorExpandArgument,
         OperatorExpandKwargsArgument,
     )
     from airflow.models.mappedoperator import ValidationSource
+    from airflow.sdk.definitions.dag import DAG
     from airflow.utils.context import Context
     from airflow.utils.task_group import TaskGroup
 
@@ -141,13 +136,13 @@ def get_unique_task_id(
       ...
       task_id__20
     """
-    dag = dag or DagContext.get_current_dag()
+    dag = dag or DagContext.get_current()
     if not dag:
         return task_id
 
     # We need to check if we are in the context of TaskGroup as the task_id may
     # already be altered
-    task_group = task_group or TaskGroupContext.get_current_task_group(dag)
+    task_group = task_group or TaskGroupContext.get_current(dag)
     tg_task_id = task_group.child_id(task_id) if task_group else task_id
 
     if tg_task_id not in dag.task_ids:
@@ -261,7 +256,7 @@ class DecoratedOperator(BaseOperator):
         # todo make this more generic (move to prepare_lineage) so it deals with non taskflow operators
         #  as well
         for arg in itertools.chain(self.op_args, self.op_kwargs.values()):
-            if isinstance(arg, Dataset):
+            if isinstance(arg, Asset):
                 self.inlets.append(arg)
         return_value = super().execute(context)
         return self._handle_output(return_value=return_value, context=context, xcom_push=self.xcom_push)
@@ -270,17 +265,17 @@ class DecoratedOperator(BaseOperator):
         """
         Handle logic for whether a decorator needs to push a single return value or multiple return values.
 
-        It sets outlets if any datasets are found in the returned value(s)
+        It sets outlets if any assets are found in the returned value(s)
 
         :param return_value:
         :param context:
         :param xcom_push:
         """
-        if isinstance(return_value, Dataset):
+        if isinstance(return_value, Asset):
             self.outlets.append(return_value)
         if isinstance(return_value, list):
             for item in return_value:
-                if isinstance(item, Dataset):
+                if isinstance(item, Asset):
                     self.outlets.append(item)
         return return_value
 
@@ -334,6 +329,9 @@ class _TaskDecorator(ExpandableFactory, Generic[FParams, FReturn, OperatorSubcla
     is_teardown: bool = False
     on_failure_fail_dagrun: bool = False
 
+    # This is set in __attrs_post_init__ by update_wrapper. Provided here for type hints.
+    __wrapped__: Callable[FParams, FReturn] = attr.ib(init=False)
+
     @multiple_outputs.default
     def _infer_multiple_outputs(self):
         if "return" not in self.function.__annotations__:
@@ -363,6 +361,7 @@ class _TaskDecorator(ExpandableFactory, Generic[FParams, FReturn, OperatorSubcla
         if "self" in self.function_signature.parameters:
             raise TypeError(f"@{self.decorator_name} does not support methods")
         self.kwargs.setdefault("task_id", self.function.__name__)
+        update_wrapper(self, self.function)
 
     def __call__(self, *args: FParams.args, **kwargs: FParams.kwargs) -> XComArg:
         if self.is_teardown:
@@ -386,10 +385,6 @@ class _TaskDecorator(ExpandableFactory, Generic[FParams, FReturn, OperatorSubcla
             op.doc_md = self.function.__doc__
         return XComArg(op)
 
-    @property
-    def __wrapped__(self) -> Callable[FParams, FReturn]:
-        return self.function
-
     def _validate_arg_names(self, func: ValidationSource, kwargs: dict[str, Any]):
         # Ensure that context variables are not shadowed.
         context_keys_being_mapped = KNOWN_CONTEXT_KEYS.intersection(kwargs)
@@ -403,6 +398,12 @@ class _TaskDecorator(ExpandableFactory, Generic[FParams, FReturn, OperatorSubcla
         super()._validate_arg_names(func, kwargs)
 
     def expand(self, **map_kwargs: OperatorExpandArgument) -> XComArg:
+        if self.kwargs.get("trigger_rule") == TriggerRule.ALWAYS and any(
+            [isinstance(expanded, XComArg) for expanded in map_kwargs.values()]
+        ):
+            raise ValueError(
+                "Task-generated mapping within a task using 'expand' is not allowed with trigger rule 'always'."
+            )
         if not map_kwargs:
             raise TypeError("no arguments to expand against")
         self._validate_arg_names("expand", map_kwargs)
@@ -416,6 +417,21 @@ class _TaskDecorator(ExpandableFactory, Generic[FParams, FReturn, OperatorSubcla
         return self._expand(DictOfListsExpandInput(map_kwargs), strict=False)
 
     def expand_kwargs(self, kwargs: OperatorExpandKwargsArgument, *, strict: bool = True) -> XComArg:
+        if (
+            self.kwargs.get("trigger_rule") == TriggerRule.ALWAYS
+            and not isinstance(kwargs, XComArg)
+            and any(
+                [
+                    isinstance(v, XComArg)
+                    for kwarg in kwargs
+                    if not isinstance(kwarg, XComArg)
+                    for v in kwarg.values()
+                ]
+            )
+        ):
+            raise ValueError(
+                "Task-generated mapping within a task using 'expand_kwargs' is not allowed with trigger rule 'always'."
+            )
         if isinstance(kwargs, Sequence):
             for item in kwargs:
                 if not isinstance(item, (XComArg, Mapping)):
@@ -428,47 +444,58 @@ class _TaskDecorator(ExpandableFactory, Generic[FParams, FReturn, OperatorSubcla
         ensure_xcomarg_return_value(expand_input.value)
 
         task_kwargs = self.kwargs.copy()
-        dag = task_kwargs.pop("dag", None) or DagContext.get_current_dag()
-        task_group = task_kwargs.pop("task_group", None) or TaskGroupContext.get_current_task_group(dag)
+        dag = task_kwargs.pop("dag", None) or DagContext.get_current()
+        task_group = task_kwargs.pop("task_group", None) or TaskGroupContext.get_current(dag)
 
-        partial_kwargs, partial_params = get_merged_defaults(
+        default_args, partial_params = get_merged_defaults(
             dag=dag,
             task_group=task_group,
             task_params=task_kwargs.pop("params", None),
             task_default_args=task_kwargs.pop("default_args", None),
         )
-        partial_kwargs.update(
-            task_kwargs,
-            is_setup=self.is_setup,
-            is_teardown=self.is_teardown,
-            on_failure_fail_dagrun=self.on_failure_fail_dagrun,
-        )
+        partial_kwargs: dict[str, Any] = {
+            "is_setup": self.is_setup,
+            "is_teardown": self.is_teardown,
+            "on_failure_fail_dagrun": self.on_failure_fail_dagrun,
+        }
+        base_signature = inspect.signature(TaskSDKBaseOperator)
+        ignore = {
+            "default_args",  # This is target we are working on now.
+            "kwargs",  # A common name for a keyword argument.
+            "do_xcom_push",  # In the same boat as `multiple_outputs`
+            "multiple_outputs",  # We will use `self.multiple_outputs` instead.
+            "params",  # Already handled above `partial_params`.
+            "task_concurrency",  # Deprecated(replaced by `max_active_tis_per_dag`).
+        }
+        partial_keys = set(base_signature.parameters) - ignore
+        partial_kwargs.update({key: value for key, value in default_args.items() if key in partial_keys})
+        partial_kwargs.update(task_kwargs)
 
         task_id = get_unique_task_id(partial_kwargs.pop("task_id"), dag, task_group)
         if task_group:
             task_id = task_group.child_id(task_id)
 
         # Logic here should be kept in sync with BaseOperatorMeta.partial().
-        if "task_concurrency" in partial_kwargs:
-            raise TypeError("unexpected argument: task_concurrency")
         if partial_kwargs.get("wait_for_downstream"):
             partial_kwargs["depends_on_past"] = True
         start_date = timezone.convert_to_utc(partial_kwargs.pop("start_date", None))
         end_date = timezone.convert_to_utc(partial_kwargs.pop("end_date", None))
-        if partial_kwargs.get("pool") is None:
-            partial_kwargs["pool"] = Pool.DEFAULT_POOL_NAME
-        partial_kwargs["retries"] = parse_retries(partial_kwargs.get("retries", DEFAULT_RETRIES))
-        partial_kwargs["retry_delay"] = coerce_timedelta(
-            partial_kwargs.get("retry_delay", DEFAULT_RETRY_DELAY),
-            key="retry_delay",
-        )
-        max_retry_delay = partial_kwargs.get("max_retry_delay")
-        partial_kwargs["max_retry_delay"] = (
-            max_retry_delay
-            if max_retry_delay is None
-            else coerce_timedelta(max_retry_delay, key="max_retry_delay")
-        )
-        partial_kwargs["resources"] = coerce_resources(partial_kwargs.get("resources"))
+        if "pool_slots" in partial_kwargs:
+            if partial_kwargs["pool_slots"] < 1:
+                dag_str = ""
+                if dag:
+                    dag_str = f" in dag {dag.dag_id}"
+                raise ValueError(f"pool slots for {task_id}{dag_str} cannot be less than 1")
+
+        for fld, convert in (
+            ("retries", parse_retries),
+            ("retry_delay", coerce_timedelta),
+            ("max_retry_delay", coerce_timedelta),
+            ("resources", coerce_resources),
+        ):
+            if (v := partial_kwargs.get(fld, NOTSET)) is not NOTSET:
+                partial_kwargs[fld] = convert(v)  # type: ignore[operator]
+
         partial_kwargs.setdefault("executor_config", {})
         partial_kwargs.setdefault("op_args", [])
         partial_kwargs.setdefault("op_kwargs", {})
@@ -550,11 +577,13 @@ class DecoratedMappedOperator(MappedOperator):
         super(DecoratedMappedOperator, DecoratedMappedOperator).__attrs_post_init__(self)
         XComArg.apply_upstream_relationship(self, self.op_kwargs_expand_input.value)
 
-    def _expand_mapped_kwargs(self, context: Context, session: Session) -> tuple[Mapping[str, Any], set[int]]:
+    def _expand_mapped_kwargs(
+        self, context: Context, session: Session, *, include_xcom: bool
+    ) -> tuple[Mapping[str, Any], set[int]]:
         # We only use op_kwargs_expand_input so this must always be empty.
         if self.expand_input is not EXPAND_INPUT_EMPTY:
             raise AssertionError(f"unexpected expand_input: {self.expand_input}")
-        op_kwargs, resolved_oids = super()._expand_mapped_kwargs(context, session)
+        op_kwargs, resolved_oids = super()._expand_mapped_kwargs(context, session, include_xcom=include_xcom)
         return {"op_kwargs": op_kwargs}, resolved_oids
 
     def _get_unmap_kwargs(self, mapped_kwargs: Mapping[str, Any], *, strict: bool) -> dict[str, Any]:

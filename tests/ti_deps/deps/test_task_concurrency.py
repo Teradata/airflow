@@ -32,7 +32,7 @@ pytestmark = pytest.mark.db_test
 
 class TestTaskConcurrencyDep:
     def _get_task(self, **kwargs):
-        return BaseOperator(task_id="test_task", dag=DAG("test_dag"), **kwargs)
+        return BaseOperator(task_id="test_task", dag=DAG("test_dag", schedule=None), **kwargs)
 
     @pytest.mark.parametrize(
         "kwargs, num_running_tis, is_task_concurrency_dep_met",
@@ -52,7 +52,7 @@ class TestTaskConcurrencyDep:
     def test_concurrency(self, kwargs, num_running_tis, is_task_concurrency_dep_met):
         task = self._get_task(start_date=datetime(2016, 1, 1), **kwargs)
         dep_context = DepContext()
-        ti = Mock(task=task, execution_date=datetime(2016, 1, 1))
+        ti = Mock(task=task, logical_date=datetime(2016, 1, 1))
         if num_running_tis is not None:
             ti.get_num_running_task_instances.return_value = num_running_tis
         assert TaskConcurrencyDep().is_met(ti=ti, dep_context=dep_context) == is_task_concurrency_dep_met

@@ -49,6 +49,7 @@ from airflow_breeze.utils.packages import (
     refresh_provider_metadata_with_provider_id,
     render_template,
 )
+from airflow_breeze.utils.path_utils import AIRFLOW_SOURCES_ROOT
 from airflow_breeze.utils.run_utils import run_command
 from airflow_breeze.utils.shared_options import get_verbose
 from airflow_breeze.utils.versions import get_version_tag
@@ -153,6 +154,7 @@ class ClassifiedChanges:
         self.misc: list[Change] = []
         self.features: list[Change] = []
         self.breaking_changes: list[Change] = []
+        self.docs: list[Change] = []
         self.other: list[Change] = []
 
 
@@ -179,17 +181,21 @@ class PrepareReleaseDocsUserQuitException(Exception):
 TYPE_OF_CHANGE_DESCRIPTION = {
     TypeOfChange.DOCUMENTATION: "Documentation only changes - no version change needed, "
     "only documentation needs to be updated",
-    TypeOfChange.BUGFIX: "Bugfix/Misc changes only - bump in PATCHLEVEL version needed",
+    TypeOfChange.BUGFIX: "Bugfix changes only - bump in PATCHLEVEL version needed",
     TypeOfChange.FEATURE: "Feature changes - bump in MINOR version needed",
     TypeOfChange.BREAKING_CHANGE: "Breaking changes - bump in MAJOR version needed",
+    TypeOfChange.MISC: "Miscellaneous changes - bump in PATCHLEVEL version needed",
 }
 
 
-def _get_git_log_command(from_commit: str | None = None, to_commit: str | None = None) -> list[str]:
+def _get_git_log_command(
+    folder_paths: list[Path] | None = None, from_commit: str | None = None, to_commit: str | None = None
+) -> list[str]:
     """Get git command to run for the current repo from the current folder.
 
     The current directory should always be the package folder.
 
+    :param folder_paths: list of folder paths to check for changes
     :param from_commit: if present - base commit from which to start the log from
     :param to_commit: if present - final commit which should be the start of the log
     :return: git command to run
@@ -206,7 +212,8 @@ def _get_git_log_command(from_commit: str | None = None, to_commit: str | None =
         git_cmd.append(from_commit)
     elif to_commit:
         raise ValueError("It makes no sense to specify to_commit without from_commit.")
-    git_cmd.extend(["--", "."])
+    folders = [folder_path.as_posix() for folder_path in folder_paths] if folder_paths else ["."]
+    git_cmd.extend(["--", *folders])
     return git_cmd
 
 
@@ -306,18 +313,25 @@ def _get_all_changes_for_package(
         get_console().print(f"[info]Checking if tag '{current_tag_no_suffix}' exist.")
     result = run_command(
         ["git", "rev-parse", current_tag_no_suffix],
-        cwd=provider_details.source_provider_package_path,
+        cwd=AIRFLOW_SOURCES_ROOT,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         check=False,
     )
+    providers_folder_paths = [
+        provider_details.source_provider_package_path,
+        provider_details.old_source_provider_package_path,
+        provider_details.documentation_provider_package_path,
+    ]
     if not reapply_templates_only and result.returncode == 0:
         if get_verbose():
             get_console().print(f"[info]The tag {current_tag_no_suffix} exists.")
         # The tag already exists
         result = run_command(
-            _get_git_log_command(f"{HTTPS_REMOTE}/{base_branch}", current_tag_no_suffix),
-            cwd=provider_details.source_provider_package_path,
+            _get_git_log_command(
+                providers_folder_paths, f"{HTTPS_REMOTE}/{base_branch}", current_tag_no_suffix
+            ),
+            cwd=AIRFLOW_SOURCES_ROOT,
             capture_output=True,
             text=True,
             check=True,
@@ -332,8 +346,10 @@ def _get_all_changes_for_package(
                 last_doc_only_hash = doc_only_change_file.read_text().strip()
                 try:
                     result = run_command(
-                        _get_git_log_command(f"{HTTPS_REMOTE}/{base_branch}", last_doc_only_hash),
-                        cwd=provider_details.source_provider_package_path,
+                        _get_git_log_command(
+                            providers_folder_paths, f"{HTTPS_REMOTE}/{base_branch}", last_doc_only_hash
+                        ),
+                        cwd=AIRFLOW_SOURCES_ROOT,
                         capture_output=True,
                         text=True,
                         check=True,
@@ -386,8 +402,8 @@ def _get_all_changes_for_package(
     for version in provider_details.versions[1:]:
         version_tag = get_version_tag(version, provider_package_id)
         result = run_command(
-            _get_git_log_command(next_version_tag, version_tag),
-            cwd=provider_details.source_provider_package_path,
+            _get_git_log_command(providers_folder_paths, next_version_tag, version_tag),
+            cwd=AIRFLOW_SOURCES_ROOT,
             capture_output=True,
             text=True,
             check=True,
@@ -401,7 +417,7 @@ def _get_all_changes_for_package(
         next_version_tag = version_tag
         current_version = version
     result = run_command(
-        _get_git_log_command(next_version_tag),
+        _get_git_log_command(providers_folder_paths, next_version_tag),
         cwd=provider_details.source_provider_package_path,
         capture_output=True,
         text=True,
@@ -429,7 +445,7 @@ def _ask_the_user_for_the_type_of_changes(non_interactive: bool) -> TypeOfChange
     display_answers = "/".join(type_of_changes_array) + "/q"
     while True:
         get_console().print(
-            "[warning]Type of change (b)ugfix, (f)eature, (x)breaking "
+            "[warning]Type of change (d)ocumentation, (b)ugfix, (f)eature, (x)breaking "
             f"change, (m)misc, (s)kip, (q)uit [{display_answers}]?[/] ",
             end="",
         )
@@ -485,6 +501,8 @@ def _update_version_in_provider_yaml(
         v = v.bump_minor()
         maybe_with_new_features = True
     elif type_of_change == TypeOfChange.BUGFIX:
+        v = v.bump_patch()
+    elif type_of_change == TypeOfChange.MISC:
         v = v.bump_patch()
     provider_yaml_path = get_source_package_path(provider_package_id) / "provider.yaml"
     original_provider_yaml_content = provider_yaml_path.read_text()
@@ -771,7 +789,12 @@ def update_release_notes(
                 f"[special]{TYPE_OF_CHANGE_DESCRIPTION[type_of_change]}"
             )
             get_console().print()
-            if type_of_change in [TypeOfChange.BUGFIX, TypeOfChange.FEATURE, TypeOfChange.BREAKING_CHANGE]:
+            if type_of_change in [
+                TypeOfChange.BUGFIX,
+                TypeOfChange.FEATURE,
+                TypeOfChange.BREAKING_CHANGE,
+                TypeOfChange.MISC,
+            ]:
                 with_breaking_changes, maybe_with_new_features, original_provider_yaml_content = (
                     _update_version_in_provider_yaml(
                         provider_package_id=provider_package_id, type_of_change=type_of_change
@@ -815,7 +838,12 @@ def update_release_notes(
         get_console().print()
         if type_of_change == TypeOfChange.DOCUMENTATION:
             _mark_latest_changes_as_documentation_only(provider_package_id, list_of_list_of_changes)
-        elif type_of_change in [TypeOfChange.BUGFIX, TypeOfChange.FEATURE, TypeOfChange.BREAKING_CHANGE]:
+        elif type_of_change in [
+            TypeOfChange.BUGFIX,
+            TypeOfChange.FEATURE,
+            TypeOfChange.BREAKING_CHANGE,
+            TypeOfChange.MISC,
+        ]:
             with_breaking_changes, maybe_with_new_features, _ = _update_version_in_provider_yaml(
                 provider_package_id=provider_package_id,
                 type_of_change=type_of_change,
@@ -909,6 +937,8 @@ def _get_changes_classified(
             classified_changes.features.append(change)
         elif type_of_change == TypeOfChange.BREAKING_CHANGE and with_breaking_changes:
             classified_changes.breaking_changes.append(change)
+        elif type_of_change == TypeOfChange.DOCUMENTATION:
+            classified_changes.docs.append(change)
         else:
             classified_changes.other.append(change)
     return classified_changes
@@ -1041,6 +1071,7 @@ def update_changelog(
     :param reapply_templates_only: only reapply templates, no changelog generation
     :param with_breaking_changes: whether there are any breaking changes
     :param maybe_with_new_features: whether there are any new features
+    :param only_min_version_update: whether to only update the min version
     """
     provider_details = get_provider_details(package_id)
     jinja_context = get_provider_documentation_jinja_context(

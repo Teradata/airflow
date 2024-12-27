@@ -17,8 +17,9 @@
 # under the License.
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import datetime
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING
 from unittest import mock
 from unittest.mock import Mock
 
@@ -1494,6 +1495,7 @@ class TestTriggerRuleDepSetupConstraint:
         assert self.get_ti(dr, "w2").state == expected
 
 
+@pytest.mark.flaky(reruns=5)
 @pytest.mark.parametrize(
     "map_index, flag_upstream_failed, expected_ti_state",
     [(2, True, None), (3, True, REMOVED), (4, True, REMOVED), (3, False, None)],

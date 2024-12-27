@@ -31,7 +31,7 @@ DEFAULT_DATE = datetime(2022, 8, 17)
 
 
 def test_short_circuit_decorator(dag_maker):
-    with dag_maker():
+    with dag_maker(serialized=True):
 
         @task
         def empty(): ...
@@ -82,7 +82,7 @@ def test_short_circuit_with_multiple_outputs(dag_maker):
     def multiple_output():
         return {"x": 1, "y": 2}
 
-    with dag_maker():
+    with dag_maker(serialized=True):
         ret = multiple_output()
 
     dr = dag_maker.create_dagrun()
@@ -96,7 +96,7 @@ def test_short_circuit_with_multiple_outputs_and_empty_dict(dag_maker):
     def empty_dict():
         return {}
 
-    with dag_maker():
+    with dag_maker(serialized=True):
         ret = empty_dict()
 
     dr = dag_maker.create_dagrun()

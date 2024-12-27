@@ -20,13 +20,14 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+from datetime import timedelta
 
 import pytest
 
 from airflow.exceptions import AirflowSensorTimeout, TaskDeferred
 from airflow.models.dag import DAG
-from airflow.sensors.filesystem import FileSensor
-from airflow.triggers.file import FileTrigger
+from airflow.providers.standard.sensors.filesystem import FileSensor
+from airflow.providers.standard.triggers.file import FileTrigger
 from airflow.utils.timezone import datetime
 
 pytestmark = pytest.mark.db_test
@@ -38,11 +39,11 @@ DEFAULT_DATE = datetime(2015, 1, 1)
 
 class TestFileSensor:
     def setup_method(self):
-        from airflow.hooks.filesystem import FSHook
+        from airflow.providers.standard.hooks.filesystem import FSHook
 
         hook = FSHook()
         args = {"owner": "airflow", "start_date": DEFAULT_DATE}
-        dag = DAG(TEST_DAG_ID + "test_schedule_dag_once", default_args=args)
+        dag = DAG(TEST_DAG_ID + "test_schedule_dag_once", schedule=timedelta(days=1), default_args=args)
         self.hook = hook
         self.dag = dag
 
