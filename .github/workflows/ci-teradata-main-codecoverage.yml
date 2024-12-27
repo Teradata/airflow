@@ -64,7 +64,7 @@
             if: always()
             uses: actions/jekyll-build-pages@v1
             with:
-             source: ./htmlcov.zip
+             source: ./htmlcov
              destination: ./_site
           - name: "Upload Teradata Airflow Provider System Tests Report to GITHUB page"
             if: always()
