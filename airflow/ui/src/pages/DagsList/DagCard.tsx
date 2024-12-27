@@ -16,102 +16,95 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import {
-  Badge,
-  Box,
-  Flex,
-  HStack,
-  Heading,
-  SimpleGrid,
-  Text,
-  Tooltip,
-  useColorModeValue,
-  VStack,
-} from "@chakra-ui/react";
-import { FiCalendar, FiTag } from "react-icons/fi";
+import { Box, Flex, HStack, SimpleGrid, Link } from "@chakra-ui/react";
+import { Link as RouterLink } from "react-router-dom";
 
-import type { DAGResponse } from "openapi/requests/types.gen";
+import type { DAGWithLatestDagRunsResponse } from "openapi/requests/types.gen";
+import DagRunInfo from "src/components/DagRunInfo";
+import { Stat } from "src/components/Stat";
 import { TogglePause } from "src/components/TogglePause";
+import TriggerDAGButton from "src/components/TriggerDag/TriggerDAGButton";
+import { Tooltip } from "src/components/ui";
+
+import { DagTags } from "./DagTags";
+import { RecentRuns } from "./RecentRuns";
+import { Schedule } from "./Schedule";
 
 type Props = {
-  readonly dag: DAGResponse;
+  readonly dag: DAGWithLatestDagRunsResponse;
 };
 
-const MAX_TAGS = 3;
-
 export const DagCard = ({ dag }: Props) => {
-  const cardBorder = useColorModeValue("gray.100", "gray.700");
-  const tooltipBg = useColorModeValue("gray.200", "gray.700");
+  const [latestRun] = dag.latest_dag_runs;
 
   return (
     <Box
-      borderColor={cardBorder}
+      borderColor="border.emphasized"
       borderRadius={8}
       borderWidth={1}
       overflow="hidden"
     >
       <Flex
         alignItems="center"
-        bg="subtle-bg"
+        bg="bg.muted"
         justifyContent="space-between"
         px={3}
         py={2}
       >
         <HStack>
-          <Tooltip hasArrow label={dag.description}>
-            <Heading color="subtle-text" fontSize="md">
-              {dag.dag_display_name}
-            </Heading>
+          <Tooltip
+            content={dag.description}
+            disabled={!Boolean(dag.description)}
+            showArrow
+          >
+            <Link asChild color="fg.info" fontWeight="bold">
+              <RouterLink to={`/dags/${dag.dag_id}`}>
+                {dag.dag_display_name}
+              </RouterLink>
+            </Link>
           </Tooltip>
-          {dag.tags.length ? (
-            <HStack spacing={1}>
-              <FiTag data-testid="dag-tag" />
-              {dag.tags.slice(0, MAX_TAGS).map((tag) => (
-                <Badge key={tag.name}>{tag.name}</Badge>
-              ))}
-              {dag.tags.length > MAX_TAGS && (
-                <Tooltip
-                  bg={tooltipBg}
-                  hasArrow
-                  label={
-                    <VStack p={1} spacing={1}>
-                      {dag.tags.slice(MAX_TAGS).map((tag) => (
-                        <Badge key={tag.name}>{tag.name}</Badge>
-                      ))}
-                    </VStack>
-                  }
-                >
-                  <Badge>+{dag.tags.length - MAX_TAGS} more</Badge>
-                </Tooltip>
-              )}
-            </HStack>
-          ) : undefined}
+          <DagTags tags={dag.tags} />
         </HStack>
         <HStack>
-          <TogglePause dagId={dag.dag_id} isPaused={dag.is_paused} />
+          <TogglePause
+            dagDisplayName={dag.dag_display_name}
+            dagId={dag.dag_id}
+            isPaused={dag.is_paused}
+          />
+          <TriggerDAGButton dag={dag} withText={false} />
         </HStack>
       </Flex>
-      <SimpleGrid columns={4} height={20} px={3} py={2} spacing={4}>
-        <div />
-        <VStack align="flex-start" spacing={1}>
-          <Heading color="gray.500" fontSize="xs">
-            Next Run
-          </Heading>
+      <SimpleGrid columns={4} gap={4} height={20} px={3} py={2}>
+        <Stat label="Schedule">
+          <Schedule dag={dag} />
+        </Stat>
+        <Stat label="Latest Run">
+          {latestRun ? (
+            <Link asChild color="fg.info" fontSize="sm">
+              <RouterLink
+                to={`/dags/${latestRun.dag_id}/runs/${latestRun.dag_run_id}`}
+              >
+                <DagRunInfo
+                  dataIntervalEnd={latestRun.data_interval_end}
+                  dataIntervalStart={latestRun.data_interval_start}
+                  endDate={latestRun.end_date}
+                  startDate={latestRun.start_date}
+                  state={latestRun.state}
+                />
+              </RouterLink>
+            </Link>
+          ) : undefined}
+        </Stat>
+        <Stat label="Next Run">
           {Boolean(dag.next_dagrun) ? (
-            <Text fontSize="sm">{dag.next_dagrun}</Text>
+            <DagRunInfo
+              dataIntervalEnd={dag.next_dagrun_data_interval_end}
+              dataIntervalStart={dag.next_dagrun_data_interval_start}
+              nextDagrunCreateAfter={dag.next_dagrun_create_after}
+            />
           ) : undefined}
-          {Boolean(dag.timetable_summary) ? (
-            <Tooltip hasArrow label={dag.timetable_description}>
-              <Text fontSize="sm">
-                {" "}
-                <FiCalendar style={{ display: "inline" }} />{" "}
-                {dag.timetable_summary}
-              </Text>
-            </Tooltip>
-          ) : undefined}
-        </VStack>
-        <div />
-        <div />
+        </Stat>
+        <RecentRuns latestRuns={dag.latest_dag_runs} />
       </SimpleGrid>
     </Box>
   );

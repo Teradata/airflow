@@ -48,14 +48,14 @@
     :maxdepth: 1
     :caption: System tests
 
-    System Tests <_api/tests/system/providers/airbyte/index>
+    System Tests <_api/tests/system/airbyte/index>
 
 .. toctree::
     :hidden:
     :maxdepth: 1
     :caption: Resources
 
-    Example DAGs <https://github.com/apache/airflow/tree/providers-airbyte/|version|/tests/system/providers/airbyte>
+    Example DAGs <https://github.com/apache/airflow/tree/providers-airbyte/|version|/providers/tests/system/airbyte>
     PyPI Repository <https://pypi.org/project/apache-airflow-providers-airbyte/>
     Installing from sources <installing-providers-from-sources>
 
@@ -76,7 +76,7 @@ apache-airflow-providers-airbyte package
 `Airbyte <https://airbyte.com/>`__
 
 
-Release: 4.0.0
+Release: 5.0.0
 
 Provider package
 ----------------
@@ -94,11 +94,11 @@ For the minimum Airflow version supported, see ``Requirements`` below.
 Requirements
 ------------
 
-The minimum Apache Airflow version supported by this provider package is ``2.8.0``.
+The minimum Apache Airflow version supported by this provider package is ``2.9.0``.
 
 ==================  ==================
 PIP package         Version required
 ==================  ==================
-``apache-airflow``  ``>=2.8.0``
+``apache-airflow``  ``>=2.9.0``
 ``airbyte-api``     ``>=0.52.0``
 ==================  ==================
