@@ -1,0 +1,66 @@
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+---
+    name: airflow-teradata-main-code-coverage-report
+    on:
+      push:
+        branches:
+          - main
+      schedule:
+      - cron: "0 6 * * *"
+      workflow_dispatch:
+    permissions:
+      contents: write
+      pages: write
+      id-token: write
+    jobs:
+      teradata-tests:
+        name: "Generate airflow teradata provider code coverage report"
+        runs-on: "ubuntu-22.04"
+        steps:
+          - name: Cleanup repo
+            run: docker run -v "${GITHUB_WORKSPACE}:/workspace" -u 0:0 bash -c "rm -rf /workspace/*"
+          - name: "Checkout Teradata Airflow Source Code"
+            uses: actions/checkout@v4
+            with:
+              ref: main
+              persist-credentials: false
+          - name: "Github Event and Branch Details"
+            run: echo "The current checked out branch is main. Workflow trigged Event- ${{ github.event_name  }}. The fully qualified reference (ref) branch that triggered the workflow run- ${{ github.ref }}. The value of github.event.ref - ${{github.event.ref}} "
+          - name: "Install Python"
+            uses: actions/setup-python@v4
+            with:
+              python-version: '3.8'
+              cache: 'pip'
+              cache-dependency-path: ./dev/breeze/setup*
+          - name: Display Python version
+            run: python -c "import sys; print(sys.version)"
+          - name: Generate Airflow Teradata Provider Code Coverage Report
+            run: |
+                  curl -LsSf https://astral.sh/uv/install.sh | sh
+              uv venv
+              source .venv/bin/activate
+              uv sync --extra devel --extra teradata --extra microsoft.azure --extra amazon
+              sudo apt install python3-pip zip
+              pip install pytest-cov
+              python3 -m pytest --cov-report html --cov=providers/tests/teradata  providers/tests/teradata
+              zip -r htmlcov.zip htmlcov
+
+
+
+
