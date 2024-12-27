@@ -58,7 +58,7 @@
                   uv sync --extra devel --extra teradata --extra microsoft.azure --extra amazon
                   sudo apt install python3-pip zip
                   pip install pytest-cov
-                  python3 -m pytest --cov-report html --cov=providers/tests/teradata  providers/tests/teradata
+                  python3 -m pytest --cov-report html --cov=providers/src/airflow/providers/teradata  providers/tests/teradata
                   zip -r htmlcov.zip htmlcov
           - name: "Build GITHUB Page for Teradata Airflow Provider System Tests Report"
             if: always()
