@@ -60,6 +60,19 @@
                   pip install pytest-cov
                   python3 -m pytest --cov-report html --cov=providers/tests/teradata  providers/tests/teradata
                   zip -r htmlcov.zip htmlcov
+          - name: "Build GITHUB Page for Teradata Airflow Provider System Tests Report"
+            if: always()
+            uses: actions/jekyll-build-pages@v1
+            with:
+             source: ./htmlcov.zip
+             destination: ./_site
+          - name: "Upload Teradata Airflow Provider System Tests Report to GITHUB page"
+            if: always()
+            uses: actions/upload-pages-artifact@v2
+          - name: "Publish Teradata Airflow Provider System Tests Report to GITHUB page"
+            if: always()
+            id: deployment
+            uses: actions/deploy-pages@v2
 
 
 
