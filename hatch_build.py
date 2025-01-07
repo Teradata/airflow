@@ -142,7 +142,7 @@ CORE_EXTRAS: dict[str, list[str]] = {
         "statsd>=3.3.0",
     ],
     "uv": [
-        "uv>=0.5.5",
+        "uv>=0.5.14",
     ],
 }
 
@@ -258,7 +258,7 @@ DEVEL_EXTRAS: dict[str, list[str]] = {
         "deepdiff>=8.1.1",
         "jmespath>=0.7.0",
         "kgb>=7.0.0",
-        "pytest-asyncio>=0.23.6",
+        "pytest-asyncio>=0.23.6,!=0.25.1",
         "pytest-cov>=4.1.0",
         "pytest-custom-exit-code>=0.3.0",
         "pytest-icdiff>=0.9",
@@ -346,10 +346,6 @@ BUNDLE_EXTRAS: dict[str, list[str]] = {
     ],
 }
 
-# When you remove a dependency from the list, you should also make sure to add the dependency to be removed
-# in the scripts/docker/install_airflow_dependencies_from_branch_tip.sh script DEPENDENCIES_TO_REMOVE
-# in order to make sure the dependency is not installed in the CI image build process from the main
-# of Airflow branch. After your PR is merged, you should remove it from the list there.
 DEPENDENCIES = [
     # Alembic is important to handle our migrations in predictable and performant way. It is developed
     # together with SQLAlchemy. Our experience with Alembic is that it very stable in minor version
@@ -404,6 +400,9 @@ DEPENDENCIES = [
     "markdown-it-py>=2.1.0",
     "markupsafe>=1.1.1",
     "marshmallow-oneofschema>=2.0.1",
+    # Marshmallow 3.24.0 introduced a breaking changes
+    # https://github.com/marshmallow-code/marshmallow/blob/dev/CHANGELOG.rst#3240-2025-01-06
+    "marshmallow==3.23.3",
     "mdit-py-plugins>=0.3.0",
     "methodtools>=0.4.7",
     "opentelemetry-api>=1.24.0",
@@ -415,7 +414,9 @@ DEPENDENCIES = [
     "pluggy>=1.5.0",
     "psutil>=5.8.0",
     "pydantic>=2.10.2",
-    "pygments>=2.0.1",
+    # Pygments 2.19.0 improperly renders .ini files with dictionaries as values
+    # See https://github.com/pygments/pygments/issues/2834
+    "pygments>=2.0.1,!=2.19.0",
     "pyjwt>=2.0.0",
     "python-daemon>=3.0.0",
     "python-dateutil>=2.7.0",
