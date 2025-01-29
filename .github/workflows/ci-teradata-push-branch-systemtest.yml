@@ -89,7 +89,7 @@ jobs:
               export AIRFLOW_VAR_AZURE_BLOB_ACCOUNT_SECRET_KEY=${{ secrets.AZURE_BLOB_ACCOUNT_SECRET_KEY }}
               export AIRFLOW_VAR_AWS_ACCESS_KEY_ID=${{ secrets.TERADATA_DOWNLOAD_AWS_SECRET_ACCESS_ID }}
               export AIRFLOW_VAR_AWS_SECRET_ACCESS_KEY=${{ secrets.TERADATA_DOWNLOAD_AWS_SECRET_ACCESS_KEY }}
-              pytest --system=teradata --junitxml=report_test.xml tests/system/providers/teradata
+              pytest --system --junitxml=report_test.xml tests/system/providers/teradata
       - name: "Delete CSAE environment"
         if: always()
         run: |
