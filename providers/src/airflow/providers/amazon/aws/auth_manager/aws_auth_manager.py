@@ -17,7 +17,6 @@
 from __future__ import annotations
 
 import argparse
-import warnings
 from collections import defaultdict
 from collections.abc import Container, Sequence
 from functools import cached_property
@@ -25,7 +24,7 @@ from typing import TYPE_CHECKING, cast
 
 from flask import session, url_for
 
-from airflow.auth.managers.base_auth_manager import BaseAuthManager, ResourceMethod
+from airflow.auth.managers.base_auth_manager import BaseAuthManager
 from airflow.auth.managers.models.resource_details import (
     AccessView,
     ConnectionDetails,
@@ -35,7 +34,7 @@ from airflow.auth.managers.models.resource_details import (
     VariableDetails,
 )
 from airflow.cli.cli_config import CLICommand, DefaultHelpParser, GroupCommand
-from airflow.exceptions import AirflowOptionalProviderFeatureException, AirflowProviderDeprecationWarning
+from airflow.exceptions import AirflowOptionalProviderFeatureException
 from airflow.providers.amazon.aws.auth_manager.avp.entities import AvpEntities
 from airflow.providers.amazon.aws.auth_manager.avp.facade import (
     AwsAuthManagerAmazonVerifiedPermissionsFacade,
@@ -47,13 +46,14 @@ from airflow.providers.amazon.aws.auth_manager.cli.definition import (
 from airflow.providers.amazon.aws.auth_manager.security_manager.aws_security_manager_override import (
     AwsSecurityManagerOverride,
 )
+from airflow.providers.amazon.aws.auth_manager.user import AwsAuthManagerUser
 from airflow.providers.amazon.aws.auth_manager.views.auth import AwsAuthManagerAuthenticationViews
 from airflow.providers.amazon.version_compat import AIRFLOW_V_3_0_PLUS
 
 if TYPE_CHECKING:
     from flask_appbuilder.menu import MenuItem
 
-    from airflow.auth.managers.models.base_user import BaseUser
+    from airflow.auth.managers.base_auth_manager import ResourceMethod
     from airflow.auth.managers.models.batch_apis import (
         IsAuthorizedConnectionRequest,
         IsAuthorizedDagRequest,
@@ -61,11 +61,10 @@ if TYPE_CHECKING:
         IsAuthorizedVariableRequest,
     )
     from airflow.auth.managers.models.resource_details import AssetDetails, ConfigurationDetails
-    from airflow.providers.amazon.aws.auth_manager.user import AwsAuthManagerUser
     from airflow.www.extensions.init_appbuilder import AirflowAppBuilder
 
 
-class AwsAuthManager(BaseAuthManager):
+class AwsAuthManager(BaseAuthManager[AwsAuthManagerUser]):
     """
     AWS auth manager.
 
@@ -98,14 +97,14 @@ class AwsAuthManager(BaseAuthManager):
         self,
         *,
         method: ResourceMethod,
+        user: AwsAuthManagerUser,
         details: ConfigurationDetails | None = None,
-        user: BaseUser | None = None,
     ) -> bool:
         config_section = details.section if details else None
         return self.avp_facade.is_authorized(
             method=method,
             entity_type=AvpEntities.CONFIGURATION,
-            user=user or self.get_user(),
+            user=user,
             entity_id=config_section,
         )
 
@@ -113,14 +112,14 @@ class AwsAuthManager(BaseAuthManager):
         self,
         *,
         method: ResourceMethod,
+        user: AwsAuthManagerUser,
         details: ConnectionDetails | None = None,
-        user: BaseUser | None = None,
     ) -> bool:
         connection_id = details.conn_id if details else None
         return self.avp_facade.is_authorized(
             method=method,
             entity_type=AvpEntities.CONNECTION,
-            user=user or self.get_user(),
+            user=user,
             entity_id=connection_id,
         )
 
@@ -128,9 +127,9 @@ class AwsAuthManager(BaseAuthManager):
         self,
         *,
         method: ResourceMethod,
+        user: AwsAuthManagerUser,
         access_entity: DagAccessEntity | None = None,
         details: DagDetails | None = None,
-        user: BaseUser | None = None,
     ) -> bool:
         dag_id = details.id if details else None
         context = (
@@ -145,48 +144,38 @@ class AwsAuthManager(BaseAuthManager):
         return self.avp_facade.is_authorized(
             method=method,
             entity_type=AvpEntities.DAG,
-            user=user or self.get_user(),
+            user=user,
             entity_id=dag_id,
             context=context,
         )
 
     def is_authorized_asset(
-        self, *, method: ResourceMethod, details: AssetDetails | None = None, user: BaseUser | None = None
+        self, *, method: ResourceMethod, user: AwsAuthManagerUser, details: AssetDetails | None = None
     ) -> bool:
         asset_uri = details.uri if details else None
         return self.avp_facade.is_authorized(
-            method=method, entity_type=AvpEntities.ASSET, user=user or self.get_user(), entity_id=asset_uri
+            method=method, entity_type=AvpEntities.ASSET, user=user, entity_id=asset_uri
         )
-
-    def is_authorized_dataset(
-        self, *, method: ResourceMethod, details: AssetDetails | None = None, user: BaseUser | None = None
-    ) -> bool:
-        warnings.warn(
-            "is_authorized_dataset will be renamed as is_authorized_asset in Airflow 3 and will be removed when the minimum Airflow version is set to 3.0 for the amazon provider",
-            AirflowProviderDeprecationWarning,
-            stacklevel=2,
-        )
-        return self.is_authorized_asset(method=method, user=user)
 
     def is_authorized_pool(
-        self, *, method: ResourceMethod, details: PoolDetails | None = None, user: BaseUser | None = None
+        self, *, method: ResourceMethod, user: AwsAuthManagerUser, details: PoolDetails | None = None
     ) -> bool:
         pool_name = details.name if details else None
         return self.avp_facade.is_authorized(
             method=method,
             entity_type=AvpEntities.POOL,
-            user=user or self.get_user(),
+            user=user,
             entity_id=pool_name,
         )
 
     def is_authorized_variable(
-        self, *, method: ResourceMethod, details: VariableDetails | None = None, user: BaseUser | None = None
+        self, *, method: ResourceMethod, user: AwsAuthManagerUser, details: VariableDetails | None = None
     ) -> bool:
         variable_key = details.key if details else None
         return self.avp_facade.is_authorized(
             method=method,
             entity_type=AvpEntities.VARIABLE,
-            user=user or self.get_user(),
+            user=user,
             entity_id=variable_key,
         )
 
@@ -194,34 +183,31 @@ class AwsAuthManager(BaseAuthManager):
         self,
         *,
         access_view: AccessView,
-        user: BaseUser | None = None,
+        user: AwsAuthManagerUser,
     ) -> bool:
         return self.avp_facade.is_authorized(
             method="GET",
             entity_type=AvpEntities.VIEW,
-            user=user or self.get_user(),
+            user=user,
             entity_id=access_view.value,
         )
 
     def is_authorized_custom_view(
-        self, *, method: ResourceMethod | str, resource_name: str, user: BaseUser | None = None
+        self, *, method: ResourceMethod | str, resource_name: str, user: AwsAuthManagerUser
     ):
         return self.avp_facade.is_authorized(
             method=method,
             entity_type=AvpEntities.CUSTOM,
-            user=user or self.get_user(),
+            user=user,
             entity_id=resource_name,
         )
 
     def batch_is_authorized_connection(
         self,
         requests: Sequence[IsAuthorizedConnectionRequest],
+        *,
+        user: AwsAuthManagerUser,
     ) -> bool:
-        """
-        Batch version of ``is_authorized_connection``.
-
-        :param requests: a list of requests containing the parameters for ``is_authorized_connection``
-        """
         facade_requests: Sequence[IsAuthorizedRequest] = [
             {
                 "method": request["method"],
@@ -232,17 +218,14 @@ class AwsAuthManager(BaseAuthManager):
             }
             for request in requests
         ]
-        return self.avp_facade.batch_is_authorized(requests=facade_requests, user=self.get_user())
+        return self.avp_facade.batch_is_authorized(requests=facade_requests, user=user)
 
     def batch_is_authorized_dag(
         self,
         requests: Sequence[IsAuthorizedDagRequest],
+        *,
+        user: AwsAuthManagerUser,
     ) -> bool:
-        """
-        Batch version of ``is_authorized_dag``.
-
-        :param requests: a list of requests containing the parameters for ``is_authorized_dag``
-        """
         facade_requests: Sequence[IsAuthorizedRequest] = [
             {
                 "method": request["method"],
@@ -258,17 +241,14 @@ class AwsAuthManager(BaseAuthManager):
             }
             for request in requests
         ]
-        return self.avp_facade.batch_is_authorized(requests=facade_requests, user=self.get_user())
+        return self.avp_facade.batch_is_authorized(requests=facade_requests, user=user)
 
     def batch_is_authorized_pool(
         self,
         requests: Sequence[IsAuthorizedPoolRequest],
+        *,
+        user: AwsAuthManagerUser,
     ) -> bool:
-        """
-        Batch version of ``is_authorized_pool``.
-
-        :param requests: a list of requests containing the parameters for ``is_authorized_pool``
-        """
         facade_requests: Sequence[IsAuthorizedRequest] = [
             {
                 "method": request["method"],
@@ -277,17 +257,14 @@ class AwsAuthManager(BaseAuthManager):
             }
             for request in requests
         ]
-        return self.avp_facade.batch_is_authorized(requests=facade_requests, user=self.get_user())
+        return self.avp_facade.batch_is_authorized(requests=facade_requests, user=user)
 
     def batch_is_authorized_variable(
         self,
         requests: Sequence[IsAuthorizedVariableRequest],
+        *,
+        user: AwsAuthManagerUser,
     ) -> bool:
-        """
-        Batch version of ``is_authorized_variable``.
-
-        :param requests: a list of requests containing the parameters for ``is_authorized_variable``
-        """
         facade_requests: Sequence[IsAuthorizedRequest] = [
             {
                 "method": request["method"],
@@ -298,27 +275,17 @@ class AwsAuthManager(BaseAuthManager):
             }
             for request in requests
         ]
-        return self.avp_facade.batch_is_authorized(requests=facade_requests, user=self.get_user())
+        return self.avp_facade.batch_is_authorized(requests=facade_requests, user=user)
 
     def filter_permitted_dag_ids(
         self,
         *,
         dag_ids: set[str],
+        user: AwsAuthManagerUser,
         methods: Container[ResourceMethod] | None = None,
-        user=None,
     ):
-        """
-        Filter readable or writable DAGs for user.
-
-        :param dag_ids: the list of DAG ids
-        :param methods: whether filter readable or writable
-        :param user: the current user
-        """
         if not methods:
             methods = ["PUT", "GET"]
-
-        if not user:
-            user = self.get_user()
 
         requests: dict[str, dict[ResourceMethod, IsAuthorizedRequest]] = defaultdict(dict)
         requests_list: list[IsAuthorizedRequest] = []
@@ -326,11 +293,11 @@ class AwsAuthManager(BaseAuthManager):
             for method in ["GET", "PUT"]:
                 if method in methods:
                     request: IsAuthorizedRequest = {
-                        "method": cast(ResourceMethod, method),
+                        "method": cast("ResourceMethod", method),
                         "entity_type": AvpEntities.DAG,
                         "entity_id": dag_id,
                     }
-                    requests[dag_id][cast(ResourceMethod, method)] = request
+                    requests[dag_id][cast("ResourceMethod", method)] = request
                     requests_list.append(request)
 
         batch_is_authorized_results = self.avp_facade.get_batch_is_authorized_results(

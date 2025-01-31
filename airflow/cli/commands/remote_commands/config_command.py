@@ -122,13 +122,20 @@ CONFIGS_CHANGES = [
     # core
     ConfigChange(
         config=ConfigParameter("core", "check_slas"),
-        suggestion="The SLA feature is removed in Airflow 3.0, to be replaced with Airflow Alerts in "
-        "future",
+        suggestion="The SLA feature is removed in Airflow 3.0, to be replaced with Airflow Alerts in future",
     ),
     ConfigChange(
-        config=ConfigParameter("core", "strict_asset_uri_validation"),
-        suggestion="Asset URI with a defined scheme will now always be validated strictly, "
+        config=ConfigParameter("core", "strict_dataset_uri_validation"),
+        suggestion="Dataset URI with a defined scheme will now always be validated strictly, "
         "raising a hard error on validation failure.",
+    ),
+    ConfigChange(
+        config=ConfigParameter("core", "dataset_manager_class"),
+        renamed_to=ConfigParameter("core", "asset_manager_class"),
+    ),
+    ConfigChange(
+        config=ConfigParameter("core", "dataset_manager_kwargs"),
+        renamed_to=ConfigParameter("core", "asset_manager_kwargs"),
     ),
     ConfigChange(
         config=ConfigParameter("core", "worker_precheck"),
@@ -192,6 +199,10 @@ CONFIGS_CHANGES = [
     ),
     ConfigChange(config=ConfigParameter("core", "task_runner")),
     ConfigChange(config=ConfigParameter("core", "enable_xcom_pickling")),
+    ConfigChange(
+        config=ConfigParameter("core", "dag_file_processor_timeout"),
+        renamed_to=ConfigParameter("dag_processor", "dag_file_processor_timeout"),
+    ),
     # api
     ConfigChange(
         config=ConfigParameter("api", "access_control_allow_origin"),
@@ -238,6 +249,9 @@ CONFIGS_CHANGES = [
         config=ConfigParameter("webserver", "allow_raw_html_descriptions"),
     ),
     ConfigChange(
+        config=ConfigParameter("webserver", "cookie_samesite"),
+    ),
+    ConfigChange(
         config=ConfigParameter("webserver", "update_fab_perms"),
         renamed_to=ConfigParameter("fab", "update_fab_perms"),
     ),
@@ -279,7 +293,7 @@ CONFIGS_CHANGES = [
     ),
     ConfigChange(
         config=ConfigParameter("scheduler", "max_threads"),
-        renamed_to=ConfigParameter("scheduler", "parsing_processes"),
+        renamed_to=ConfigParameter("dag_processor", "parsing_processes"),
     ),
     ConfigChange(
         config=ConfigParameter("scheduler", "statsd_host"),
@@ -316,6 +330,34 @@ CONFIGS_CHANGES = [
     ConfigChange(
         config=ConfigParameter("scheduler", "statsd_custom_client_path"),
         renamed_to=ConfigParameter("metrics", "statsd_custom_client_path"),
+    ),
+    ConfigChange(
+        config=ConfigParameter("scheduler", "parsing_processes"),
+        renamed_to=ConfigParameter("dag_processor", "parsing_processes"),
+    ),
+    ConfigChange(
+        config=ConfigParameter("scheduler", "file_parsing_sort_mode"),
+        renamed_to=ConfigParameter("dag_processor", "file_parsing_sort_mode"),
+    ),
+    ConfigChange(
+        config=ConfigParameter("scheduler", "max_callbacks_per_loop"),
+        renamed_to=ConfigParameter("dag_processor", "max_callbacks_per_loop"),
+    ),
+    ConfigChange(
+        config=ConfigParameter("scheduler", "min_file_process_interval"),
+        renamed_to=ConfigParameter("dag_processor", "min_file_process_interval"),
+    ),
+    ConfigChange(
+        config=ConfigParameter("scheduler", "stale_dag_threshold"),
+        renamed_to=ConfigParameter("dag_processor", "stale_dag_threshold"),
+    ),
+    ConfigChange(
+        config=ConfigParameter("scheduler", "print_stats_interval"),
+        renamed_to=ConfigParameter("dag_processor", "print_stats_interval"),
+    ),
+    ConfigChange(
+        config=ConfigParameter("scheduler", "dag_dir_list_interval"),
+        renamed_to=ConfigParameter("dag_processor", "refresh_interval"),
     ),
     # celery
     ConfigChange(

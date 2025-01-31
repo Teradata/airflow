@@ -19,11 +19,13 @@ from __future__ import annotations
 
 import pathlib
 import sys
+from socket import socketpair
 from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
 import structlog
+from pydantic import TypeAdapter
 
 from airflow.callbacks.callback_requests import CallbackRequest, DagCallbackRequest, TaskCallbackRequest
 from airflow.configuration import conf
@@ -35,6 +37,7 @@ from airflow.dag_processing.processor import (
 from airflow.models import DagBag, TaskInstance
 from airflow.models.baseoperator import BaseOperator
 from airflow.models.serialized_dag import SerializedDagModel
+from airflow.sdk.execution_time.task_runner import CommsDecoder
 from airflow.utils import timezone
 from airflow.utils.session import create_session
 from airflow.utils.state import DagRunState, TaskInstanceState
@@ -74,7 +77,12 @@ class TestDagFileProcessor:
         self, file_path, callback_requests: list[CallbackRequest] | None = None
     ) -> DagFileParsingResult:
         return _parse_file(
-            DagFileParseRequest(file=file_path, requests_fd=1, callback_requests=callback_requests or []),
+            DagFileParseRequest(
+                file=file_path,
+                bundle_path=TEST_DAG_FOLDER,
+                requests_fd=1,
+                callback_requests=callback_requests or [],
+            ),
             log=structlog.get_logger(),
         )
 
@@ -104,7 +112,7 @@ class TestDagFileProcessor:
             session.add(ti)
 
             if has_serialized_dag:
-                assert SerializedDagModel.write_dag(dag, session=session) is True
+                assert SerializedDagModel.write_dag(dag, bundle_name="testing", session=session) is True
                 session.flush()
 
         requests = [TaskCallbackRequest(full_filepath="A", ti=ti, msg="Message")]
@@ -164,6 +172,51 @@ class TestDagFileProcessor:
 #         mock_redirect_stdout_for_file.assert_called_once()
 
 
+@pytest.fixture
+def disable_capturing():
+    old_in, old_out, old_err = sys.stdin, sys.stdout, sys.stderr
+
+    sys.stdin = sys.__stdin__
+    sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
+    yield
+    sys.stdin, sys.stdout, sys.stderr = old_in, old_out, old_err
+
+
+@pytest.mark.usefixtures("disable_capturing")
+def test_parse_file_entrypoint_parses_dag_callbacks(spy_agency):
+    r, w = socketpair()
+    # Create a valid FD for the decoder to open
+    _, w2 = socketpair()
+
+    w.makefile("wb").write(
+        b'{"file":"/files/dags/wait.py","bundle_path":"/files/dags","requests_fd":'
+        + str(w2.fileno()).encode("ascii")
+        + b',"callback_requests": [{"full_filepath": "/files/dags/wait.py", '
+        b'"msg": "task_failure", "dag_id": "wait_to_fail", "run_id": '
+        b'"manual__2024-12-30T21:02:55.203691+00:00", '
+        b'"is_failure_callback": true, "type": "DagCallbackRequest"}], "type": "DagFileParseRequest"}\n'
+    )
+
+    decoder = CommsDecoder[DagFileParseRequest, DagFileParsingResult](
+        input=r.makefile("r"),
+        decoder=TypeAdapter[DagFileParseRequest](DagFileParseRequest),
+    )
+
+    msg = decoder.get_message()
+    assert isinstance(msg, DagFileParseRequest)
+    assert msg.file == "/files/dags/wait.py"
+    assert msg.callback_requests == [
+        DagCallbackRequest(
+            full_filepath="/files/dags/wait.py",
+            msg="task_failure",
+            dag_id="wait_to_fail",
+            run_id="manual__2024-12-30T21:02:55.203691+00:00",
+            is_failure_callback=True,
+        )
+    ]
+
+
 def test_parse_file_with_dag_callbacks(spy_agency):
     from airflow import DAG
 
@@ -189,7 +242,8 @@ def test_parse_file_with_dag_callbacks(spy_agency):
         )
     ]
     _parse_file(
-        DagFileParseRequest(file="A", requests_fd=1, callback_requests=requests), log=structlog.get_logger()
+        DagFileParseRequest(file="A", bundle_path="no matter", requests_fd=1, callback_requests=requests),
+        log=structlog.get_logger(),
     )
 
     assert called is True
@@ -214,7 +268,7 @@ def test_parse_file_with_task_callbacks(spy_agency):
     spy_agency.spy_on(DagBag.collect_dags, call_fake=fake_collect_dags, owner=DagBag)
 
     requests = [
-        TaskCallbackRequest.model_construct(
+        TaskCallbackRequest(
             full_filepath="A",
             msg="Message",
             ti=None,

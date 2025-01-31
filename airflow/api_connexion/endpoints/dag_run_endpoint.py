@@ -22,7 +22,6 @@ from typing import TYPE_CHECKING
 
 import pendulum
 from connexion import NoContent
-from flask import g
 from marshmallow import ValidationError
 from sqlalchemy import delete, or_, select
 
@@ -233,7 +232,9 @@ def get_dag_runs(
     #  This endpoint allows specifying ~ as the dag_id to retrieve DAG Runs for all DAGs.
     if dag_id == "~":
         query = query.where(
-            DagRun.dag_id.in_(get_auth_manager().get_permitted_dag_ids(methods=["GET"], user=g.user))
+            DagRun.dag_id.in_(
+                get_auth_manager().get_permitted_dag_ids(methods=["GET"], user=get_auth_manager().get_user())
+            )
         )
     else:
         query = query.where(DagRun.dag_id == dag_id)
@@ -276,7 +277,9 @@ def get_dag_runs_batch(*, session: Session = NEW_SESSION) -> APIResponse:
     except ValidationError as err:
         raise BadRequest(detail=str(err.messages))
 
-    readable_dag_ids = get_auth_manager().get_permitted_dag_ids(methods=["GET"], user=g.user)
+    readable_dag_ids = get_auth_manager().get_permitted_dag_ids(
+        methods=["GET"], user=get_auth_manager().get_user()
+    )
     query = select(DagRun)
     if data.get("dag_ids"):
         dag_ids = set(data["dag_ids"]) & set(readable_dag_ids)
@@ -347,18 +350,17 @@ def post_dag_run(*, dag_id: str, session: Session = NEW_SESSION) -> APIResponse:
                 )
             else:
                 data_interval = dag.timetable.infer_manual_data_interval(run_after=logical_date)
-            dag_version = DagVersion.get_latest_version(dag.dag_id)
             dag_run = dag.create_dagrun(
-                run_type=DagRunType.MANUAL,
                 run_id=run_id,
                 logical_date=logical_date,
                 data_interval=data_interval,
-                state=DagRunState.QUEUED,
                 conf=post_body.get("conf"),
-                external_trigger=True,
-                dag_version=dag_version,
-                session=session,
+                run_type=DagRunType.MANUAL,
                 triggered_by=DagRunTriggeredByType.REST_API,
+                external_trigger=True,
+                dag_version=DagVersion.get_latest_version(dag.dag_id),
+                state=DagRunState.QUEUED,
+                session=session,
             )
             dag_run_note = post_body.get("note")
             if dag_run_note:

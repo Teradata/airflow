@@ -32,7 +32,7 @@ from pydantic import (
     model_validator,
 )
 
-from airflow.api_fastapi.core_api.base import BaseModel
+from airflow.api_fastapi.core_api.base import BaseModel, StrictBaseModel
 from airflow.api_fastapi.core_api.datamodels.job import JobResponse
 from airflow.api_fastapi.core_api.datamodels.trigger import TriggerResponse
 from airflow.utils.state import TaskInstanceState
@@ -64,6 +64,7 @@ class TaskInstanceResponse(BaseModel):
     priority_weight: int | None
     operator: str | None
     queued_dttm: datetime | None = Field(alias="queued_when")
+    scheduled_dttm: datetime | None = Field(alias="scheduled_when")
     pid: int | None
     executor: str | None
     executor_config: Annotated[str, BeforeValidator(str)]
@@ -97,7 +98,7 @@ class TaskDependencyCollectionResponse(BaseModel):
     dependencies: list[TaskDependencyResponse]
 
 
-class TaskInstancesBatchBody(BaseModel):
+class TaskInstancesBatchBody(StrictBaseModel):
     """Task Instance body for get batch."""
 
     dag_ids: list[str] | None = None
@@ -147,6 +148,7 @@ class TaskInstanceHistoryResponse(BaseModel):
     priority_weight: int | None
     operator: str | None
     queued_dttm: datetime | None = Field(alias="queued_when")
+    scheduled_dttm: datetime | None = Field(alias="scheduled_when")
     pid: int | None
     executor: str | None
     executor_config: Annotated[str, BeforeValidator(str)]
@@ -159,7 +161,7 @@ class TaskInstanceHistoryCollectionResponse(BaseModel):
     total_entries: int
 
 
-class ClearTaskInstancesBody(BaseModel):
+class ClearTaskInstancesBody(StrictBaseModel):
     """Request body for Clear Task Instances endpoint."""
 
     dry_run: bool = True
@@ -167,8 +169,8 @@ class ClearTaskInstancesBody(BaseModel):
     end_date: AwareDatetime | None = None
     only_failed: bool = True
     only_running: bool = False
-    reset_dag_runs: bool = False
-    task_ids: list[str] | None = None
+    reset_dag_runs: bool = True
+    task_ids: list[str | tuple[str, int]] | None = None
     dag_run_id: str | None = None
     include_upstream: bool = False
     include_downstream: bool = False
@@ -195,11 +197,10 @@ class ClearTaskInstancesBody(BaseModel):
         return data
 
 
-class PatchTaskInstanceBody(BaseModel):
+class PatchTaskInstanceBody(StrictBaseModel):
     """Request body for Clear Task Instances endpoint."""
 
-    dry_run: bool = True
-    new_state: str | None = None
+    new_state: TaskInstanceState | None = None
     note: Annotated[str, StringConstraints(max_length=1000)] | None = None
     include_upstream: bool = False
     include_downstream: bool = False
@@ -220,18 +221,3 @@ class PatchTaskInstanceBody(BaseModel):
         if ns not in valid_states:
             raise ValueError(f"'{ns}' is not one of {valid_states}")
         return ns
-
-
-class TaskInstanceReferenceResponse(BaseModel):
-    """Task Instance Reference serializer for responses."""
-
-    task_id: str
-    dag_run_id: str = Field(validation_alias="run_id")
-    dag_id: str
-
-
-class TaskInstanceReferenceCollectionResponse(BaseModel):
-    """Task Instance Reference collection serializer for responses."""
-
-    task_instances: list[TaskInstanceReferenceResponse]
-    total_entries: int

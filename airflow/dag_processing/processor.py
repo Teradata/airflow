@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import sys
 import traceback
-from collections.abc import Generator
+from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Callable, Literal, Union
 
 import attrs
@@ -40,8 +40,8 @@ from airflow.stats import Stats
 if TYPE_CHECKING:
     from structlog.typing import FilteringBoundLogger
 
+    from airflow.sdk.definitions.context import Context
     from airflow.typing_compat import Self
-    from airflow.utils.context import Context
 
 
 def _parse_file_entrypoint():
@@ -50,7 +50,12 @@ def _parse_file_entrypoint():
     import structlog
 
     from airflow.sdk.execution_time import task_runner
+    from airflow.settings import configure_orm
     # Parse DAG file, send JSON back up!
+
+    # We need to reconfigure the orm here, as DagFileProcessorManager does db queries for bundles, and
+    # the session across forks blows things up.
+    configure_orm()
 
     comms_decoder = task_runner.CommsDecoder[DagFileParseRequest, DagFileParsingResult](
         input=sys.stdin,
@@ -69,6 +74,7 @@ def _parse_file(msg: DagFileParseRequest, log: FilteringBoundLogger) -> DagFileP
     # TODO: Set known_pool names on DagBag!
     bag = DagBag(
         dag_folder=msg.file,
+        bundle_path=msg.bundle_path,
         include_examples=False,
         safe_mode=True,
         load_op_links=False,
@@ -111,7 +117,7 @@ def _execute_callbacks(
     dagbag: DagBag, callback_requests: list[CallbackRequest], log: FilteringBoundLogger
 ) -> None:
     for request in callback_requests:
-        log.debug("Processing Callback Request", request=request)
+        log.debug("Processing Callback Request", request=request.to_json())
         if isinstance(request, TaskCallbackRequest):
             raise NotImplementedError(
                 "Haven't coded Task callback yet - https://github.com/apache/airflow/issues/44354!"
@@ -137,7 +143,6 @@ def _execute_dag_callbacks(dagbag: DagBag, request: DagCallbackRequest, log: Fil
         log.info(
             "Executing on_%s dag callback",
             "failure" if request.is_failure_callback else "success",
-            fn=callback,
             dag_id=request.dag_id,
         )
         try:
@@ -156,6 +161,10 @@ class DagFileParseRequest(BaseModel):
     """
 
     file: str
+
+    bundle_path: Path
+    """Passing bundle path around lets us figure out relative file path."""
+
     requests_fd: int
     callback_requests: list[CallbackRequest] = Field(default_factory=list)
     type: Literal["DagFileParseRequest"] = "DagFileParseRequest"
@@ -182,7 +191,7 @@ ToParent = Annotated[
 ]
 
 
-@attrs.define()
+@attrs.define(kw_only=True)
 class DagFileProcessorProcess(WatchedSubprocess):
     """
     Parses dags with Task SDK API.
@@ -195,48 +204,48 @@ class DagFileProcessorProcess(WatchedSubprocess):
     """
 
     parsing_result: DagFileParsingResult | None = None
+    decoder: TypeAdapter[ToParent] = TypeAdapter[ToParent](ToParent)
 
     @classmethod
     def start(  # type: ignore[override]
         cls,
+        *,
         path: str | os.PathLike[str],
+        bundle_path: Path,
         callbacks: list[CallbackRequest],
         target: Callable[[], None] = _parse_file_entrypoint,
         **kwargs,
     ) -> Self:
-        return super().start(path, callbacks, target=target, client=None, **kwargs)  # type:ignore[arg-type]
+        proc: Self = super().start(target=target, **kwargs)
+        proc._on_child_started(callbacks, path, bundle_path)
+        return proc
 
-    def _on_child_started(  # type: ignore[override]
-        self, callbacks: list[CallbackRequest], path: str | os.PathLike[str], child_comms_fd: int
+    def _on_child_started(
+        self,
+        callbacks: list[CallbackRequest],
+        path: str | os.PathLike[str],
+        bundle_path: Path,
     ) -> None:
         msg = DagFileParseRequest(
             file=os.fspath(path),
-            requests_fd=child_comms_fd,
+            bundle_path=bundle_path,
+            requests_fd=self._requests_fd,
             callback_requests=callbacks,
         )
         self.stdin.write(msg.model_dump_json().encode() + b"\n")
 
-    def handle_requests(self, log: FilteringBoundLogger) -> Generator[None, bytes, None]:
-        # TODO: Make decoder an instance variable, then this can live in the base class
-        decoder = TypeAdapter[ToParent](ToParent)
-
-        while True:
-            line = yield
-
-            try:
-                msg = decoder.validate_json(line)
-            except Exception:
-                log.exception("Unable to decode message", line=line)
-                continue
-
-            self._handle_request(msg, log)  # type: ignore[arg-type]
-
     def _handle_request(self, msg: ToParent, log: FilteringBoundLogger) -> None:  # type: ignore[override]
+        # TODO: GetVariable etc -- parsing a dag can run top level code that asks for an Airflow Variable
+        resp = None
         if isinstance(msg, DagFileParsingResult):
             self.parsing_result = msg
             return
-        # GetVariable etc -- parsing a dag can run top level code that asks for an Airflow Variable
-        super()._handle_request(msg, log)
+        else:
+            log.error("Unhandled request", msg=msg)
+            return
+
+        if resp:
+            self.stdin.write(resp + b"\n")
 
     @property
     def is_ready(self) -> bool:
