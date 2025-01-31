@@ -165,6 +165,8 @@ class SerializedDagModel(Base):
     def write_dag(
         cls,
         dag: DAG | LazyDeserializedDAG,
+        bundle_name: str,
+        bundle_version: str | None = None,
         min_update_interval: int | None = None,
         session: Session = NEW_SESSION,
     ) -> bool:
@@ -194,15 +196,18 @@ class SerializedDagModel(Base):
 
         log.debug("Checking if DAG (%s) changed", dag.dag_id)
         new_serialized_dag = cls(dag)
-        serialized_dag_db = session.execute(
+        serialized_dag_hash = session.scalars(
             select(cls.dag_hash).where(cls.dag_id == dag.dag_id).order_by(cls.created_at.desc())
         ).first()
 
-        if serialized_dag_db is not None and serialized_dag_db.dag_hash == new_serialized_dag.dag_hash:
+        if serialized_dag_hash is not None and serialized_dag_hash == new_serialized_dag.dag_hash:
             log.debug("Serialized DAG (%s) is unchanged. Skipping writing to DB", dag.dag_id)
             return False
+
         dagv = DagVersion.write_dag(
             dag_id=dag.dag_id,
+            bundle_name=bundle_name,
+            bundle_version=bundle_version,
             session=session,
         )
         log.debug("Writing Serialized DAG: %s to the DB", dag.dag_id)
@@ -340,6 +345,8 @@ class SerializedDagModel(Base):
     @provide_session
     def bulk_sync_to_db(
         dags: list[DAG] | list[LazyDeserializedDAG],
+        bundle_name: str,
+        bundle_version: str | None = None,
         session: Session = NEW_SESSION,
     ) -> None:
         """
@@ -354,6 +361,8 @@ class SerializedDagModel(Base):
         for dag in dags:
             SerializedDagModel.write_dag(
                 dag=dag,
+                bundle_name=bundle_name,
+                bundle_version=bundle_version,
                 min_update_interval=MIN_SERIALIZED_DAG_UPDATE_INTERVAL,
                 session=session,
             )

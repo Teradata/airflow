@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Union, overload
 
 import attrs
 
+from airflow.sdk.api.datamodels._generated import AssetProfile
 from airflow.serialization.dag_dependency import DagDependency
 
 if TYPE_CHECKING:
@@ -111,14 +112,8 @@ def normalize_noop(parts: SplitResult) -> SplitResult:
 def _get_uri_normalizer(scheme: str) -> Callable[[SplitResult], SplitResult] | None:
     if scheme == "file":
         return normalize_noop
-    from packaging.version import Version
-
-    from airflow import __version__ as AIRFLOW_VERSION
     from airflow.providers_manager import ProvidersManager
 
-    AIRFLOW_V_2 = Version(AIRFLOW_VERSION).base_version < Version("3.0.0").base_version
-    if AIRFLOW_V_2:
-        return ProvidersManager().dataset_uri_handlers.get(scheme)  # type: ignore[attr-defined]
     return ProvidersManager().asset_uri_handlers.get(scheme)
 
 
@@ -434,6 +429,14 @@ class Asset(os.PathLike, BaseAsset):
             dependency_id=self.name,
         )
 
+    def asprofile(self) -> AssetProfile:
+        """
+        Profiles Asset to AssetProfile.
+
+        :meta private:
+        """
+        return AssetProfile(name=self.name or None, uri=self.uri or None, asset_type=Asset.__name__)
+
 
 class AssetRef(BaseAsset, AttrsInstance):
     """
@@ -488,14 +491,14 @@ class AssetRef(BaseAsset, AttrsInstance):
             )
 
 
-@attrs.define()
+@attrs.define(hash=True)
 class AssetNameRef(AssetRef):
     """Name reference to an asset."""
 
     name: str
 
 
-@attrs.define()
+@attrs.define(hash=True)
 class AssetUriRef(AssetRef):
     """URI reference to an asset."""
 
@@ -660,3 +663,12 @@ class AssetAll(_AssetBooleanCondition):
         :meta private:
         """
         return {"all": [o.as_expression() for o in self.objects]}
+
+
+@attrs.define
+class AssetAliasEvent:
+    """Representation of asset event to be triggered by an asset alias."""
+
+    source_alias_name: str
+    dest_asset_key: AssetUniqueKey
+    extra: dict[str, Any]

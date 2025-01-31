@@ -189,6 +189,16 @@ function environment_initialization() {
     fi
 }
 
+# Handle mount sources
+function handle_mount_sources() {
+    if [[ ${MOUNT_SOURCES=} == "remove" ]]; then
+        echo
+        echo "${COLOR_BLUE}Mounted sources are removed, cleaning up mounted dist-info files${COLOR_RESET}"
+        echo
+        rm -rf /usr/local/lib/python${PYTHON_MAJOR_MINOR_VERSION}/site-packages/apache_airflow*.dist-info/
+    fi
+}
+
 # Determine which airflow version to use
 function determine_airflow_to_use() {
     USE_AIRFLOW_VERSION="${USE_AIRFLOW_VERSION:=""}"
@@ -203,12 +213,6 @@ function determine_airflow_to_use() {
         mkdir -p "${AIRFLOW_SOURCES}"/logs/
         mkdir -p "${AIRFLOW_SOURCES}"/tmp/
     else
-        if [[ ${USE_AIRFLOW_VERSION} =~ 2\.[7-8].* && ${TEST_TYPE} == "Providers[fab]" ]]; then
-            echo
-            echo "${COLOR_YELLOW}Skipping FAB tests on Airflow 2.7 and 2.8 because of FAB incompatibility with them${COLOR_RESET}"
-            echo
-            exit 0
-        fi
         if [[ ${CLEAN_AIRFLOW_INSTALLATION=} == "true" ]]; then
             echo
             echo "${COLOR_BLUE}Uninstalling all packages first${COLOR_RESET}"
@@ -230,13 +234,6 @@ function determine_airflow_to_use() {
         # Some packages might leave legacy typing module which causes test issues
         # shellcheck disable=SC2086
         ${PACKAGING_TOOL_CMD} uninstall ${EXTRA_UNINSTALL_FLAGS} typing || true
-        if [[ ${LINK_PROVIDERS_TO_AIRFLOW_PACKAGE=} == "true" ]]; then
-            echo
-            echo "${COLOR_BLUE}Linking providers to airflow package as we are using them from mounted sources.${COLOR_RESET}"
-            echo
-            rm -rf /usr/local/lib/python${PYTHON_MAJOR_MINOR_VERSION}/site-packages/airflow/providers
-            ln -s "${AIRFLOW_SOURCES}/providers/src/airflow/providers" "/usr/local/lib/python${PYTHON_MAJOR_MINOR_VERSION}/site-packages/airflow/providers"
-        fi
     fi
 
     if [[ "${USE_AIRFLOW_VERSION}" =~ ^2\.2\..*|^2\.1\..*|^2\.0\..* && "${AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=}" != "" ]]; then
@@ -258,17 +255,10 @@ function check_boto_upgrade() {
     # We need to include few dependencies to pass pip check with other dependencies:
     #   * oss2 as dependency as otherwise jmespath will be bumped (sync with alibaba provider)
     #   * cryptography is kept for snowflake-connector-python limitation (sync with snowflake provider)
-    #   * requests needs to be limited to be compatible with apache beam (sync with apache-beam provider)
-    #   * yandexcloud requirements for requests does not match those of apache.beam and latest botocore
-    #   Both requests and yandexcloud exclusion above might be removed after
-    #   https://github.com/apache/beam/issues/32080 is addressed
-    #   This is already addressed and planned for 2.59.0 release.
-    #   When you remove yandexcloud and opensearch from the above list, you can also remove the
-    #   optional providers_dependencies exclusions from "test_example_dags.py" in "tests/always".
     set -x
     # shellcheck disable=SC2086
     ${PACKAGING_TOOL_CMD} install ${EXTRA_INSTALL_FLAGS} --upgrade boto3 botocore \
-       "oss2>=2.14.0" "cryptography<43.0.0" "requests!=2.32.*,<3.0.0,>=2.24.0"
+       "oss2>=2.14.0" "cryptography<43.0.0" "opensearch-py"
     set +x
     pip check
 }
@@ -372,7 +362,7 @@ function start_webserver_with_examples(){
     echo
     echo "${COLOR_BLUE}Parsing example dags${COLOR_RESET}"
     echo
-    airflow scheduler --num-runs 100
+    airflow dags reserialize
     echo "Example dags parsing finished"
     echo "Create admin user"
     airflow users create -u admin -p admin -f Thor -l Administrator -r Admin -e admin@email.domain
@@ -396,6 +386,7 @@ function start_webserver_with_examples(){
     echo "${COLOR_BLUE}Airflow webserver started${COLOR_RESET}"
 }
 
+handle_mount_sources
 determine_airflow_to_use
 environment_initialization
 check_boto_upgrade

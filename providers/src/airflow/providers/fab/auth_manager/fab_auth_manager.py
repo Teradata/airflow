@@ -27,13 +27,14 @@ import packaging.version
 from connexion import FlaskApi
 from fastapi import FastAPI
 from flask import Blueprint, g, url_for
+from flask_appbuilder.menu import MenuItem
 from packaging.version import Version
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 from starlette.middleware.wsgi import WSGIMiddleware
 
 from airflow import __version__ as airflow_version
-from airflow.auth.managers.base_auth_manager import BaseAuthManager, ResourceMethod
+from airflow.auth.managers.base_auth_manager import BaseAuthManager
 from airflow.auth.managers.models.resource_details import (
     AccessView,
     ConfigurationDetails,
@@ -59,8 +60,11 @@ from airflow.providers.fab.auth_manager.cli_commands.definition import (
 )
 from airflow.providers.fab.auth_manager.models import Permission, Role, User
 from airflow.providers.fab.www.app import create_app
-from airflow.security import permissions
-from airflow.security.permissions import (
+from airflow.providers.fab.www.constants import SWAGGER_BUNDLE, SWAGGER_ENABLED
+from airflow.providers.fab.www.extensions.init_views import _CustomErrorRequestBodyValidator, _LazyResolver
+from airflow.providers.fab.www.security import permissions
+from airflow.providers.fab.www.security.permissions import (
+    ACTION_CAN_ACCESS_MENU,
     RESOURCE_AUDIT_LOG,
     RESOURCE_CLUSTER_ACTIVITY,
     RESOURCE_CONFIG,
@@ -88,18 +92,16 @@ from airflow.security.permissions import (
 from airflow.utils.session import NEW_SESSION, create_session, provide_session
 from airflow.utils.yaml import safe_load
 from airflow.version import version
-from airflow.www.constants import SWAGGER_BUNDLE, SWAGGER_ENABLED
-from airflow.www.extensions.init_views import _CustomErrorRequestBodyValidator, _LazyResolver
 
 if TYPE_CHECKING:
-    from airflow.auth.managers.models.base_user import BaseUser
+    from airflow.auth.managers.base_auth_manager import ResourceMethod
     from airflow.cli.cli_config import (
         CLICommand,
     )
     from airflow.providers.common.compat.assets import AssetDetails
     from airflow.providers.fab.auth_manager.security_manager.override import FabAirflowSecurityManagerOverride
     from airflow.providers.fab.www.extensions.init_appbuilder import AirflowAppBuilder
-    from airflow.security.permissions import RESOURCE_ASSET
+    from airflow.providers.fab.www.security.permissions import RESOURCE_ASSET
 else:
     from airflow.providers.common.compat.security.permissions import RESOURCE_ASSET
 
@@ -178,7 +180,7 @@ class FabAuthManager(BaseAuthManager[User]):
         if not flask_blueprint:
             return None
 
-        flask_app = create_app()
+        flask_app = create_app(enable_plugins=False)
         flask_app.register_blueprint(flask_blueprint)
 
         app = FastAPI(
@@ -256,8 +258,8 @@ class FabAuthManager(BaseAuthManager[User]):
         self,
         *,
         method: ResourceMethod,
+        user: User,
         details: ConfigurationDetails | None = None,
-        user: BaseUser | None = None,
     ) -> bool:
         return self._is_authorized(method=method, resource_type=RESOURCE_CONFIG, user=user)
 
@@ -265,8 +267,8 @@ class FabAuthManager(BaseAuthManager[User]):
         self,
         *,
         method: ResourceMethod,
+        user: User,
         details: ConnectionDetails | None = None,
-        user: BaseUser | None = None,
     ) -> bool:
         return self._is_authorized(method=method, resource_type=RESOURCE_CONNECTION, user=user)
 
@@ -274,9 +276,9 @@ class FabAuthManager(BaseAuthManager[User]):
         self,
         *,
         method: ResourceMethod,
+        user: User,
         access_entity: DagAccessEntity | None = None,
         details: DagDetails | None = None,
-        user: BaseUser | None = None,
     ) -> bool:
         """
         Return whether the user is authorized to access the dag.
@@ -293,9 +295,9 @@ class FabAuthManager(BaseAuthManager[User]):
                 if no specific DAG is targeted, just check the sub entity.
 
         :param method: The method to authorize.
+        :param user: The user.
         :param access_entity: The dag access entity.
         :param details: The dag details.
-        :param user: The user.
         """
         if not access_entity:
             # Scenario 1
@@ -318,32 +320,28 @@ class FabAuthManager(BaseAuthManager[User]):
             )
 
     def is_authorized_asset(
-        self, *, method: ResourceMethod, details: AssetDetails | None = None, user: BaseUser | None = None
+        self, *, method: ResourceMethod, user: User, details: AssetDetails | None = None
     ) -> bool:
         return self._is_authorized(method=method, resource_type=RESOURCE_ASSET, user=user)
 
     def is_authorized_pool(
-        self, *, method: ResourceMethod, details: PoolDetails | None = None, user: BaseUser | None = None
+        self, *, method: ResourceMethod, user: User, details: PoolDetails | None = None
     ) -> bool:
         return self._is_authorized(method=method, resource_type=RESOURCE_POOL, user=user)
 
     def is_authorized_variable(
-        self, *, method: ResourceMethod, details: VariableDetails | None = None, user: BaseUser | None = None
+        self, *, method: ResourceMethod, user: User, details: VariableDetails | None = None
     ) -> bool:
         return self._is_authorized(method=method, resource_type=RESOURCE_VARIABLE, user=user)
 
-    def is_authorized_view(self, *, access_view: AccessView, user: BaseUser | None = None) -> bool:
+    def is_authorized_view(self, *, access_view: AccessView, user: User) -> bool:
         # "Docs" are only links in the menu, there is no page associated
         method: ResourceMethod = "MENU" if access_view == AccessView.DOCS else "GET"
         return self._is_authorized(
             method=method, resource_type=_MAP_ACCESS_VIEW_TO_FAB_RESOURCE_TYPE[access_view], user=user
         )
 
-    def is_authorized_custom_view(
-        self, *, method: ResourceMethod | str, resource_name: str, user: BaseUser | None = None
-    ):
-        if not user:
-            user = self.get_user()
+    def is_authorized_custom_view(self, *, method: ResourceMethod | str, resource_name: str, user: User):
         fab_action_name = get_fab_action_from_method_map().get(method, method)
         return (fab_action_name, resource_name) in self._get_user_permissions(user)
 
@@ -351,15 +349,12 @@ class FabAuthManager(BaseAuthManager[User]):
     def get_permitted_dag_ids(
         self,
         *,
+        user: User,
         methods: Container[ResourceMethod] | None = None,
-        user=None,
         session: Session = NEW_SESSION,
     ) -> set[str]:
         if not methods:
             methods = ["PUT", "GET"]
-
-        if not user:
-            user = self.get_user()
 
         if not self.is_logged_in():
             roles = user.roles
@@ -397,6 +392,32 @@ class FabAuthManager(BaseAuthManager[User]):
                     else:
                         resources.add(resource)
         return set(session.scalars(select(DagModel.dag_id).where(DagModel.dag_id.in_(resources))))
+
+    def filter_permitted_menu_items(self, menu_items: list[MenuItem]) -> list[MenuItem]:
+        """
+        Filter menu items based on user permissions.
+
+        :param menu_items: list of all menu items
+        """
+        items = filter(
+            lambda item: self.security_manager.has_access(ACTION_CAN_ACCESS_MENU, item.name), menu_items
+        )
+        accessible_items = []
+        for menu_item in items:
+            menu_item_copy = MenuItem(
+                **{
+                    **menu_item.__dict__,
+                    "childs": [],
+                }
+            )
+            if menu_item.childs:
+                accessible_children = []
+                for child in menu_item.childs:
+                    if self.security_manager.has_access(ACTION_CAN_ACCESS_MENU, child.name):
+                        accessible_children.append(child)
+                menu_item_copy.childs = accessible_children
+            accessible_items.append(menu_item_copy)
+        return accessible_items
 
     @cached_property
     def security_manager(self) -> FabAirflowSecurityManagerOverride:
@@ -449,20 +470,17 @@ class FabAuthManager(BaseAuthManager[User]):
         *,
         method: ResourceMethod,
         resource_type: str,
-        user: BaseUser | None = None,
+        user: User,
     ) -> bool:
         """
         Return whether the user is authorized to perform a given action.
 
         :param method: the method to perform
         :param resource_type: the type of resource the user attempts to perform the action on
-        :param user: the user to perform the action on. If not provided (or None), it uses the current user
+        :param user: the user to perform the action on
 
         :meta private:
         """
-        if not user:
-            user = self.get_user()
-
         fab_action = self._get_fab_action(method)
         user_permissions = self._get_user_permissions(user)
 
@@ -471,15 +489,15 @@ class FabAuthManager(BaseAuthManager[User]):
     def _is_authorized_dag(
         self,
         method: ResourceMethod,
-        details: DagDetails | None = None,
-        user: BaseUser | None = None,
+        details: DagDetails | None,
+        user: User,
     ) -> bool:
         """
         Return whether the user is authorized to perform a given action on a DAG.
 
         :param method: the method to perform
-        :param details: optional details about the DAG
-        :param user: the user to perform the action on. If not provided (or None), it uses the current user
+        :param details: details about the DAG
+        :param user: the user to perform the action on
 
         :meta private:
         """
@@ -497,15 +515,15 @@ class FabAuthManager(BaseAuthManager[User]):
     def _is_authorized_dag_run(
         self,
         method: ResourceMethod,
-        details: DagDetails | None = None,
-        user: BaseUser | None = None,
+        details: DagDetails | None,
+        user: User,
     ) -> bool:
         """
         Return whether the user is authorized to perform a given action on a DAG Run.
 
         :param method: the method to perform
-        :param details: optional, details about the DAG
-        :param user: optional, the user to perform the action on. If not provided, it uses the current user
+        :param details: details about the DAG
+        :param user: the user to perform the action on
 
         :meta private:
         """
@@ -561,7 +579,7 @@ class FabAuthManager(BaseAuthManager[User]):
         return getattr(permissions, "resource_name_for_dag")(root_dag_id)
 
     @staticmethod
-    def _get_user_permissions(user: BaseUser):
+    def _get_user_permissions(user: User):
         """
         Return the user permissions.
 
