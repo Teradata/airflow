@@ -27,8 +27,9 @@ def get_provider_info():
         "name": "PostgreSQL",
         "description": "`PostgreSQL <https://www.postgresql.org/>`__\n",
         "state": "ready",
-        "source-date-epoch": 1734536300,
+        "source-date-epoch": 1739964148,
         "versions": [
+            "6.1.0",
             "6.0.0",
             "5.14.0",
             "5.13.1",
@@ -75,9 +76,7 @@ def get_provider_info():
             {
                 "integration-name": "PostgreSQL",
                 "external-doc-url": "https://www.postgresql.org/",
-                "how-to-guide": [
-                    "/docs/apache-airflow-providers-postgres/operators/postgres_operator_howto_guide.rst"
-                ],
+                "how-to-guide": ["/docs/apache-airflow-providers-postgres/operators.rst"],
                 "logo": "/docs/integration-logos/Postgres.png",
                 "tags": ["software"],
             }
@@ -115,7 +114,7 @@ def get_provider_info():
         "dependencies": [
             "apache-airflow>=2.9.0",
             "apache-airflow-providers-common-sql>=1.20.0",
-            "psycopg2-binary>=2.9.7",
+            "psycopg2-binary>=2.9.9",
             "asyncpg>=0.30.0",
         ],
         "optional-dependencies": {

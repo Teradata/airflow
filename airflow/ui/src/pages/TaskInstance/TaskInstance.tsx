@@ -22,8 +22,7 @@ import { useParams, Link as RouterLink, useSearchParams } from "react-router-dom
 import { useDagServiceGetDagDetails, useTaskInstanceServiceGetMappedTaskInstance } from "openapi/queries";
 import { Breadcrumb } from "src/components/ui";
 import { DetailsLayout } from "src/layouts/Details/DetailsLayout";
-import { useConfig } from "src/queries/useConfig";
-import { isStatePending } from "src/utils/refresh";
+import { isStatePending, useAutoRefresh } from "src/utils";
 
 import { Header } from "./Header";
 
@@ -33,6 +32,7 @@ const tabs = [
   { label: "XCom", value: "xcom" },
   { label: "Code", value: "code" },
   { label: "Details", value: "details" },
+  { label: "Rendered Templates", value: "rendered_templates" },
 ];
 
 export const TaskInstance = () => {
@@ -42,7 +42,15 @@ export const TaskInstance = () => {
   const mapIndexParam = searchParams.get("map_index");
   const mapIndex = parseInt(mapIndexParam ?? "-1", 10);
 
-  const autoRefreshInterval = useConfig("auto_refresh_interval") as number;
+  const refetchInterval = useAutoRefresh({ dagId });
+
+  const {
+    data: dag,
+    error: dagError,
+    isLoading: isDagLoading,
+  } = useDagServiceGetDagDetails({
+    dagId,
+  });
 
   const {
     data: taskInstance,
@@ -57,18 +65,9 @@ export const TaskInstance = () => {
     },
     undefined,
     {
-      refetchInterval: (query) =>
-        isStatePending(query.state.data?.state) ? autoRefreshInterval * 1000 : false,
+      refetchInterval: (query) => (isStatePending(query.state.data?.state) ? refetchInterval : false),
     },
   );
-
-  const {
-    data: dag,
-    error: dagError,
-    isLoading: isDagLoading,
-  } = useDagServiceGetDagDetails({
-    dagId,
-  });
 
   const links = [
     { label: "Dags", value: "/dags" },
@@ -102,7 +101,7 @@ export const TaskInstance = () => {
       </Breadcrumb.Root>
       {taskInstance === undefined ? undefined : (
         <Header
-          isRefreshing={Boolean(isStatePending(taskInstance.state) && autoRefreshInterval)}
+          isRefreshing={Boolean(isStatePending(taskInstance.state) && Boolean(refetchInterval))}
           taskInstance={taskInstance}
         />
       )}

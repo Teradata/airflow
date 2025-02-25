@@ -21,7 +21,7 @@ from sqlalchemy import func, select
 
 from airflow.models.dag_version import DagVersion
 from airflow.models.serialized_dag import SerializedDagModel
-from airflow.operators.empty import EmptyOperator
+from airflow.providers.standard.operators.empty import EmptyOperator
 
 from tests_common.test_utils.db import clear_db_dags
 
@@ -50,6 +50,7 @@ class TestDagVersion:
             EmptyOperator(task_id="task1")
         dag.sync_to_db()
         SerializedDagModel.write_dag(dag, bundle_name="dag_maker")
+        dag_maker.create_dagrun()
         # Add extra task to change the dag
         with dag_maker("test1") as dag2:
             EmptyOperator(task_id="task1")

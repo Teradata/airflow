@@ -26,7 +26,7 @@ import time_machine
 
 from airflow.exceptions import AirflowTimetableInvalid
 from airflow.timetables.base import DagRunInfo, DataInterval, TimeRestriction
-from airflow.timetables.trigger import CronTriggerTimetable
+from airflow.timetables.trigger import CronTriggerTimetable, MultipleCronTriggerTimetable
 from airflow.utils.timezone import utc
 
 START_DATE = pendulum.DateTime(2021, 9, 4, tzinfo=utc)
@@ -285,3 +285,61 @@ def test_run_immediately_fast_dag(catchup):
             restriction=TimeRestriction(earliest=None, latest=None, catchup=catchup),
         )
         assert next_info == PREVIOUS
+
+
+@pytest.mark.parametrize(
+    "start_date, expected",
+    [
+        (pendulum.datetime(2025, 1, 1), pendulum.datetime(2025, 1, 1)),
+        (pendulum.datetime(2025, 1, 1, minute=5), pendulum.datetime(2025, 1, 1, minute=30)),
+        (pendulum.datetime(2025, 1, 1, minute=35), pendulum.datetime(2025, 1, 1, hour=1)),
+    ],
+)
+def test_multi_run_first(start_date, expected):
+    timetable = MultipleCronTriggerTimetable("@hourly", "30 * * * *", timezone=utc)
+    next_info = timetable.next_dagrun_info(
+        last_automated_data_interval=None,
+        restriction=TimeRestriction(earliest=start_date, latest=None, catchup=True),
+    )
+    assert next_info == DagRunInfo.exact(expected)
+
+
+@pytest.mark.parametrize(
+    "last, expected",
+    [
+        (pendulum.datetime(2025, 1, 1), pendulum.datetime(2025, 1, 1, minute=30)),
+        (pendulum.datetime(2025, 1, 1, minute=30), pendulum.datetime(2025, 1, 1, hour=1)),
+    ],
+)
+def test_multi_run_next(last, expected):
+    timetable = MultipleCronTriggerTimetable("@hourly", "30 * * * *", timezone=utc)
+    next_info = timetable.next_dagrun_info(
+        last_automated_data_interval=DataInterval.exact(last),
+        restriction=TimeRestriction(earliest=None, latest=None, catchup=True),
+    )
+    assert next_info == DagRunInfo.exact(expected)
+
+
+def test_multi_serialization():
+    timetable = MultipleCronTriggerTimetable(
+        "@every 30s",
+        "*/2 * * * *",
+        timezone="UTC",
+        interval=datetime.timedelta(minutes=10),
+    )
+    data = timetable.serialize()
+    assert data == {
+        "expressions": ["@every 30s", "*/2 * * * *"],
+        "timezone": "UTC",
+        "interval": 600.0,
+        "run_immediately": False,
+    }
+
+    tt = MultipleCronTriggerTimetable.deserialize(data)
+    assert isinstance(tt, MultipleCronTriggerTimetable)
+    assert len(tt._timetables) == 2
+    assert tt._timetables[0]._expression == "@every 30s"
+    assert tt._timetables[1]._expression == "*/2 * * * *"
+    assert tt._timetables[0]._timezone == tt._timetables[1]._timezone == utc
+    assert tt._timetables[0]._interval == tt._timetables[1]._interval == datetime.timedelta(minutes=10)
+    assert tt._timetables[0].run_immediately == tt._timetables[1].run_immediately is False

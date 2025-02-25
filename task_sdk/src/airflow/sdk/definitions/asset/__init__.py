@@ -37,7 +37,8 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from airflow.models.asset import AssetModel
-    from airflow.triggers.base import BaseTrigger
+    from airflow.serialization.serialized_objects import SerializedAssetWatcher
+    from airflow.triggers.base import BaseEventTrigger
 
     AttrsInstance = attrs.AttrsInstance
 else:
@@ -54,6 +55,7 @@ __all__ = [
     "AssetNameRef",
     "AssetRef",
     "AssetUriRef",
+    "AssetWatcher",
 ]
 
 
@@ -252,6 +254,33 @@ class BaseAsset:
         raise NotImplementedError
 
 
+@attrs.define(init=False)
+class AssetWatcher:
+    """A representation of an asset watcher. The name uniquely identifies the watch."""
+
+    name: str
+    # This attribute serves double purpose.
+    # For a "normal" asset instance loaded from DAG, this holds the trigger used to monitor an external
+    # resource. In that case, ``AssetWatcher`` is used directly by users.
+    # For an asset recreated from a serialized DAG, this holds the serialized data of the trigger. In that
+    # case, `SerializedAssetWatcher` is used. We need to keep the two types to make mypy happy because
+    # `SerializedAssetWatcher` is a subclass of `AssetWatcher`.
+    trigger: BaseEventTrigger | dict
+
+    def __init__(
+        self,
+        name: str,
+        trigger: BaseEventTrigger | dict,
+    ) -> None:
+        from airflow.triggers.base import BaseEventTrigger, BaseTrigger
+
+        if isinstance(trigger, BaseTrigger) and not isinstance(trigger, BaseEventTrigger):
+            raise ValueError("The trigger used to watch an asset must inherit ``BaseEventTrigger``")
+
+        self.name = name
+        self.trigger = trigger
+
+
 @attrs.define(init=False, unsafe_hash=False)
 class Asset(os.PathLike, BaseAsset):
     """A representation of data asset dependencies between workflows."""
@@ -271,7 +300,7 @@ class Asset(os.PathLike, BaseAsset):
         factory=dict,
         converter=_set_extra_default,
     )
-    watchers: list[BaseTrigger] = attrs.field(
+    watchers: list[AssetWatcher | SerializedAssetWatcher] = attrs.field(
         factory=list,
     )
 
@@ -286,7 +315,7 @@ class Asset(os.PathLike, BaseAsset):
         *,
         group: str = ...,
         extra: dict | None = None,
-        watchers: list[BaseTrigger] = ...,
+        watchers: list[AssetWatcher | SerializedAssetWatcher] = ...,
     ) -> None:
         """Canonical; both name and uri are provided."""
 
@@ -297,7 +326,7 @@ class Asset(os.PathLike, BaseAsset):
         *,
         group: str = ...,
         extra: dict | None = None,
-        watchers: list[BaseTrigger] = ...,
+        watchers: list[AssetWatcher | SerializedAssetWatcher] = ...,
     ) -> None:
         """It's possible to only provide the name, either by keyword or as the only positional argument."""
 
@@ -308,7 +337,7 @@ class Asset(os.PathLike, BaseAsset):
         uri: str,
         group: str = ...,
         extra: dict | None = None,
-        watchers: list[BaseTrigger] = ...,
+        watchers: list[AssetWatcher | SerializedAssetWatcher] = ...,
     ) -> None:
         """It's possible to only provide the URI as a keyword argument."""
 
@@ -319,7 +348,7 @@ class Asset(os.PathLike, BaseAsset):
         *,
         group: str | None = None,
         extra: dict | None = None,
-        watchers: list[BaseTrigger] | None = None,
+        watchers: list[AssetWatcher | SerializedAssetWatcher] | None = None,
     ) -> None:
         if name is None and uri is None:
             raise TypeError("Asset() requires either 'name' or 'uri'")

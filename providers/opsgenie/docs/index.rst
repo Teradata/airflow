@@ -57,7 +57,7 @@
     :maxdepth: 1
     :caption: Resources
 
-    Example DAGs <https://github.com/apache/airflow/tree/providers-opsgenie/|version|/providers/tests/system/opsgenie>
+    Example DAGs <https://github.com/apache/airflow/tree/providers-opsgenie/|version|/providers/opsgenie/tests/system/opsgenie>
     PyPI Repository <https://pypi.org/project/apache-airflow-providers-opsgenie/>
     Installing from sources <installing-providers-from-sources>
 
@@ -78,7 +78,7 @@ apache-airflow-providers-opsgenie package
 `Opsgenie <https://www.atlassian.com/software/opsgenie>`__
 
 
-Release: 5.8.0
+Release: 5.8.1
 
 Provider package
 ----------------

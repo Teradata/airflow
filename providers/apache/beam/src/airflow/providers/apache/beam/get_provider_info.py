@@ -27,8 +27,9 @@ def get_provider_info():
         "name": "Apache Beam",
         "description": "`Apache Beam <https://beam.apache.org/>`__.\n",
         "state": "ready",
-        "source-date-epoch": 1734527138,
+        "source-date-epoch": 1739958460,
         "versions": [
+            "6.0.2",
             "6.0.0",
             "5.9.1",
             "5.9.0",
@@ -93,9 +94,18 @@ def get_provider_info():
                 "python-modules": ["airflow.providers.apache.beam.triggers.beam"],
             }
         ],
-        "dependencies": ["apache-airflow>=2.9.0", "apache-beam>=2.53.0", "pyarrow>=14.0.1", "numpy>=1.26.0"],
+        "dependencies": [
+            "apache-airflow>=2.9.0",
+            'apache-beam>=2.53.0; python_version < "3.12"',
+            'apache-beam>=2.57.0; python_version >= "3.12"',
+            "pyarrow>=14.0.1",
+            "numpy>=1.26.0",
+        ],
         "optional-dependencies": {
-            "google": ["apache-beam[gcp]"],
+            "google": [
+                'apache-beam[gcp]>=2.53.0; python_version < "3.12"',
+                'apache-beam[gcp]>=2.57.0; python_version >= "3.12"',
+            ],
             "common.compat": ["apache-airflow-providers-common-compat"],
         },
     }

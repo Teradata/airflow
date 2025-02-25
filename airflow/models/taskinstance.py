@@ -17,7 +17,6 @@
 # under the License.
 from __future__ import annotations
 
-import collections.abc
 import contextlib
 import hashlib
 import itertools
@@ -163,7 +162,7 @@ if TYPE_CHECKING:
     from airflow.sdk.definitions._internal.abstractoperator import Operator
     from airflow.sdk.definitions.dag import DAG
     from airflow.sdk.types import RuntimeTaskInstanceProtocol
-    from airflow.typing_compat import Literal, TypeGuard
+    from airflow.typing_compat import Literal
     from airflow.utils.task_group import TaskGroup
 
 
@@ -384,7 +383,7 @@ def _run_raw_task(
             TaskInstance.save_to_db(ti=ti, session=session)
             if ti.state == TaskInstanceState.SUCCESS:
                 get_listener_manager().hook.on_task_instance_success(
-                    previous_state=TaskInstanceState.RUNNING, task_instance=ti, session=session
+                    previous_state=TaskInstanceState.RUNNING, task_instance=ti
                 )
 
         return None
@@ -574,39 +573,6 @@ def _xcom_pull(
     default: Any = None,
     run_id: str | None = None,
 ) -> Any:
-    """
-    Pull XComs that optionally meet certain criteria.
-
-    :param key: A key for the XCom. If provided, only XComs with matching
-        keys will be returned. The default key is ``'return_value'``, also
-        available as constant ``XCOM_RETURN_KEY``. This key is automatically
-        given to XComs returned by tasks (as opposed to being pushed
-        manually). To remove the filter, pass *None*.
-    :param task_ids: Only XComs from tasks with matching ids will be
-        pulled. Pass *None* to remove the filter.
-    :param dag_id: If provided, only pulls XComs from this DAG. If *None*
-        (default), the DAG of the calling task is used.
-    :param map_indexes: If provided, only pull XComs with matching indexes.
-        If *None* (default), this is inferred from the task(s) being pulled
-        (see below for details).
-    :param include_prior_dates: If False, only XComs from the current
-        logical_date are returned. If *True*, XComs from previous dates
-        are returned as well.
-    :param run_id: If provided, only pulls XComs from a DagRun w/a matching run_id.
-        If *None* (default), the run_id of the calling task is used.
-
-    When pulling one single task (``task_id`` is *None* or a str) without
-    specifying ``map_indexes``, the return value is inferred from whether
-    the specified task is mapped. If not, value from the one single task
-    instance is returned. If the task to pull is mapped, an iterator (not a
-    list) yielding XComs from mapped task instances is returned. In either
-    case, ``default`` (*None* if not specified) is returned if no matching
-    XComs are found.
-
-    When pulling multiple tasks (i.e. either ``task_id`` or ``map_index`` is
-    a non-str iterable), a list of matching XComs is returned. Elements in
-    the list is ordered by item ordering in ``task_id`` and ``map_index``.
-    """
     if dag_id is None:
         dag_id = ti.dag_id
     if run_id is None:
@@ -635,11 +601,10 @@ def _xcom_pull(
             return default
         if map_indexes is not None or first.map_index < 0:
             return XCom.deserialize_value(first)
-        return LazyXComSelectSequence.from_select(
-            query.with_entities(XCom.value).order_by(None).statement,
-            order_by=[XCom.map_index],
-            session=session,
-        )
+
+        # raise RuntimeError("Nothing should hit this anymore")
+
+    # TODO: TaskSDK: We should remove this, but many tests still currently call `ti.run()`. See #45549
 
     # At this point either task_ids or map_indexes is explicitly multi-value.
     # Order return values to match task_ids and map_indexes ordering.
@@ -666,20 +631,6 @@ def _xcom_pull(
         order_by=ordering,
         session=session,
     )
-
-
-def _is_mappable_value(value: Any) -> TypeGuard[Collection]:
-    """
-    Whether a value can be used for task mapping.
-
-    We only allow collections with guaranteed ordering, but exclude character
-    sequences since that's usually not what users would expect to be mappable.
-    """
-    if not isinstance(value, (collections.abc.Sequence, dict)):
-        return False
-    if isinstance(value, (bytearray, bytes, str)):
-        return False
-    return True
 
 
 def _creator_note(val):
@@ -853,7 +804,6 @@ def _set_ti_attrs(target, source, include_dag_run=False):
         target.dag_run.data_interval_start = source.dag_run.data_interval_start
         target.dag_run.data_interval_end = source.dag_run.data_interval_end
         target.dag_run.last_scheduling_decision = source.dag_run.last_scheduling_decision
-        target.dag_run.dag_version_id = source.dag_run.dag_version_id
         target.dag_run.updated_at = source.dag_run.updated_at
         target.dag_run.log_template_id = source.dag_run.log_template_id
 
@@ -1050,14 +1000,18 @@ def _get_template_context(
         )
         context["expanded_ti_count"] = expanded_ti_count
         if expanded_ti_count:
-            context["_upstream_map_indexes"] = {  # type: ignore[typeddict-unknown-key]
-                upstream.task_id: task_instance.get_relevant_upstream_map_indexes(
-                    upstream,
-                    expanded_ti_count,
-                    session=session,
-                )
-                for upstream in task.upstream_list
-            }
+            setattr(
+                task_instance,
+                "_upstream_map_indexes",
+                {
+                    upstream.task_id: task_instance.get_relevant_upstream_map_indexes(
+                        upstream,
+                        expanded_ti_count,
+                        session=session,
+                    )
+                    for upstream in task.upstream_list
+                },
+            )
     except NotMapped:
         pass
 
@@ -1217,7 +1171,7 @@ def _record_task_map_for_downstreams(
 
     :meta private:
     """
-    from airflow.sdk.definitions.mappedoperator import MappedOperator
+    from airflow.sdk.definitions.mappedoperator import MappedOperator, is_mappable_value
 
     if next(task.iter_mapped_dependants(), None) is None:  # No mapped dependants, no need to validate.
         return
@@ -1229,7 +1183,7 @@ def _record_task_map_for_downstreams(
         return
     if value is None:
         raise XComForMappingNotPushed()
-    if not _is_mappable_value(value):
+    if not is_mappable_value(value):
         raise UnmappableXComTypePushed(value)
     task_map = TaskMap.from_task_instance_xcom(task_instance, value)
     max_map_length = conf.getint("core", "max_map_length", fallback=1024)
@@ -1721,7 +1675,7 @@ class TaskInstance(Base, LoggingMixin):
     executor = Column(String(1000))
     executor_config = Column(ExecutorConfigType(pickler=dill))
     updated_at = Column(UtcDateTime, default=timezone.utcnow, onupdate=timezone.utcnow)
-    rendered_map_index = Column(String(250))
+    _rendered_map_index = Column("rendered_map_index", String(250))
 
     external_executor_id = Column(StringID())
 
@@ -1779,6 +1733,7 @@ class TaskInstance(Base, LoggingMixin):
     triggerer_job = association_proxy("trigger", "triggerer_job")
     dag_run = relationship("DagRun", back_populates="task_instances", lazy="joined", innerjoin=True)
     rendered_task_instance_fields = relationship("RenderedTaskInstanceFields", lazy="noload", uselist=False)
+    run_after = association_proxy("dag_run", "run_after")
     logical_date = association_proxy("dag_run", "logical_date")
     task_instance_note = relationship(
         "TaskInstanceNote",
@@ -1843,7 +1798,9 @@ class TaskInstance(Base, LoggingMixin):
         return _stats_tags(task_instance=self)
 
     @staticmethod
-    def insert_mapping(run_id: str, task: Operator, map_index: int, dag_version_id: int) -> dict[str, Any]:
+    def insert_mapping(
+        run_id: str, task: Operator, map_index: int, dag_version_id: UUIDType | None
+    ) -> dict[str, Any]:
         """
         Insert mapping.
 
@@ -1889,6 +1846,14 @@ class TaskInstance(Base, LoggingMixin):
     def task_display_name(self) -> str:
         return self._task_display_property_value or self.task_id
 
+    @hybrid_property
+    def rendered_map_index(self) -> str | None:
+        if self._rendered_map_index is not None:
+            return self._rendered_map_index
+        if self.map_index >= 0:
+            return str(self.map_index)
+        return None
+
     @classmethod
     def from_runtime_ti(cls, runtime_ti: RuntimeTaskInstanceProtocol) -> TaskInstance:
         if runtime_ti.map_index is None:
@@ -1918,6 +1883,7 @@ class TaskInstance(Base, LoggingMixin):
             max_tries=self.max_tries,
             hostname=self.hostname,
             _ti_context_from_server=context_from_server,
+            start_date=self.start_date,
         )
 
         return runtime_ti
@@ -2078,10 +2044,9 @@ class TaskInstance(Base, LoggingMixin):
     def log_url(self) -> str:
         """Log URL for TaskInstance."""
         run_id = quote(self.run_id)
-        base_date = quote(self.logical_date.strftime("%Y-%m-%dT%H:%M:%S%z"))
         base_url = conf.get_mandatory_value("webserver", "BASE_URL")
         map_index = f"&map_index={self.map_index}" if self.map_index >= 0 else ""
-        return (
+        _log_uri = (
             f"{base_url}"
             f"/dags"
             f"/{self.dag_id}"
@@ -2089,9 +2054,12 @@ class TaskInstance(Base, LoggingMixin):
             f"?dag_run_id={run_id}"
             f"&task_id={self.task_id}"
             f"{map_index}"
-            f"&base_date={base_date}"
             "&tab=logs"
         )
+        if self.logical_date:
+            base_date = quote(self.logical_date.strftime("%Y-%m-%dT%H:%M:%S%z"))
+            _log_uri = f"{_log_uri}&base_date={base_date}"
+        return _log_uri
 
     @property
     def mark_success_url(self) -> str:
@@ -2940,7 +2908,7 @@ class TaskInstance(Base, LoggingMixin):
 
             # Run on_task_instance_running event
             get_listener_manager().hook.on_task_instance_running(
-                previous_state=TaskInstanceState.QUEUED, task_instance=self, session=session
+                previous_state=TaskInstanceState.QUEUED, task_instance=self
             )
 
             def _render_map_index(context: Context, *, jinja_env: jinja2.Environment | None) -> str | None:
@@ -2958,10 +2926,10 @@ class TaskInstance(Base, LoggingMixin):
                 except Exception:
                     # If the task failed, swallow rendering error so it doesn't mask the main error.
                     with contextlib.suppress(jinja2.TemplateSyntaxError, jinja2.UndefinedError):
-                        self.rendered_map_index = _render_map_index(context, jinja_env=jinja_env)
+                        self._rendered_map_index = _render_map_index(context, jinja_env=jinja_env)
                     raise
                 else:  # If the task succeeded, render normally to let rendering error bubble up.
-                    self.rendered_map_index = _render_map_index(context, jinja_env=jinja_env)
+                    self._rendered_map_index = _render_map_index(context, jinja_env=jinja_env)
 
             # Run post_execute callback
             self.task.post_execute(context=context, result=result)
@@ -3182,7 +3150,7 @@ class TaskInstance(Base, LoggingMixin):
             callbacks = task.on_retry_callback if task else None
 
         get_listener_manager().hook.on_task_instance_failed(
-            previous_state=TaskInstanceState.RUNNING, task_instance=ti, error=error, session=session
+            previous_state=TaskInstanceState.RUNNING, task_instance=ti, error=error
         )
 
         return {
@@ -3282,7 +3250,7 @@ class TaskInstance(Base, LoggingMixin):
 
         try:
             # If we get here, either the task hasn't run or the RTIF record was purged.
-            from airflow.utils.log.secrets_masker import redact
+            from airflow.sdk.execution_time.secrets_masker import redact
 
             self.render_templates()
             for field_name in self.task.template_fields:
@@ -3395,39 +3363,8 @@ class TaskInstance(Base, LoggingMixin):
         default: Any = None,
         run_id: str | None = None,
     ) -> Any:
-        """
-        Pull XComs that optionally meet certain criteria.
-
-        :param key: A key for the XCom. If provided, only XComs with matching
-            keys will be returned. The default key is ``'return_value'``, also
-            available as constant ``XCOM_RETURN_KEY``. This key is automatically
-            given to XComs returned by tasks (as opposed to being pushed
-            manually). To remove the filter, pass *None*.
-        :param task_ids: Only XComs from tasks with matching ids will be
-            pulled. Pass *None* to remove the filter.
-        :param dag_id: If provided, only pulls XComs from this DAG. If *None*
-            (default), the DAG of the calling task is used.
-        :param map_indexes: If provided, only pull XComs with matching indexes.
-            If *None* (default), this is inferred from the task(s) being pulled
-            (see below for details).
-        :param include_prior_dates: If False, only XComs from the current
-            logical_date are returned. If *True*, XComs from previous dates
-            are returned as well.
-        :param run_id: If provided, only pulls XComs from a DagRun w/a matching run_id.
-            If *None* (default), the run_id of the calling task is used.
-
-        When pulling one single task (``task_id`` is *None* or a str) without
-        specifying ``map_indexes``, the return value is inferred from whether
-        the specified task is mapped. If not, value from the one single task
-        instance is returned. If the task to pull is mapped, an iterator (not a
-        list) yielding XComs from mapped task instances is returned. In either
-        case, ``default`` (*None* if not specified) is returned if no matching
-        XComs are found.
-
-        When pulling multiple tasks (i.e. either ``task_id`` or ``map_index`` is
-        a non-str iterable), a list of matching XComs is returned. Elements in
-        the list is ordered by item ordering in ``task_id`` and ``map_index``.
-        """
+        """:meta private:"""  # noqa: D400
+        # This is only kept for compatibility in tests for now while AIP-72 is in progress.
         return _xcom_pull(
             ti=self,
             task_ids=task_ids,
