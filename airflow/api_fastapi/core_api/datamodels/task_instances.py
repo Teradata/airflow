@@ -23,7 +23,6 @@ from pydantic import (
     AliasPath,
     AwareDatetime,
     BeforeValidator,
-    ConfigDict,
     Field,
     NonNegativeInt,
     StringConstraints,
@@ -33,6 +32,7 @@ from pydantic import (
 )
 
 from airflow.api_fastapi.core_api.base import BaseModel, StrictBaseModel
+from airflow.api_fastapi.core_api.datamodels.dag_versions import DagVersionResponse
 from airflow.api_fastapi.core_api.datamodels.job import JobResponse
 from airflow.api_fastapi.core_api.datamodels.trigger import TriggerResponse
 from airflow.utils.state import TaskInstanceState
@@ -41,14 +41,13 @@ from airflow.utils.state import TaskInstanceState
 class TaskInstanceResponse(BaseModel):
     """TaskInstance serializer for responses."""
 
-    model_config = ConfigDict(populate_by_name=True, from_attributes=True)
-
     id: str
     task_id: str
     dag_id: str
     run_id: str = Field(alias="dag_run_id")
     map_index: int
-    logical_date: datetime
+    logical_date: datetime | None
+    run_after: datetime
     start_date: datetime | None
     end_date: datetime | None
     duration: float | None
@@ -76,6 +75,7 @@ class TaskInstanceResponse(BaseModel):
     )
     trigger: TriggerResponse | None
     queued_by_job: JobResponse | None = Field(alias="triggerer_job")
+    dag_version: DagVersionResponse | None
 
 
 class TaskInstanceCollectionResponse(BaseModel):
@@ -105,6 +105,8 @@ class TaskInstancesBatchBody(StrictBaseModel):
     dag_run_ids: list[str] | None = None
     task_ids: list[str] | None = None
     state: list[TaskInstanceState | None] | None = None
+    run_after_gte: AwareDatetime | None = None
+    run_after_lte: AwareDatetime | None = None
     logical_date_gte: AwareDatetime | None = None
     logical_date_lte: AwareDatetime | None = None
     start_date_gte: AwareDatetime | None = None
@@ -123,8 +125,6 @@ class TaskInstancesBatchBody(StrictBaseModel):
 
 class TaskInstanceHistoryResponse(BaseModel):
     """TaskInstanceHistory serializer for responses."""
-
-    model_config = ConfigDict(populate_by_name=True, from_attributes=True)
 
     task_id: str
     dag_id: str
@@ -152,6 +152,7 @@ class TaskInstanceHistoryResponse(BaseModel):
     pid: int | None
     executor: str | None
     executor_config: Annotated[str, BeforeValidator(str)]
+    dag_version: DagVersionResponse | None
 
 
 class TaskInstanceHistoryCollectionResponse(BaseModel):

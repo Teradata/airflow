@@ -174,6 +174,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /ui/dependencies:
+    get:
+      tags:
+      - Dependencies
+      summary: Get Dependencies
+      description: Dependencies graph.
+      operationId: get_dependencies
+      parameters:
+      - name: node_id
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Node Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BaseGraphResponse'
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Not Found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /ui/dashboard/historical_metrics_data:
     get:
       tags:
@@ -258,14 +293,14 @@ paths:
           type: boolean
           default: false
           title: External Dependencies
-      - name: dag_version
+      - name: version_number
         in: query
         required: false
         schema:
           anyOf:
           - type: integer
           - type: 'null'
-          title: Dag Version
+          title: Version Number
       responses:
         '200':
           description: Successful Response
@@ -378,22 +413,6 @@ paths:
           type: boolean
           default: false
           title: Include Downstream
-      - name: logical_date_gte
-        in: query
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Logical Date Gte
-      - name: logical_date_lte
-        in: query
-        required: false
-        schema:
-          anyOf:
-          - type: string
-          - type: 'null'
-          title: Logical Date Lte
       - name: root
         in: query
         required: false
@@ -441,6 +460,42 @@ paths:
           type: string
           default: id
           title: Order By
+      - name: run_after_gte
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Run After Gte
+      - name: run_after_lte
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Run After Lte
+      - name: logical_date_gte
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Logical Date Gte
+      - name: logical_date_lte
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Logical Date Lte
       responses:
         '200':
           description: Successful Response
@@ -823,6 +878,57 @@ paths:
               schema:
                 $ref: '#/components/schemas/HTTPExceptionResponse'
           description: Not Found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+  /public/assets/{asset_id}/materialize:
+    post:
+      tags:
+      - Asset
+      summary: Materialize Asset
+      description: Materialize an asset by triggering a DAG run that produces it.
+      operationId: materialize_asset
+      parameters:
+      - name: asset_id
+        in: path
+        required: true
+        schema:
+          type: integer
+          title: Asset Id
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DAGRunResponse'
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Unauthorized
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Not Found
+        '409':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Conflict
         '422':
           description: Validation Error
           content:
@@ -2230,6 +2336,24 @@ paths:
           minimum: 0
           default: 0
           title: Offset
+      - name: run_after_gte
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Run After Gte
+      - name: run_after_lte
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Run After Lte
       - name: logical_date_gte
         in: query
         required: false
@@ -3605,6 +3729,13 @@ paths:
         schema:
           type: string
           title: Task Id
+      - name: map_index
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: -1
+          title: Map Index
       responses:
         '200':
           description: Successful Response
@@ -4111,6 +4242,14 @@ paths:
           type: string
           default: id
           title: Order By
+      - name: pool_name_pattern
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Pool Name Pattern
       responses:
         '200':
           description: Successful Response
@@ -4365,6 +4504,80 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+    patch:
+      tags:
+      - XCom
+      summary: Update Xcom Entry
+      description: Update an existing XCom entry.
+      operationId: update_xcom_entry
+      parameters:
+      - name: dag_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Dag Id
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      - name: dag_run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Dag Run Id
+      - name: xcom_key
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Xcom Key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/XComUpdateBody'
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/XComResponseNative'
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Unauthorized
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Forbidden
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Bad Request
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Not Found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /public/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/xcomEntries:
     get:
       tags:
@@ -4435,6 +4648,74 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/XComCollectionResponse'
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Unauthorized
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Forbidden
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Bad Request
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Not Found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
+    post:
+      tags:
+      - XCom
+      summary: Create Xcom Entry
+      description: Create an XCom entry.
+      operationId: create_xcom_entry
+      parameters:
+      - name: dag_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Dag Id
+      - name: task_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Task Id
+      - name: dag_run_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Dag Run Id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/XComCreateBody'
+      responses:
+        '201':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/XComResponseNative'
         '401':
           content:
             application/json:
@@ -4639,6 +4920,24 @@ paths:
         schema:
           type: string
           title: Task Id
+      - name: run_after_gte
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Run After Gte
+      - name: run_after_lte
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Run After Lte
       - name: logical_date_gte
         in: query
         required: false
@@ -4759,6 +5058,14 @@ paths:
           items:
             type: string
           title: Executor
+      - name: version_number
+        in: query
+        required: false
+        schema:
+          type: array
+          items:
+            type: integer
+          title: Version Number
       - name: limit
         in: query
         required: false
@@ -5253,6 +5560,24 @@ paths:
           - type: string
           - type: 'null'
           title: Task Id
+      - name: run_after_gte
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Run After Gte
+      - name: run_after_lte
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Run After Lte
       - name: logical_date_gte
         in: query
         required: false
@@ -5381,6 +5706,14 @@ paths:
           items:
             type: string
           title: Executor
+      - name: version_number
+        in: query
+        required: false
+        schema:
+          type: array
+          items:
+            type: integer
+          title: Version Number
       - name: limit
         in: query
         required: false
@@ -6476,6 +6809,98 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HTTPValidationError'
+  /public/dags/{dag_id}/dagVersions:
+    get:
+      tags:
+      - DagVersion
+      summary: Get Dag Versions
+      description: 'Get all DAG Versions.
+
+
+        This endpoint allows specifying `~` as the dag_id to retrieve DAG Versions
+        for all DAGs.'
+      operationId: get_dag_versions
+      parameters:
+      - name: dag_id
+        in: path
+        required: true
+        schema:
+          type: string
+          title: Dag Id
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 100
+          title: Limit
+      - name: offset
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 0
+          default: 0
+          title: Offset
+      - name: version_number
+        in: query
+        required: false
+        schema:
+          type: integer
+          title: Version Number
+      - name: bundle_name
+        in: query
+        required: false
+        schema:
+          type: string
+          title: Bundle Name
+      - name: bundle_version
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Bundle Version
+      - name: order_by
+        in: query
+        required: false
+        schema:
+          type: string
+          default: id
+          title: Order By
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DAGVersionCollectionResponse'
+        '401':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Unauthorized
+        '403':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Forbidden
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Not Found
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
   /public/monitor/health:
     get:
       tags:
@@ -6503,6 +6928,40 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/VersionInfo'
+  /public/login:
+    get:
+      tags:
+      - Login
+      summary: Login
+      description: Redirect to the login URL depending on the AuthManager configured.
+      operationId: login
+      parameters:
+      - name: next
+        in: query
+        required: false
+        schema:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Next
+      responses:
+        '200':
+          description: Successful Response
+          content:
+            application/json:
+              schema: {}
+        '307':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPExceptionResponse'
+          description: Temporary Redirect
+        '422':
+          description: Validation Error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HTTPValidationError'
 components:
   schemas:
     AppBuilderMenuItemResponse:
@@ -6845,6 +7304,38 @@ components:
       - updated_at
       title: BackfillResponse
       description: Base serializer for Backfill.
+    BaseEdgeResponse:
+      properties:
+        source_id:
+          type: string
+          title: Source Id
+        target_id:
+          type: string
+          title: Target Id
+      type: object
+      required:
+      - source_id
+      - target_id
+      title: BaseEdgeResponse
+      description: Base Edge serializer for responses.
+    BaseGraphResponse:
+      properties:
+        edges:
+          items:
+            $ref: '#/components/schemas/BaseEdgeResponse'
+          type: array
+          title: Edges
+        nodes:
+          items:
+            $ref: '#/components/schemas/BaseNodeResponse'
+          type: array
+          title: Nodes
+      type: object
+      required:
+      - edges
+      - nodes
+      title: BaseGraphResponse
+      description: Base Graph serializer for responses.
     BaseInfoResponse:
       properties:
         status:
@@ -6857,6 +7348,33 @@ components:
       - status
       title: BaseInfoResponse
       description: Base info serializer for responses.
+    BaseNodeResponse:
+      properties:
+        id:
+          type: string
+          title: Id
+        label:
+          type: string
+          title: Label
+        type:
+          type: string
+          enum:
+          - join
+          - task
+          - asset-condition
+          - asset
+          - asset-alias
+          - dag
+          - sensor
+          - trigger
+          title: Type
+      type: object
+      required:
+      - id
+      - label
+      - type
+      title: BaseNodeResponse
+      description: Base Node serializer for responses.
     BulkAction:
       type: string
       enum:
@@ -7613,12 +8131,12 @@ components:
         has_import_errors:
           type: boolean
           title: Has Import Errors
-        next_dagrun:
+        next_dagrun_logical_date:
           anyOf:
           - type: string
             format: date-time
           - type: 'null'
-          title: Next Dagrun
+          title: Next Dagrun Logical Date
         next_dagrun_data_interval_start:
           anyOf:
           - type: string
@@ -7631,12 +8149,12 @@ components:
             format: date-time
           - type: 'null'
           title: Next Dagrun Data Interval End
-        next_dagrun_create_after:
+        next_dagrun_run_after:
           anyOf:
           - type: string
             format: date-time
           - type: 'null'
-          title: Next Dagrun Create After
+          title: Next Dagrun Run After
         owners:
           items:
             type: string
@@ -7733,10 +8251,10 @@ components:
       - max_consecutive_failed_dag_runs
       - has_task_concurrency_limits
       - has_import_errors
-      - next_dagrun
+      - next_dagrun_logical_date
       - next_dagrun_data_interval_start
       - next_dagrun_data_interval_end
-      - next_dagrun_create_after
+      - next_dagrun_run_after
       - owners
       - catchup
       - dag_run_timeout
@@ -7836,12 +8354,12 @@ components:
         has_import_errors:
           type: boolean
           title: Has Import Errors
-        next_dagrun:
+        next_dagrun_logical_date:
           anyOf:
           - type: string
             format: date-time
           - type: 'null'
-          title: Next Dagrun
+          title: Next Dagrun Logical Date
         next_dagrun_data_interval_start:
           anyOf:
           - type: string
@@ -7854,12 +8372,12 @@ components:
             format: date-time
           - type: 'null'
           title: Next Dagrun Data Interval End
-        next_dagrun_create_after:
+        next_dagrun_run_after:
           anyOf:
           - type: string
             format: date-time
           - type: 'null'
-          title: Next Dagrun Create After
+          title: Next Dagrun Run After
         owners:
           items:
             type: string
@@ -7889,10 +8407,10 @@ components:
       - max_consecutive_failed_dag_runs
       - has_task_concurrency_limits
       - has_import_errors
-      - next_dagrun
+      - next_dagrun_logical_date
       - next_dagrun_data_interval_start
       - next_dagrun_data_interval_end
-      - next_dagrun_create_after
+      - next_dagrun_run_after
       - owners
       - file_token
       title: DAGResponse
@@ -7995,6 +8513,10 @@ components:
             format: date-time
           - type: 'null'
           title: Data Interval End
+        run_after:
+          type: string
+          format: date-time
+          title: Run After
         last_scheduling_decision:
           anyOf:
           - type: string
@@ -8028,6 +8550,7 @@ components:
       - end_date
       - data_interval_start
       - data_interval_end
+      - run_after
       - last_scheduling_decision
       - run_type
       - state
@@ -8114,6 +8637,18 @@ components:
             type: array
           - type: 'null'
           title: States
+        run_after_gte:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Run After Gte
+        run_after_lte:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Run After Lte
         logical_date_gte:
           anyOf:
           - type: string
@@ -8192,6 +8727,22 @@ components:
       - total_entries
       title: DAGTagCollectionResponse
       description: DAG Tags Collection serializer for responses.
+    DAGVersionCollectionResponse:
+      properties:
+        dag_versions:
+          items:
+            $ref: '#/components/schemas/DagVersionResponse'
+          type: array
+          title: Dag Versions
+        total_entries:
+          type: integer
+          title: Total Entries
+      type: object
+      required:
+      - dag_versions
+      - total_entries
+      title: DAGVersionCollectionResponse
+      description: DAG Version Collection serializer for responses.
     DAGWarningCollectionResponse:
       properties:
         dag_warnings:
@@ -8317,12 +8868,12 @@ components:
         has_import_errors:
           type: boolean
           title: Has Import Errors
-        next_dagrun:
+        next_dagrun_logical_date:
           anyOf:
           - type: string
             format: date-time
           - type: 'null'
-          title: Next Dagrun
+          title: Next Dagrun Logical Date
         next_dagrun_data_interval_start:
           anyOf:
           - type: string
@@ -8335,12 +8886,12 @@ components:
             format: date-time
           - type: 'null'
           title: Next Dagrun Data Interval End
-        next_dagrun_create_after:
+        next_dagrun_run_after:
           anyOf:
           - type: string
             format: date-time
           - type: 'null'
-          title: Next Dagrun Create After
+          title: Next Dagrun Run After
         owners:
           items:
             type: string
@@ -8375,10 +8926,10 @@ components:
       - max_consecutive_failed_dag_runs
       - has_task_concurrency_limits
       - has_import_errors
-      - next_dagrun
+      - next_dagrun_logical_date
       - next_dagrun_data_interval_start
       - next_dagrun_data_interval_end
-      - next_dagrun_create_after
+      - next_dagrun_run_after
       - owners
       - latest_dag_runs
       - file_token
@@ -8411,8 +8962,10 @@ components:
           type: string
           title: Dag Id
         logical_date:
-          type: string
-          format: date-time
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
           title: Logical Date
         start_date:
           type: string
@@ -8428,12 +8981,16 @@ components:
           type: string
           title: State
         data_interval_start:
-          type: string
-          format: date-time
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
           title: Data Interval Start
         data_interval_end:
-          type: string
-          format: date-time
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
           title: Data Interval End
       additionalProperties: false
       type: object
@@ -8566,6 +9123,47 @@ components:
       - dag_id
       title: DagTagResponse
       description: DAG Tag serializer for responses.
+    DagVersionResponse:
+      properties:
+        id:
+          type: string
+          format: uuid
+          title: Id
+        version_number:
+          type: integer
+          title: Version Number
+        dag_id:
+          type: string
+          title: Dag Id
+        bundle_name:
+          type: string
+          title: Bundle Name
+        bundle_version:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Bundle Version
+        created_at:
+          type: string
+          format: date-time
+          title: Created At
+        bundle_url:
+          anyOf:
+          - type: string
+          - type: 'null'
+          title: Bundle Url
+          readOnly: true
+      type: object
+      required:
+      - id
+      - version_number
+      - dag_id
+      - bundle_name
+      - bundle_version
+      - created_at
+      - bundle_url
+      title: DagVersionResponse
+      description: Dag Version serializer for responses.
     DagWarningType:
       type: string
       enum:
@@ -8607,6 +9205,12 @@ components:
       description: Backfill serializer for responses in dry-run mode.
     EdgeResponse:
       properties:
+        source_id:
+          type: string
+          title: Source Id
+        target_id:
+          type: string
+          title: Target Id
         is_setup_teardown:
           anyOf:
           - type: boolean
@@ -8617,12 +9221,6 @@ components:
           - type: string
           - type: 'null'
           title: Label
-        source_id:
-          type: string
-          title: Source Id
-        target_id:
-          type: string
-          title: Target Id
         is_source_asset:
           anyOf:
           - type: boolean
@@ -8768,10 +9366,20 @@ components:
             format: date-time
           - type: 'null'
           title: End Date
+        run_after:
+          type: string
+          format: date-time
+          title: Run After
         state:
           $ref: '#/components/schemas/DagRunState'
         run_type:
           $ref: '#/components/schemas/DagRunType'
+        logical_date:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Logical Date
         data_interval_start:
           anyOf:
           - type: string
@@ -8786,8 +9394,7 @@ components:
           title: Data Interval End
         version_number:
           anyOf:
-          - type: string
-            format: uuid
+          - type: integer
           - type: 'null'
           title: Version Number
         note:
@@ -8806,8 +9413,10 @@ components:
       - queued_at
       - start_date
       - end_date
+      - run_after
       - state
       - run_type
+      - logical_date
       - data_interval_start
       - data_interval_end
       - version_number
@@ -9069,6 +9678,24 @@ components:
       description: Job serializer for responses.
     NodeResponse:
       properties:
+        id:
+          type: string
+          title: Id
+        label:
+          type: string
+          title: Label
+        type:
+          type: string
+          enum:
+          - join
+          - task
+          - asset-condition
+          - asset
+          - asset-alias
+          - dag
+          - sensor
+          - trigger
+          title: Type
         children:
           anyOf:
           - items:
@@ -9076,17 +9703,11 @@ components:
             type: array
           - type: 'null'
           title: Children
-        id:
-          type: string
-          title: Id
         is_mapped:
           anyOf:
           - type: boolean
           - type: 'null'
           title: Is Mapped
-        label:
-          type: string
-          title: Label
         tooltip:
           anyOf:
           - type: string
@@ -9100,18 +9721,6 @@ components:
             - teardown
           - type: 'null'
           title: Setup Teardown Type
-        type:
-          type: string
-          enum:
-          - join
-          - task
-          - asset-condition
-          - asset
-          - asset-alias
-          - dag
-          - sensor
-          - trigger
-          title: Type
         operator:
           anyOf:
           - type: string
@@ -9662,6 +10271,10 @@ components:
         executor_config:
           type: string
           title: Executor Config
+        dag_version:
+          anyOf:
+          - $ref: '#/components/schemas/DagVersionResponse'
+          - type: 'null'
       type: object
       required:
       - task_id
@@ -9687,6 +10300,7 @@ components:
       - pid
       - executor
       - executor_config
+      - dag_version
       title: TaskInstanceHistoryResponse
       description: TaskInstanceHistory serializer for responses.
     TaskInstanceResponse:
@@ -9707,9 +10321,15 @@ components:
           type: integer
           title: Map Index
         logical_date:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Logical Date
+        run_after:
           type: string
           format: date-time
-          title: Logical Date
+          title: Run After
         start_date:
           anyOf:
           - type: string
@@ -9818,6 +10438,10 @@ components:
           anyOf:
           - $ref: '#/components/schemas/JobResponse'
           - type: 'null'
+        dag_version:
+          anyOf:
+          - $ref: '#/components/schemas/DagVersionResponse'
+          - type: 'null'
       type: object
       required:
       - id
@@ -9826,6 +10450,7 @@ components:
       - dag_run_id
       - map_index
       - logical_date
+      - run_after
       - start_date
       - end_date
       - duration
@@ -9849,6 +10474,7 @@ components:
       - rendered_map_index
       - trigger
       - triggerer_job
+      - dag_version
       title: TaskInstanceResponse
       description: TaskInstance serializer for responses.
     TaskInstanceState:
@@ -9961,6 +10587,18 @@ components:
             type: array
           - type: 'null'
           title: State
+        run_after_gte:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Run After Gte
+        run_after_lte:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Run After Lte
         logical_date_gte:
           anyOf:
           - type: string
@@ -10297,6 +10935,18 @@ components:
             format: date-time
           - type: 'null'
           title: Data Interval End
+        logical_date:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Logical Date
+        run_after:
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
+          title: Run After
         conf:
           type: object
           title: Conf
@@ -10307,6 +10957,8 @@ components:
           title: Note
       additionalProperties: false
       type: object
+      required:
+      - logical_date
       title: TriggerDAGRunPostBody
       description: Trigger DAG Run Serializer for POST body.
     TriggerResponse:
@@ -10470,6 +11122,24 @@ components:
       - total_entries
       title: XComCollectionResponse
       description: XCom Collection serializer for responses.
+    XComCreateBody:
+      properties:
+        key:
+          type: string
+          title: Key
+        value:
+          title: Value
+        map_index:
+          type: integer
+          title: Map Index
+          default: -1
+      additionalProperties: false
+      type: object
+      required:
+      - key
+      - value
+      title: XComCreateBody
+      description: Payload serializer for creating an XCom entry.
     XComResponse:
       properties:
         key:
@@ -10480,8 +11150,10 @@ components:
           format: date-time
           title: Timestamp
         logical_date:
-          type: string
-          format: date-time
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
           title: Logical Date
         map_index:
           type: integer
@@ -10516,8 +11188,10 @@ components:
           format: date-time
           title: Timestamp
         logical_date:
-          type: string
-          format: date-time
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
           title: Logical Date
         map_index:
           type: integer
@@ -10555,8 +11229,10 @@ components:
           format: date-time
           title: Timestamp
         logical_date:
-          type: string
-          format: date-time
+          anyOf:
+          - type: string
+            format: date-time
+          - type: 'null'
           title: Logical Date
         map_index:
           type: integer
@@ -10587,3 +11263,17 @@ components:
       - value
       title: XComResponseString
       description: XCom response serializer with string return type.
+    XComUpdateBody:
+      properties:
+        value:
+          title: Value
+        map_index:
+          type: integer
+          title: Map Index
+          default: -1
+      additionalProperties: false
+      type: object
+      required:
+      - value
+      title: XComUpdateBody
+      description: Payload serializer for updating an XCom entry.

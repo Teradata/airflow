@@ -23,7 +23,7 @@ import pytest
 
 from airflow.models.dag import DagModel, DagTag
 from airflow.models.dagrun import DagRun
-from airflow.operators.empty import EmptyOperator
+from airflow.providers.standard.operators.empty import EmptyOperator
 from airflow.utils.session import provide_session
 from airflow.utils.state import DagRunState, TaskInstanceState
 from airflow.utils.types import DagRunTriggeredByType, DagRunType
@@ -370,10 +370,10 @@ class TestDagDetails(TestDagEndpoint):
             "max_active_runs": 16,
             "max_active_tasks": 16,
             "max_consecutive_failed_dag_runs": 0,
-            "next_dagrun": None,
-            "next_dagrun_create_after": None,
             "next_dagrun_data_interval_end": None,
             "next_dagrun_data_interval_start": None,
+            "next_dagrun_logical_date": None,
+            "next_dagrun_run_after": None,
             "owners": ["airflow"],
             "params": {
                 "foo": {
@@ -425,13 +425,13 @@ class TestGetDag(TestDagEndpoint):
             "owners": ["airflow"],
             "timetable_summary": None,
             "tags": [],
-            "next_dagrun": None,
             "has_task_concurrency_limits": True,
             "next_dagrun_data_interval_start": None,
             "next_dagrun_data_interval_end": None,
+            "next_dagrun_logical_date": None,
+            "next_dagrun_run_after": None,
             "max_active_runs": 16,
             "max_consecutive_failed_dag_runs": 0,
-            "next_dagrun_create_after": None,
             "last_expired": None,
             "max_active_tasks": 16,
             "default_view": "grid",

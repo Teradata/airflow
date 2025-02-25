@@ -20,82 +20,16 @@ from __future__ import annotations
 import pytest
 
 from airflow.models import DagBag, DagRun, TaskInstance
-from airflow.security import permissions
 from airflow.utils import timezone
 from airflow.utils.session import create_session
-from airflow.utils.types import DagRunType
-from airflow.www.views import DagRunModelView
+from airflow.utils.types import DagRunTriggeredByType, DagRunType
 
-from providers.tests.fab.auth_manager.api_endpoints.api_connexion_utils import (
-    create_user,
-    delete_roles,
-    delete_user,
-)
-from tests.www.views.test_views_tasks import _get_appbuilder_pk_string
-from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
 from tests_common.test_utils.www import (
     check_content_in_response,
     check_content_not_in_response,
-    client_with_login,
 )
 
-if AIRFLOW_V_3_0_PLUS:
-    from airflow.utils.types import DagRunTriggeredByType
-
 pytestmark = pytest.mark.db_test
-
-
-@pytest.fixture(scope="module")
-def client_dr_without_dag_edit(app):
-    create_user(
-        app,
-        username="all_dr_permissions_except_dag_edit",
-        role_name="all_dr_permissions_except_dag_edit",
-        permissions=[
-            (permissions.ACTION_CAN_READ, permissions.RESOURCE_WEBSITE),
-            (permissions.ACTION_CAN_READ, permissions.RESOURCE_DAG),
-            (permissions.ACTION_CAN_CREATE, permissions.RESOURCE_DAG_RUN),
-            (permissions.ACTION_CAN_READ, permissions.RESOURCE_DAG_RUN),
-            (permissions.ACTION_CAN_EDIT, permissions.RESOURCE_DAG_RUN),
-            (permissions.ACTION_CAN_DELETE, permissions.RESOURCE_DAG_RUN),
-            (permissions.ACTION_CAN_ACCESS_MENU, permissions.RESOURCE_DAG_RUN),
-        ],
-    )
-
-    yield client_with_login(
-        app,
-        username="all_dr_permissions_except_dag_edit",
-        password="all_dr_permissions_except_dag_edit",
-    )
-
-    delete_user(app, username="all_dr_permissions_except_dag_edit")  # type: ignore
-    delete_roles(app)
-
-
-@pytest.fixture(scope="module")
-def client_dr_without_dag_run_create(app):
-    create_user(
-        app,
-        username="all_dr_permissions_except_dag_run_create",
-        role_name="all_dr_permissions_except_dag_run_create",
-        permissions=[
-            (permissions.ACTION_CAN_READ, permissions.RESOURCE_WEBSITE),
-            (permissions.ACTION_CAN_READ, permissions.RESOURCE_DAG),
-            (permissions.ACTION_CAN_READ, permissions.RESOURCE_DAG_RUN),
-            (permissions.ACTION_CAN_EDIT, permissions.RESOURCE_DAG_RUN),
-            (permissions.ACTION_CAN_DELETE, permissions.RESOURCE_DAG_RUN),
-            (permissions.ACTION_CAN_ACCESS_MENU, permissions.RESOURCE_DAG_RUN),
-        ],
-    )
-
-    yield client_with_login(
-        app,
-        username="all_dr_permissions_except_dag_run_create",
-        password="all_dr_permissions_except_dag_run_create",
-    )
-
-    delete_user(app, username="all_dr_permissions_except_dag_run_create")  # type: ignore
-    delete_roles(app)
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -117,31 +51,10 @@ def _reset_dagrun():
         session.query(TaskInstance).delete()
 
 
-def test_get_dagrun_can_view_dags_without_edit_perms(session, running_dag_run, client_dr_without_dag_edit):
-    """Test that a user without dag_edit but with dag_read permission can view the records"""
-    assert session.query(DagRun).filter(DagRun.dag_id == running_dag_run.dag_id).count() == 1
-    resp = client_dr_without_dag_edit.get("/dagrun/list/", follow_redirects=True)
-    check_content_in_response(running_dag_run.dag_id, resp)
-
-
-def test_create_dagrun_permission_denied(session, client_dr_without_dag_run_create):
-    data = {
-        "state": "running",
-        "dag_id": "example_bash_operator",
-        "logical_date": "2018-07-06 05:06:03",
-        "run_id": "test_list_dagrun_includes_conf",
-        "conf": '{"include": "me"}',
-    }
-
-    resp = client_dr_without_dag_run_create.post("/dagrun/add", data=data, follow_redirects=True)
-    check_content_in_response("Access is Denied", resp)
-
-
 @pytest.fixture
 def running_dag_run(session):
     dag = DagBag().get_dag("example_bash_operator")
     logical_date = timezone.datetime(2016, 1, 9)
-    triggered_by_kwargs = {"triggered_by": DagRunTriggeredByType.TEST} if AIRFLOW_V_3_0_PLUS else {}
     dr = dag.create_dagrun(
         state="running",
         logical_date=logical_date,
@@ -149,7 +62,8 @@ def running_dag_run(session):
         run_id="test_dag_runs_action",
         run_type=DagRunType.MANUAL,
         session=session,
-        **triggered_by_kwargs,
+        run_after=logical_date,
+        triggered_by=DagRunTriggeredByType.TEST,
     )
     session.add(dr)
     tis = [
@@ -165,7 +79,6 @@ def running_dag_run(session):
 def completed_dag_run_with_missing_task(session):
     dag = DagBag().get_dag("example_bash_operator")
     logical_date = timezone.datetime(2016, 1, 9)
-    triggered_by_kwargs = {"triggered_by": DagRunTriggeredByType.TEST} if AIRFLOW_V_3_0_PLUS else {}
     dr = dag.create_dagrun(
         state="success",
         logical_date=logical_date,
@@ -173,7 +86,8 @@ def completed_dag_run_with_missing_task(session):
         run_id="test_dag_runs_action",
         run_type=DagRunType.MANUAL,
         session=session,
-        **triggered_by_kwargs,
+        run_after=logical_date,
+        triggered_by=DagRunTriggeredByType.TEST,
     )
     session.add(dr)
     tis = [
@@ -187,22 +101,6 @@ def completed_dag_run_with_missing_task(session):
     session.bulk_save_objects(tis)
     session.commit()
     return dag, dr
-
-
-def test_delete_dagrun(session, admin_client, running_dag_run):
-    composite_key = _get_appbuilder_pk_string(DagRunModelView, running_dag_run)
-    assert session.query(DagRun).filter(DagRun.dag_id == running_dag_run.dag_id).count() == 1
-    admin_client.post(f"/dagrun/delete/{composite_key}", follow_redirects=True)
-    assert session.query(DagRun).filter(DagRun.dag_id == running_dag_run.dag_id).count() == 0
-
-
-def test_delete_dagrun_permission_denied(session, running_dag_run, client_dr_without_dag_edit):
-    composite_key = _get_appbuilder_pk_string(DagRunModelView, running_dag_run)
-
-    assert session.query(DagRun).filter(DagRun.dag_id == running_dag_run.dag_id).count() == 1
-    resp = client_dr_without_dag_edit.post(f"/dagrun/delete/{composite_key}", follow_redirects=True)
-    check_content_in_response("Access is Denied", resp)
-    assert session.query(DagRun).filter(DagRun.dag_id == running_dag_run.dag_id).count() == 1
 
 
 @pytest.mark.parametrize(
@@ -285,21 +183,6 @@ def test_muldelete_dag_runs_action(session, admin_client, running_dag_run):
     assert session.query(DagRun).filter(DagRun.id == dag_run_id).count() == 0
 
 
-@pytest.mark.parametrize(
-    "action",
-    ["clear", "set_success", "set_failed", "set_running"],
-    ids=["clear", "success", "failed", "running"],
-)
-def test_set_dag_runs_action_permission_denied(client_dr_without_dag_edit, running_dag_run, action):
-    running_dag_id = running_dag_run.id
-    resp = client_dr_without_dag_edit.post(
-        "/dagrun/action_post",
-        data={"action": action, "rowid": [str(running_dag_id)]},
-        follow_redirects=True,
-    )
-    check_content_in_response("Access is Denied", resp)
-
-
 def test_dag_runs_queue_new_tasks_action(session, admin_client, completed_dag_run_with_missing_task):
     dag, dag_run = completed_dag_run_with_missing_task
     resp = admin_client.post(
@@ -321,7 +204,6 @@ def dag_run_with_all_done_task(session):
     dag.sync_to_db()
 
     logical_date = timezone.datetime(2016, 1, 9)
-    triggered_by_kwargs = {"triggered_by": DagRunTriggeredByType.TEST} if AIRFLOW_V_3_0_PLUS else {}
     dr = dag.create_dagrun(
         state="running",
         logical_date=logical_date,
@@ -329,7 +211,8 @@ def dag_run_with_all_done_task(session):
         run_id="test_dagrun_failed",
         run_type=DagRunType.MANUAL,
         session=session,
-        **triggered_by_kwargs,
+        run_after=logical_date,
+        triggered_by=DagRunTriggeredByType.TEST,
     )
 
     # Create task instances in various states to test the ALL_DONE trigger rule

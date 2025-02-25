@@ -27,6 +27,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { useGridServiceGridData, useStructureServiceStructureData } from "openapi/queries";
 import type { GridResponse } from "openapi/requests/types.gen";
 import { useOpenGroups } from "src/context/openGroups";
+import { isStatePending, useAutoRefresh } from "src/utils";
 
 import { Bar } from "./Bar";
 import { DurationAxis } from "./DurationAxis";
@@ -47,6 +48,7 @@ export const Grid = () => {
   });
 
   const [searchParams, setSearchParams] = useSearchParams();
+  const refetchInterval = useAutoRefresh({ dagId });
 
   const offset = parseInt(searchParams.get("offset") ?? "0", 10);
 
@@ -57,11 +59,13 @@ export const Grid = () => {
       dagId,
       limit,
       offset,
-      orderBy: "-start_date",
+      orderBy: "-run_after",
     },
     undefined,
     {
       placeholderData: keepPreviousData,
+      refetchInterval: (query) =>
+        query.state.data?.dag_runs.some((dr) => isStatePending(dr.state)) && refetchInterval,
     },
   );
 

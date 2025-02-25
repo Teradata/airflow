@@ -27,8 +27,9 @@ def get_provider_info():
         "name": "Celery",
         "description": "`Celery <https://docs.celeryq.dev/en/stable/>`__\n",
         "state": "ready",
-        "source-date-epoch": 1737575943,
+        "source-date-epoch": 1739958996,
         "versions": [
+            "3.10.2",
             "3.10.0",
             "3.9.0",
             "3.8.5",
@@ -304,7 +305,7 @@ def get_provider_info():
         },
         "dependencies": [
             "apache-airflow>=2.9.0",
-            "celery[redis]>=5.3.0,<6,!=5.3.3,!=5.3.2",
+            "celery[redis]>=5.4.0,<6",
             "flower>=1.0.0",
             "google-re2>=1.0",
         ],

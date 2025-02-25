@@ -26,13 +26,16 @@ import { StateIcon } from "src/components/StateIcon";
 import { Tooltip } from "src/components/ui";
 import { capitalize } from "src/utils";
 
+import DeletePoolButton from "./DeletePoolButton";
+import EditPoolButton from "./EditPoolButton";
+
 const slots = {
-  open_slots: { color: "success", icon: <StateIcon state="success" /> },
-  occupied_slots: { color: "up_for_retry", icon: <FiXCircle /> },
-  running_slots: { color: "running", icon: <StateIcon state="running" /> },
-  queued_slots: { color: "queued", icon: <StateIcon state="queued" /> },
-  scheduled_slots: { color: "scheduled", icon: <StateIcon state="scheduled" /> },
-  deferred_slots: { color: "deferred", icon: <StateIcon state="deferred" /> },
+  open_slots: { color: "success", icon: <StateIcon color="white" state="success" /> },
+  occupied_slots: { color: "up_for_retry", icon: <FiXCircle color="white" /> },
+  running_slots: { color: "running", icon: <StateIcon color="white" state="running" /> },
+  queued_slots: { color: "queued", icon: <StateIcon color="white" state="queued" /> },
+  scheduled_slots: { color: "scheduled", icon: <StateIcon color="white" state="scheduled" /> },
+  deferred_slots: { color: "deferred", icon: <StateIcon color="white" state="deferred" /> },
 };
 
 type PoolBarProps = {
@@ -42,16 +45,20 @@ type PoolBarProps = {
 const PoolBar = ({ pool }: PoolBarProps) => (
   <Box borderColor="border.emphasized" borderRadius={8} borderWidth={1} mb={2} overflow="hidden">
     <Flex alignItems="center" bg="bg.muted" justifyContent="space-between" p={4}>
-      <VStack align="start">
-        <HStack>
-          <Text fontSize="lg" fontWeight="bold">
+      <VStack align="start" flex="1">
+        <HStack justifyContent="space-between" width="100%">
+          <Text fontSize="lg" fontWeight="bold" whiteSpace="normal" wordBreak="break-word">
             {pool.name} ({pool.slots} slots)
+            {pool.include_deferred ? (
+              <Tooltip content="Deferred Slots Included">
+                <StateIcon size={18} state="deferred" style={{ display: "inline", marginLeft: 6 }} />
+              </Tooltip>
+            ) : undefined}
           </Text>
-          {pool.include_deferred ? (
-            <Tooltip content="Deferred Slots Included">
-              <StateIcon size={18} state="deferred" />
-            </Tooltip>
-          ) : undefined}
+          <HStack gap={0}>
+            <EditPoolButton pool={pool} />
+            {pool.name === "default_pool" ? undefined : <DeletePoolButton poolName={pool.name} />}
+          </HStack>
         </HStack>
         {pool.description ?? (
           <Text color="gray.fg" fontSize="sm">
@@ -76,7 +83,7 @@ const PoolBar = ({ pool }: PoolBarProps) => (
             <Tooltip content={`${capitalize(slotKey.replace("_", " "))}: ${slotValue}`} key={slotKey}>
               <Flex
                 alignItems="center"
-                colorPalette={color}
+                bg={`${color}.solid`}
                 flex={flexValue}
                 h="100%"
                 justifyContent="center"

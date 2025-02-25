@@ -24,7 +24,12 @@ from pydantic import ValidationError
 from sqlalchemy import delete, select
 
 from airflow.api_fastapi.common.db.common import SessionDep, paginated_select
-from airflow.api_fastapi.common.parameters import QueryLimit, QueryOffset, SortParam
+from airflow.api_fastapi.common.parameters import (
+    QueryLimit,
+    QueryOffset,
+    QueryPoolNamePatternSearch,
+    SortParam,
+)
 from airflow.api_fastapi.common.router import AirflowRouter
 from airflow.api_fastapi.core_api.datamodels.common import BulkBody, BulkResponse
 from airflow.api_fastapi.core_api.datamodels.pools import (
@@ -92,11 +97,13 @@ def get_pools(
         SortParam,
         Depends(SortParam(["id", "name"], Pool).dynamic_depends()),
     ],
+    pool_name_pattern: QueryPoolNamePatternSearch,
     session: SessionDep,
 ) -> PoolCollectionResponse:
     """Get all pools entries."""
     pools_select, total_entries = paginated_select(
         statement=select(Pool),
+        filters=[pool_name_pattern],
         order_by=order_by,
         offset=offset,
         limit=limit,
@@ -127,6 +134,11 @@ def patch_pool(
     update_mask: list[str] | None = Query(None),
 ) -> PoolResponse:
     """Update a Pool."""
+    if patch_body.name and patch_body.name != pool_name:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Invalid body, pool name from request body doesn't match uri parameter",
+        )
     # Only slots and include_deferred can be modified in 'default_pool'
     if pool_name == Pool.DEFAULT_POOL_NAME:
         if update_mask and all(mask.strip() in {"slots", "include_deferred"} for mask in update_mask):
@@ -136,7 +148,6 @@ def patch_pool(
                 status.HTTP_400_BAD_REQUEST,
                 "Only slots and included_deferred can be modified on Default Pool",
             )
-
     pool = session.scalar(select(Pool).where(Pool.pool == pool_name).limit(1))
     if not pool:
         raise HTTPException(

@@ -27,8 +27,9 @@ def get_provider_info():
         "name": "Presto",
         "description": "`Presto <https://prestodb.io/>`__\n",
         "state": "ready",
-        "source-date-epoch": 1734536350,
+        "source-date-epoch": 1739964169,
         "versions": [
+            "5.8.1",
             "5.8.0",
             "5.7.0",
             "5.6.0",
@@ -81,7 +82,7 @@ def get_provider_info():
             {
                 "source-integration-name": "Google Cloud Storage (GCS)",
                 "target-integration-name": "Presto",
-                "how-to-guide": "/docs/apache-airflow-providers-presto/operators/transfer/gcs_to_presto.rst",
+                "how-to-guide": "/docs/apache-airflow-providers-presto/gcs_to_presto.rst",
                 "python-module": "airflow.providers.presto.transfers.gcs_to_presto",
             }
         ],

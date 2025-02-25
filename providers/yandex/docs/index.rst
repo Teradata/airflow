@@ -58,7 +58,7 @@
     :maxdepth: 1
     :caption: Resources
 
-    Example DAGs <https://github.com/apache/airflow/tree/providers-yandex/|version|/providers/tests/system/yandex/example_yandexcloud_dataproc.py>
+    Example DAGs <https://github.com/apache/airflow/tree/providers-yandex/|version|/providers/yandex/tests/system/yandex/example_yandexcloud_dataproc.py>
     PyPI Repository <https://pypi.org/project/apache-airflow-providers-yandex/>
     Installing from sources <installing-providers-from-sources>
 
@@ -81,7 +81,7 @@ This package is for Yandex, including:
     - `Yandex.Cloud <https://cloud.yandex.com/>`__
 
 
-Release: 4.0.0
+Release: 4.0.1
 
 Provider package
 ----------------

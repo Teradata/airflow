@@ -11,14 +11,17 @@ import {
   DagService,
   DagSourceService,
   DagStatsService,
+  DagVersionService,
   DagWarningService,
   DagsService,
   DashboardService,
+  DependenciesService,
   EventLogService,
   ExtraLinksService,
   GridService,
   ImportErrorService,
   JobService,
+  LoginService,
   MonitorService,
   PluginService,
   PoolService,
@@ -527,6 +530,32 @@ export const useDagsServiceRecentDagRunsSuspense = <
     ...options,
   });
 /**
+ * Get Dependencies
+ * Dependencies graph.
+ * @param data The data for the request.
+ * @param data.nodeId
+ * @returns BaseGraphResponse Successful Response
+ * @throws ApiError
+ */
+export const useDependenciesServiceGetDependenciesSuspense = <
+  TData = Common.DependenciesServiceGetDependenciesDefaultResponse,
+  TError = unknown,
+  TQueryKey extends Array<unknown> = unknown[],
+>(
+  {
+    nodeId,
+  }: {
+    nodeId?: string;
+  } = {},
+  queryKey?: TQueryKey,
+  options?: Omit<UseQueryOptions<TData, TError>, "queryKey" | "queryFn">,
+) =>
+  useSuspenseQuery<TData, TError>({
+    queryKey: Common.UseDependenciesServiceGetDependenciesKeyFn({ nodeId }, queryKey),
+    queryFn: () => DependenciesService.getDependencies({ nodeId }) as TData,
+    ...options,
+  });
+/**
  * Historical Metrics
  * Return cluster activity historical metrics.
  * @param data The data for the request.
@@ -564,7 +593,7 @@ export const useDashboardServiceHistoricalMetricsSuspense = <
  * @param data.includeDownstream
  * @param data.root
  * @param data.externalDependencies
- * @param data.dagVersion
+ * @param data.versionNumber
  * @returns StructureDataResponse Successful Response
  * @throws ApiError
  */
@@ -575,35 +604,35 @@ export const useStructureServiceStructureDataSuspense = <
 >(
   {
     dagId,
-    dagVersion,
     externalDependencies,
     includeDownstream,
     includeUpstream,
     root,
+    versionNumber,
   }: {
     dagId: string;
-    dagVersion?: number;
     externalDependencies?: boolean;
     includeDownstream?: boolean;
     includeUpstream?: boolean;
     root?: string;
+    versionNumber?: number;
   },
   queryKey?: TQueryKey,
   options?: Omit<UseQueryOptions<TData, TError>, "queryKey" | "queryFn">,
 ) =>
   useSuspenseQuery<TData, TError>({
     queryKey: Common.UseStructureServiceStructureDataKeyFn(
-      { dagId, dagVersion, externalDependencies, includeDownstream, includeUpstream, root },
+      { dagId, externalDependencies, includeDownstream, includeUpstream, root, versionNumber },
       queryKey,
     ),
     queryFn: () =>
       StructureService.structureData({
         dagId,
-        dagVersion,
         externalDependencies,
         includeDownstream,
         includeUpstream,
         root,
+        versionNumber,
       }) as TData,
     ...options,
   });
@@ -713,14 +742,16 @@ export const useBackfillServiceGetBackfillSuspense = <
  * @param data.dagId
  * @param data.includeUpstream
  * @param data.includeDownstream
- * @param data.logicalDateGte
- * @param data.logicalDateLte
  * @param data.root
  * @param data.offset
  * @param data.runType
  * @param data.state
  * @param data.limit
  * @param data.orderBy
+ * @param data.runAfterGte
+ * @param data.runAfterLte
+ * @param data.logicalDateGte
+ * @param data.logicalDateLte
  * @returns GridResponse Successful Response
  * @throws ApiError
  */
@@ -739,6 +770,8 @@ export const useGridServiceGridDataSuspense = <
     offset,
     orderBy,
     root,
+    runAfterGte,
+    runAfterLte,
     runType,
     state,
   }: {
@@ -751,6 +784,8 @@ export const useGridServiceGridDataSuspense = <
     offset?: number;
     orderBy?: string;
     root?: string;
+    runAfterGte?: string;
+    runAfterLte?: string;
     runType?: string[];
     state?: string[];
   },
@@ -769,6 +804,8 @@ export const useGridServiceGridDataSuspense = <
         offset,
         orderBy,
         root,
+        runAfterGte,
+        runAfterLte,
         runType,
         state,
       },
@@ -785,6 +822,8 @@ export const useGridServiceGridDataSuspense = <
         offset,
         orderBy,
         root,
+        runAfterGte,
+        runAfterLte,
         runType,
         state,
       }) as TData,
@@ -914,6 +953,8 @@ export const useDagRunServiceGetUpstreamAssetEventsSuspense = <
  * @param data.dagId
  * @param data.limit
  * @param data.offset
+ * @param data.runAfterGte
+ * @param data.runAfterLte
  * @param data.logicalDateGte
  * @param data.logicalDateLte
  * @param data.startDateGte
@@ -941,6 +982,8 @@ export const useDagRunServiceGetDagRunsSuspense = <
     logicalDateLte,
     offset,
     orderBy,
+    runAfterGte,
+    runAfterLte,
     startDateGte,
     startDateLte,
     state,
@@ -955,6 +998,8 @@ export const useDagRunServiceGetDagRunsSuspense = <
     logicalDateLte?: string;
     offset?: number;
     orderBy?: string;
+    runAfterGte?: string;
+    runAfterLte?: string;
     startDateGte?: string;
     startDateLte?: string;
     state?: string[];
@@ -975,6 +1020,8 @@ export const useDagRunServiceGetDagRunsSuspense = <
         logicalDateLte,
         offset,
         orderBy,
+        runAfterGte,
+        runAfterLte,
         startDateGte,
         startDateLte,
         state,
@@ -993,6 +1040,8 @@ export const useDagRunServiceGetDagRunsSuspense = <
         logicalDateLte,
         offset,
         orderBy,
+        runAfterGte,
+        runAfterLte,
         startDateGte,
         startDateLte,
         state,
@@ -1453,6 +1502,7 @@ export const useEventLogServiceGetEventLogsSuspense = <
  * @param data.dagId
  * @param data.dagRunId
  * @param data.taskId
+ * @param data.mapIndex
  * @returns ExtraLinksResponse Successful Response
  * @throws ApiError
  */
@@ -1464,18 +1514,20 @@ export const useExtraLinksServiceGetExtraLinksSuspense = <
   {
     dagId,
     dagRunId,
+    mapIndex,
     taskId,
   }: {
     dagId: string;
     dagRunId: string;
+    mapIndex?: number;
     taskId: string;
   },
   queryKey?: TQueryKey,
   options?: Omit<UseQueryOptions<TData, TError>, "queryKey" | "queryFn">,
 ) =>
   useSuspenseQuery<TData, TError>({
-    queryKey: Common.UseExtraLinksServiceGetExtraLinksKeyFn({ dagId, dagRunId, taskId }, queryKey),
-    queryFn: () => ExtraLinksService.getExtraLinks({ dagId, dagRunId, taskId }) as TData,
+    queryKey: Common.UseExtraLinksServiceGetExtraLinksKeyFn({ dagId, dagRunId, mapIndex, taskId }, queryKey),
+    queryFn: () => ExtraLinksService.getExtraLinks({ dagId, dagRunId, mapIndex, taskId }) as TData,
     ...options,
   });
 /**
@@ -1485,6 +1537,7 @@ export const useExtraLinksServiceGetExtraLinksSuspense = <
  * @param data.dagId
  * @param data.dagRunId
  * @param data.taskId
+ * @param data.mapIndex
  * @returns ExtraLinksResponse Successful Response
  * @throws ApiError
  */
@@ -1496,18 +1549,23 @@ export const useTaskInstanceServiceGetExtraLinksSuspense = <
   {
     dagId,
     dagRunId,
+    mapIndex,
     taskId,
   }: {
     dagId: string;
     dagRunId: string;
+    mapIndex?: number;
     taskId: string;
   },
   queryKey?: TQueryKey,
   options?: Omit<UseQueryOptions<TData, TError>, "queryKey" | "queryFn">,
 ) =>
   useSuspenseQuery<TData, TError>({
-    queryKey: Common.UseTaskInstanceServiceGetExtraLinksKeyFn({ dagId, dagRunId, taskId }, queryKey),
-    queryFn: () => TaskInstanceService.getExtraLinks({ dagId, dagRunId, taskId }) as TData,
+    queryKey: Common.UseTaskInstanceServiceGetExtraLinksKeyFn(
+      { dagId, dagRunId, mapIndex, taskId },
+      queryKey,
+    ),
+    queryFn: () => TaskInstanceService.getExtraLinks({ dagId, dagRunId, mapIndex, taskId }) as TData,
     ...options,
   });
 /**
@@ -1549,6 +1607,8 @@ export const useTaskInstanceServiceGetTaskInstanceSuspense = <
  * @param data.dagId
  * @param data.dagRunId
  * @param data.taskId
+ * @param data.runAfterGte
+ * @param data.runAfterLte
  * @param data.logicalDateGte
  * @param data.logicalDateLte
  * @param data.startDateGte
@@ -1563,6 +1623,7 @@ export const useTaskInstanceServiceGetTaskInstanceSuspense = <
  * @param data.pool
  * @param data.queue
  * @param data.executor
+ * @param data.versionNumber
  * @param data.limit
  * @param data.offset
  * @param data.orderBy
@@ -1589,12 +1650,15 @@ export const useTaskInstanceServiceGetMappedTaskInstancesSuspense = <
     orderBy,
     pool,
     queue,
+    runAfterGte,
+    runAfterLte,
     startDateGte,
     startDateLte,
     state,
     taskId,
     updatedAtGte,
     updatedAtLte,
+    versionNumber,
   }: {
     dagId: string;
     dagRunId: string;
@@ -1610,12 +1674,15 @@ export const useTaskInstanceServiceGetMappedTaskInstancesSuspense = <
     orderBy?: string;
     pool?: string[];
     queue?: string[];
+    runAfterGte?: string;
+    runAfterLte?: string;
     startDateGte?: string;
     startDateLte?: string;
     state?: string[];
     taskId: string;
     updatedAtGte?: string;
     updatedAtLte?: string;
+    versionNumber?: number[];
   },
   queryKey?: TQueryKey,
   options?: Omit<UseQueryOptions<TData, TError>, "queryKey" | "queryFn">,
@@ -1637,12 +1704,15 @@ export const useTaskInstanceServiceGetMappedTaskInstancesSuspense = <
         orderBy,
         pool,
         queue,
+        runAfterGte,
+        runAfterLte,
         startDateGte,
         startDateLte,
         state,
         taskId,
         updatedAtGte,
         updatedAtLte,
+        versionNumber,
       },
       queryKey,
     ),
@@ -1662,12 +1732,15 @@ export const useTaskInstanceServiceGetMappedTaskInstancesSuspense = <
         orderBy,
         pool,
         queue,
+        runAfterGte,
+        runAfterLte,
         startDateGte,
         startDateLte,
         state,
         taskId,
         updatedAtGte,
         updatedAtLte,
+        versionNumber,
       }) as TData,
     ...options,
   });
@@ -1873,6 +1946,8 @@ export const useTaskInstanceServiceGetMappedTaskInstanceSuspense = <
  * @param data.dagId
  * @param data.dagRunId
  * @param data.taskId
+ * @param data.runAfterGte
+ * @param data.runAfterLte
  * @param data.logicalDateGte
  * @param data.logicalDateLte
  * @param data.startDateGte
@@ -1888,6 +1963,7 @@ export const useTaskInstanceServiceGetMappedTaskInstanceSuspense = <
  * @param data.pool
  * @param data.queue
  * @param data.executor
+ * @param data.versionNumber
  * @param data.limit
  * @param data.offset
  * @param data.orderBy
@@ -1914,6 +1990,8 @@ export const useTaskInstanceServiceGetTaskInstancesSuspense = <
     orderBy,
     pool,
     queue,
+    runAfterGte,
+    runAfterLte,
     startDateGte,
     startDateLte,
     state,
@@ -1921,6 +1999,7 @@ export const useTaskInstanceServiceGetTaskInstancesSuspense = <
     taskId,
     updatedAtGte,
     updatedAtLte,
+    versionNumber,
   }: {
     dagId: string;
     dagRunId: string;
@@ -1936,6 +2015,8 @@ export const useTaskInstanceServiceGetTaskInstancesSuspense = <
     orderBy?: string;
     pool?: string[];
     queue?: string[];
+    runAfterGte?: string;
+    runAfterLte?: string;
     startDateGte?: string;
     startDateLte?: string;
     state?: string[];
@@ -1943,6 +2024,7 @@ export const useTaskInstanceServiceGetTaskInstancesSuspense = <
     taskId?: string;
     updatedAtGte?: string;
     updatedAtLte?: string;
+    versionNumber?: number[];
   },
   queryKey?: TQueryKey,
   options?: Omit<UseQueryOptions<TData, TError>, "queryKey" | "queryFn">,
@@ -1964,6 +2046,8 @@ export const useTaskInstanceServiceGetTaskInstancesSuspense = <
         orderBy,
         pool,
         queue,
+        runAfterGte,
+        runAfterLte,
         startDateGte,
         startDateLte,
         state,
@@ -1971,6 +2055,7 @@ export const useTaskInstanceServiceGetTaskInstancesSuspense = <
         taskId,
         updatedAtGte,
         updatedAtLte,
+        versionNumber,
       },
       queryKey,
     ),
@@ -1990,6 +2075,8 @@ export const useTaskInstanceServiceGetTaskInstancesSuspense = <
         orderBy,
         pool,
         queue,
+        runAfterGte,
+        runAfterLte,
         startDateGte,
         startDateLte,
         state,
@@ -1997,6 +2084,7 @@ export const useTaskInstanceServiceGetTaskInstancesSuspense = <
         taskId,
         updatedAtGte,
         updatedAtLte,
+        versionNumber,
       }) as TData,
     ...options,
   });
@@ -2363,6 +2451,7 @@ export const usePoolServiceGetPoolSuspense = <
  * @param data.limit
  * @param data.offset
  * @param data.orderBy
+ * @param data.poolNamePattern
  * @returns PoolCollectionResponse Successful Response
  * @throws ApiError
  */
@@ -2375,17 +2464,19 @@ export const usePoolServiceGetPoolsSuspense = <
     limit,
     offset,
     orderBy,
+    poolNamePattern,
   }: {
     limit?: number;
     offset?: number;
     orderBy?: string;
+    poolNamePattern?: string;
   } = {},
   queryKey?: TQueryKey,
   options?: Omit<UseQueryOptions<TData, TError>, "queryKey" | "queryFn">,
 ) =>
   useSuspenseQuery<TData, TError>({
-    queryKey: Common.UsePoolServiceGetPoolsKeyFn({ limit, offset, orderBy }, queryKey),
-    queryFn: () => PoolService.getPools({ limit, offset, orderBy }) as TData,
+    queryKey: Common.UsePoolServiceGetPoolsKeyFn({ limit, offset, orderBy, poolNamePattern }, queryKey),
+    queryFn: () => PoolService.getPools({ limit, offset, orderBy, poolNamePattern }) as TData,
     ...options,
   });
 /**
@@ -2646,6 +2737,64 @@ export const useVariableServiceGetVariablesSuspense = <
     ...options,
   });
 /**
+ * Get Dag Versions
+ * Get all DAG Versions.
+ *
+ * This endpoint allows specifying `~` as the dag_id to retrieve DAG Versions for all DAGs.
+ * @param data The data for the request.
+ * @param data.dagId
+ * @param data.limit
+ * @param data.offset
+ * @param data.versionNumber
+ * @param data.bundleName
+ * @param data.bundleVersion
+ * @param data.orderBy
+ * @returns DAGVersionCollectionResponse Successful Response
+ * @throws ApiError
+ */
+export const useDagVersionServiceGetDagVersionsSuspense = <
+  TData = Common.DagVersionServiceGetDagVersionsDefaultResponse,
+  TError = unknown,
+  TQueryKey extends Array<unknown> = unknown[],
+>(
+  {
+    bundleName,
+    bundleVersion,
+    dagId,
+    limit,
+    offset,
+    orderBy,
+    versionNumber,
+  }: {
+    bundleName?: string;
+    bundleVersion?: string;
+    dagId: string;
+    limit?: number;
+    offset?: number;
+    orderBy?: string;
+    versionNumber?: number;
+  },
+  queryKey?: TQueryKey,
+  options?: Omit<UseQueryOptions<TData, TError>, "queryKey" | "queryFn">,
+) =>
+  useSuspenseQuery<TData, TError>({
+    queryKey: Common.UseDagVersionServiceGetDagVersionsKeyFn(
+      { bundleName, bundleVersion, dagId, limit, offset, orderBy, versionNumber },
+      queryKey,
+    ),
+    queryFn: () =>
+      DagVersionService.getDagVersions({
+        bundleName,
+        bundleVersion,
+        dagId,
+        limit,
+        offset,
+        orderBy,
+        versionNumber,
+      }) as TData,
+    ...options,
+  });
+/**
  * Get Health
  * @returns HealthInfoResponse Successful Response
  * @throws ApiError
@@ -2680,5 +2829,31 @@ export const useVersionServiceGetVersionSuspense = <
   useSuspenseQuery<TData, TError>({
     queryKey: Common.UseVersionServiceGetVersionKeyFn(queryKey),
     queryFn: () => VersionService.getVersion() as TData,
+    ...options,
+  });
+/**
+ * Login
+ * Redirect to the login URL depending on the AuthManager configured.
+ * @param data The data for the request.
+ * @param data.next
+ * @returns unknown Successful Response
+ * @throws ApiError
+ */
+export const useLoginServiceLoginSuspense = <
+  TData = Common.LoginServiceLoginDefaultResponse,
+  TError = unknown,
+  TQueryKey extends Array<unknown> = unknown[],
+>(
+  {
+    next,
+  }: {
+    next?: string;
+  } = {},
+  queryKey?: TQueryKey,
+  options?: Omit<UseQueryOptions<TData, TError>, "queryKey" | "queryFn">,
+) =>
+  useSuspenseQuery<TData, TError>({
+    queryKey: Common.UseLoginServiceLoginKeyFn({ next }, queryKey),
+    queryFn: () => LoginService.login({ next }) as TData,
     ...options,
   });

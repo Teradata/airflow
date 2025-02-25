@@ -58,7 +58,9 @@ AnalyzeSentimentResponse
 analyzeSyntax
 AnalyzeSyntaxResponse
 Aneesh
+AnExampleDisplayName
 AnnotateTextResponse
+AnotherExampleDisplayName
 ans
 Ansible
 apache
@@ -91,6 +93,8 @@ asciiart
 asctime
 asend
 asia
+AspectType
+AspectTypes
 assertEqualIgnoreMultipleSpaces
 AssetEvent
 AssetEvents
@@ -574,12 +578,14 @@ encodable
 encryptor
 enqueue
 enqueued
+Entry
 EntryGroup
 EntryGroups
 entrypoint
 entrypoints
 EntryType
 EntryTypes
+entryTypes
 Enum
 enum
 enums
@@ -587,6 +593,7 @@ Env
 env
 envFrom
 EnvFromSource
+envs
 EnvVar
 envvar
 eof
@@ -1099,6 +1106,7 @@ muldelete
 Multinamespace
 mutex
 mv
+mwaa
 mypy
 Mysql
 mysql
@@ -1757,6 +1765,7 @@ traceback
 tracebacks
 tracemalloc
 TrainingPipeline
+TransferOperation
 TranslationServiceClient
 travis
 triage
