@@ -67,6 +67,112 @@ class TestTeradataHook:
         assert kwargs["password"] == "password"
 
     @mock.patch("teradatasql.connect")
+    def test_get_conn_td2(self, mock_connect):
+        self.db_hook.get_conn()
+        assert mock_connect.call_count == 1
+        args, kwargs = mock_connect.call_args
+        assert args == ()
+        assert kwargs["host"] == "host"
+        assert kwargs["database"] == "schema"
+        assert kwargs["dbs_port"] == "1025"
+        assert kwargs["user"] == "login"
+        assert kwargs["password"] == "password"
+        assert kwargs["logmech"] == "TD2"
+
+    @mock.patch("teradatasql.connect")
+    def test_get_conn_td2_case_sensitive(self, mock_connect):
+        log_mech = {"logmech": "td2"}
+        self.connection.extra = json.dumps(log_mech)
+        self.db_hook.get_conn()
+        assert mock_connect.call_count == 1
+        args, kwargs = mock_connect.call_args
+        assert args == ()
+        assert kwargs["host"] == "host"
+        assert kwargs["database"] == "schema"
+        assert kwargs["dbs_port"] == "1025"
+        assert kwargs["user"] == "login"
+        assert kwargs["password"] == "password"
+        assert kwargs["logmech"] == "TD2"
+
+    @mock.patch("teradatasql.connect")
+    def test_get_conn_ldap(self, mock_connect):
+        log_mech = {"logmech": "LDAP"}
+        self.connection.extra = json.dumps(log_mech)
+        self.db_hook.get_conn()
+        assert mock_connect.call_count == 1
+        args, kwargs = mock_connect.call_args
+        assert args == ()
+        assert kwargs["host"] == "host"
+        assert kwargs["database"] == "schema"
+        assert kwargs["dbs_port"] == "1025"
+        assert kwargs["user"] == "login"
+        assert kwargs["password"] == "password"
+        assert kwargs["logmech"] == "LDAP"
+
+    @mock.patch("teradatasql.connect")
+    def test_get_conn_ldap_case_sensitive(self, mock_connect):
+        log_mech = {"logmech": "ldap"}
+        self.connection.extra = json.dumps(log_mech)
+        self.db_hook.get_conn()
+        assert mock_connect.call_count == 1
+        args, kwargs = mock_connect.call_args
+        assert args == ()
+        assert kwargs["host"] == "host"
+        assert kwargs["database"] == "schema"
+        assert kwargs["dbs_port"] == "1025"
+        assert kwargs["user"] == "login"
+        assert kwargs["password"] == "password"
+        assert kwargs["logmech"] == "LDAP"
+
+    @mock.patch("teradatasql.connect")
+    def test_get_conn_browser(self, mock_connect):
+        log_mech = {"logmech": "BROWSER"}
+        self.connection.extra = json.dumps(log_mech)
+        self.db_hook.get_conn()
+        assert mock_connect.call_count == 1
+        args, kwargs = mock_connect.call_args
+        assert args == ()
+        assert kwargs["host"] == "host"
+        assert kwargs["database"] == "schema"
+        assert kwargs["dbs_port"] == "1025"
+        assert kwargs["logmech"] == "BROWSER"
+        assert "user" not in kwargs
+        assert "password" not in kwargs
+        assert "browser" not in kwargs
+
+    @mock.patch("teradatasql.connect")
+    def test_get_conn_browser_case_sensitive(self, mock_connect):
+        log_mech = {"logmech": "browser"}
+        self.connection.extra = json.dumps(log_mech)
+        self.db_hook.get_conn()
+        assert mock_connect.call_count == 1
+        args, kwargs = mock_connect.call_args
+        assert args == ()
+        assert kwargs["host"] == "host"
+        assert kwargs["database"] == "schema"
+        assert kwargs["dbs_port"] == "1025"
+        assert kwargs["logmech"] == "BROWSER"
+        assert "user" not in kwargs
+        assert "password" not in kwargs
+        assert "browser" not in kwargs
+
+    @mock.patch("teradatasql.connect")
+    def test_get_conn_browser_case_sensitive_browser_custom(self, mock_connect):
+        log_mech = {"logmech": "browser", "browser": "customvalue"}
+        self.connection.extra = json.dumps(log_mech)
+        self.db_hook.get_conn()
+        assert mock_connect.call_count == 1
+        args, kwargs = mock_connect.call_args
+        assert args == ()
+        assert kwargs["host"] == "host"
+        assert kwargs["database"] == "schema"
+        assert kwargs["dbs_port"] == "1025"
+        assert kwargs["logmech"] == "BROWSER"
+        assert "user" not in kwargs
+        assert "password" not in kwargs
+        assert kwargs["browser"] == "customvalue"
+
+    @mock.patch("teradatasql.connect")
     def test_get_tmode_conn(self, mock_connect):
         tmode_name = {"tmode": "tera"}
         self.connection.extra = json.dumps(tmode_name)

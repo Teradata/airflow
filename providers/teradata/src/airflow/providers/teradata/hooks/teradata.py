@@ -79,6 +79,10 @@ def _handle_user_query_band_text(query_band_text) -> str:
     return query_band_text
 
 
+DEFAULT_LOG_MECH = "TD2"
+ALLOWED_LOG_MECH_OPTIONS = [DEFAULT_LOG_MECH, "LDAP", "BROWSER"]
+
+
 class TeradataHook(DbApiHook):
     """
     General hook for interacting with Teradata SQL Database.
@@ -165,9 +169,18 @@ class TeradataHook(DbApiHook):
             "host": conn.host or "localhost",
             "dbs_port": conn.port or "1025",
             "database": conn.schema or "",
-            "user": conn.login or "dbc",
-            "password": conn.password or "dbc",
         }
+
+        logmech = conn.extra_dejson.get("logmech", DEFAULT_LOG_MECH).upper()
+        browser = conn.extra_dejson.get("browser", None)
+        conn_config["logmech"] = logmech
+
+        if logmech == "BROWSER":
+            if browser is not None:
+                conn_config["browser"] = browser
+        else:
+            conn_config["user"] = conn.login or "dbc"
+            conn_config["password"] = conn.password or "dbc"
 
         if conn.extra_dejson.get("tmode", False):
             conn_config["tmode"] = conn.extra_dejson["tmode"]
@@ -198,6 +211,33 @@ class TeradataHook(DbApiHook):
         link = f"teradatasql://{conn.login}:{conn.password}@{conn.host}"
         connection = sqlalchemy.create_engine(link)
         return connection
+
+    @classmethod
+    def get_connection_form_widgets(cls) -> dict[str, Any]:
+        """Return connection widgets to add to Redis connection form."""
+        from flask_appbuilder.fieldwidgets import BS3TextFieldWidget
+        from flask_babel import lazy_gettext
+        from wtforms import StringField
+        from wtforms.validators import Optional, any_of
+
+        return {
+            "logmech": StringField(
+                lazy_gettext("Log Mech"),
+                validators=[any_of(ALLOWED_LOG_MECH_OPTIONS)],
+                widget=BS3TextFieldWidget(),
+                description=f"Must be one of: {', '.join(ALLOWED_LOG_MECH_OPTIONS)}.",
+                default=DEFAULT_LOG_MECH,
+            ),
+            "browser": StringField(
+                lazy_gettext("Browser"),
+                widget=BS3TextFieldWidget(),
+                validators=[Optional()],
+                description="Specifies a command to override the default command to open the browser for "
+                "Browser Authentication, which is chosen with the LOGMECH=BROWSER connection "
+                "parameter.",
+                default=None,
+            ),
+        }
 
     @staticmethod
     def get_ui_field_behaviour() -> dict:
