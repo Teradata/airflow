@@ -16,7 +16,7 @@
 # under the License.
 #
 ---
-name: ci-teradata-teradata_main-systemtest
+name: teradata-teradata_main-systemtest
 on:
   push:
     branches:
