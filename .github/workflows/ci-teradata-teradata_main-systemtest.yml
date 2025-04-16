@@ -86,8 +86,7 @@ jobs:
               libxml2-dev  libxmlsec1-dev libxmlsec1-openssl libtool  libkrb5-dev krb5-multidev gcc g++
               
               pip install pytest time-machine pytest-asyncio pytest-md-report cryptography pytest-html tailer pandas jinja2 sqlalchemy hatch
-              uv sync --all-packages
-
+              uv sync --extra devel --extra teradata --extra microsoft.azure --extra amazon
               export SYSTEM_TESTS_ENV_ID=teradatasystemtest
               export AIRFLOW_CONN_TERADATA_DEFAULT='teradata://${{ vars.CSAE_AIRFLOW_ENV_USERNAME }}:${{ secrets.CSAE_AIRFLOW_ENV_PASSWORD }}@${{ steps.create-csae-environment.outputs.teradata-server-name }}:/${{ vars.CSAE_AIRFLOW_ENV_DATABASE }}'
               export AIRFLOW_CONN_TERADATA_LAKE='teradata://${{ vars.LAKE_ENV_USERNAME }}:${{ secrets.LAKE_ENV_PASSWORD }}@${{ vars.LAKE_SERVER_NAME }}:/${{ vars.LAKE_ENV_USERNAME }}'
