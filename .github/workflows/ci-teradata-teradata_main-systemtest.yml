@@ -44,6 +44,32 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
+      - name: "Checkout ClearScape Scripts and Report Generation supported files"
+        run: |
+            git fetch
+            git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/scripts/createTestEnvironments.sh
+            git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/scripts/deleteTestEnvironments.sh
+            git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/system-tests-files/report_generate_index_html.py
+            git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/system-tests-files/report_index_template.html
+            git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/system-tests-files/report_parse_xml.py
+            cp .github/workflows/system-tests-files/report_generate_index_html.py .
+            cp .github/workflows/system-tests-files/report_index_template.html .
+            cp .github/workflows/system-tests-files/report_parse_xml.py .
+      - name: "Define CSAE env name"
+        id: define-environment-name
+        run: |
+              echo "env-name=airflow-ci-$(date +%s%N)" >> $GITHUB_OUTPUT
+      - name: "Create CSAE environment"
+        id: create-csae-environment
+        shell: bash
+        run: |
+          echo Clearscape Environment name : ${{ steps.define-environment-name.outputs.env-name}}
+          chmod 777 .github/workflows/scripts/createTestEnvironments.sh
+          .github/workflows/scripts/createTestEnvironments.sh
+        env:
+          CSAE_TOKEN: ${{ secrets.CSAE_AIRFLOW_TOKEN }}
+          CSAE_ENV_PASSWORD: ${{ secrets.CSAE_AIRFLOW_ENV_PASSWORD }}
+          CSAE_ENV_NAME: ${{ steps.define-environment-name.outputs.env-name}}
       - name: "Install Airflow Teradata Provider and Run System tests"
         run: |
               curl -LsSf https://astral.sh/uv/install.sh | sh
