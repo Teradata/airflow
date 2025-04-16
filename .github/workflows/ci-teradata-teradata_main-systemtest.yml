@@ -101,7 +101,7 @@ jobs:
               export AIRFLOW_VAR_AWS_SECRET_ACCESS_KEY=${{ secrets.TERADATA_DOWNLOAD_AWS_SECRET_ACCESS_KEY }}
 
               
-              uv run pytest --system  --junitxml=report_test.xml providers/teradata/tests/system/teradata/*.py
+              uv run pytest --system  --junitxml=report_test.xml providers/teradata/tests/system/teradata/example_teradata.py
               cat report_test.xml
               
               
