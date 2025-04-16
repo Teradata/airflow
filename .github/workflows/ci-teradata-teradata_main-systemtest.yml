@@ -45,7 +45,7 @@ jobs:
       - name: "Install Python"
         uses: actions/setup-python@v4
         with:
-          python-version: 3.10
+          python-version: "3.10"
       - name: "Checkout ClearScape Scripts and Report Generation supported files"
         run: |
             git fetch
