@@ -66,10 +66,7 @@ jobs:
         run: |
               echo Clearscape Environment name : ${{ steps.create-csae-environment.outputs.teradata-server-name }}
               sudo apt update
-              cd airflow
-              python3 -m venv .venv
-              source .venv/bin/activate
-              pip install -e ".[devel-all,teradata, microsoft.azure, amazon]"
+              ls -al
               
               
 
