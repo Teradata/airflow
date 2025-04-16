@@ -65,7 +65,7 @@ jobs:
       - name: "Install Airflow Teradata Provider and Run System tests"
         run: |
               echo Clearscape Environment name : ${{ steps.create-csae-environment.outputs.teradata-server-name }}
-              pip install -e ".[devel-all,teradata, microsoft.azure, amazon]"
+              pip install -e ".[devel-all,teradata, microsoft.azure, amazon]"" --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-main/constraints-3.9.txt"
               
               
 
