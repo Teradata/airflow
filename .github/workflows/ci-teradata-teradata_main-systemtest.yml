@@ -40,33 +40,24 @@ jobs:
         with:
           ref: main
           persist-credentials: false
-      - name: "Github Event and Branch Details"
-        run: echo "The current checked out branch is main. Workflow trigged Event- ${{ github.event_name  }}. The fully qualified reference (ref) branch that triggered the workflow run- ${{ github.ref }}"
       - name: "Install Python"
         uses: actions/setup-python@v4
         with:
           python-version: "3.10"
-      - name: "Checkout ClearScape Scripts and Report Generation supported files"
-        run: |
-            git fetch
-            git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/scripts/createTestEnvironments.sh
-            git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/scripts/deleteTestEnvironments.sh
-            git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/system-tests-files/report_generate_index_html.py
-            git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/system-tests-files/report_index_template.html
-            git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/system-tests-files/report_parse_xml.py
-            cp .github/workflows/system-tests-files/report_generate_index_html.py .
-            cp .github/workflows/system-tests-files/report_index_template.html .
-            cp .github/workflows/system-tests-files/report_parse_xml.py .
-      - name: "Define CSAE env name"
-        id: define-environment-name
-        run: |
-              echo "env-name=airflow-ci-$(date +%s%N)" >> $GITHUB_OUTPUT
-     
       - name: "Install Airflow Teradata Provider and Run System tests"
         run: |
-              echo Clearscape Environment name : ${{ steps.create-csae-environment.outputs.teradata-server-name }}
-              pip install -e ".[devel-all,teradata, microsoft.azure, amazon]" --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-main/constraints-3.9.txt"
-              
+              curl -LsSf https://astral.sh/uv/install.sh | sh
+              uv venv
+              source .venv/bin/activate
+              sudo apt-get install -y apt-transport-https apt-utils build-essential ca-certificates dirmngr \
+              freetds-bin freetds-dev git graphviz graphviz-dev krb5-user ldap-utils libev4 libev-dev libffi-dev libgeos-dev \
+              libkrb5-dev libldap2-dev libleveldb1d libleveldb-dev libsasl2-2 libsasl2-dev libsasl2-modules \
+              libssl-dev libxmlsec1 libxmlsec1-dev locales lsb-release openssh-client pkgconf sasl2-bin \
+              software-properties-common sqlite3 sudo unixodbc unixodbc-dev zlib1g-dev python3-venv python3-pip pipx \
+              default-libmysqlclient-dev pkg-config libxml2-dev   libxmlsec1-openssl   libtool   python3-dev   
+              pip install pytest time-machine pytest-asyncio pytest-md-report cryptography pytest-html tailer pandas jinja2 sqlalchemy hatch
+              uv sync --all-packages
+              uv run pytest --system  --junitxml=report_test.xml providers/teradata/tests/system/teradata/*.py
               
 
 
