@@ -101,6 +101,14 @@ jobs:
               
               pytest --system  --junitxml=report_test.xml providers/teradata/tests/system/teradata/example_teradata.py
               sudo cat report_test.xml
+      - name: "Delete CSAE environment"
+        if: always()
+        run: |
+            chmod 777 .github/workflows/scripts/deleteTestEnvironments.sh
+            .github/workflows/scripts/deleteTestEnvironments.sh
+        env:
+            CSAE_TOKEN: ${{ secrets.CSAE_AIRFLOW_TOKEN }}
+            CSAE_ENV_NAME: ${{ steps.define-environment-name.outputs.env-name}}
               
               
 
