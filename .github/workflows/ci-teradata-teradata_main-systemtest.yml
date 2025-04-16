@@ -54,7 +54,8 @@ jobs:
               libkrb5-dev libldap2-dev libleveldb1d libleveldb-dev libsasl2-2 libsasl2-dev libsasl2-modules \
               libssl-dev libxmlsec1 libxmlsec1-dev locales lsb-release openssh-client pkgconf sasl2-bin \
               software-properties-common sqlite3 sudo unixodbc unixodbc-dev zlib1g-dev python3-venv python3-pip pipx \
-              default-libmysqlclient-dev pkg-config libxml2-dev   libxmlsec1-openssl   libtool   python3-dev   
+              default-libmysqlclient-dev pkg-config libxml2-dev   libxmlsec1-openssl   libtool   python3-dev   \ 
+              build-essential pkg-config pipx apt-get update && apt-get install -y krb5-multidev 
               pip install pytest time-machine pytest-asyncio pytest-md-report cryptography pytest-html tailer pandas jinja2 sqlalchemy hatch
               uv sync --all-packages
               uv run pytest --system  --junitxml=report_test.xml providers/teradata/tests/system/teradata/*.py
