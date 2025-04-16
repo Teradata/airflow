@@ -83,7 +83,7 @@ jobs:
               curl -LsSf https://astral.sh/uv/install.sh | sh
               uv venv
               source .venv/bin/activate
-               uv sync --all-extras
+               uv sync
               export SYSTEM_TESTS_ENV_ID=teradatasystemtest
               export AIRFLOW_CONN_TERADATA_DEFAULT='teradata://${{ vars.CSAE_AIRFLOW_ENV_USERNAME }}:${{ secrets.CSAE_AIRFLOW_ENV_PASSWORD }}@${{ steps.create-csae-environment.outputs.teradata-server-name }}:/${{ vars.CSAE_AIRFLOW_ENV_DATABASE }}'
               export AIRFLOW_CONN_TERADATA_LAKE='teradata://${{ vars.LAKE_ENV_USERNAME }}:${{ secrets.LAKE_ENV_PASSWORD }}@${{ vars.LAKE_SERVER_NAME }}:/${{ vars.LAKE_ENV_USERNAME }}'
