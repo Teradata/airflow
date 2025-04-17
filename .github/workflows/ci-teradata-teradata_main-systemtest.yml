@@ -51,6 +51,8 @@ jobs:
           apt-get install -y git curl ca-certificates
       - name: "Checkout ClearScape Scripts and Report Generation supported files"
         run: |
+            ls -all
+            pwd
             git fetch
             git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/scripts/createTestEnvironments.sh
             git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/scripts/deleteTestEnvironments.sh
