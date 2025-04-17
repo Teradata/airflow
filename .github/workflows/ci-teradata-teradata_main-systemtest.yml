@@ -45,6 +45,7 @@ jobs:
           persist-credentials: false
       - name: "Checkout ClearScape Scripts and Report Generation supported files"
         run: |
+            git fetch
             git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/scripts/createTestEnvironments.sh
             git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/scripts/deleteTestEnvironments.sh
             git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/system-tests-files/report_generate_index_html.py
