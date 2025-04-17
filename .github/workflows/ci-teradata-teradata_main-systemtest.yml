@@ -32,10 +32,12 @@ jobs:
   teradata-systemtest:
     name: "Manage Teradata Provider System Tests Dashboard"
     runs-on: "ubuntu-22.04"
-    container:
-      image: python:3.10-slim
-      options: --user root
     steps:
+      - name: Show current user
+        run: |
+          whoami
+      - name: Cleanup repo
+        run: docker run -v "${GITHUB_WORKSPACE}:/workspace" -u 0:0 bash -c "rm -rf /workspace/*"
       - name: "Checkout Teradata Airflow Source Code"
         uses: actions/checkout@v4
         with:
