@@ -57,7 +57,7 @@ jobs:
       - name: "Download System Test Log Report"
         uses: dawidd6/action-download-artifact@v3
         with:
-          workflow: ci-teradata-main-systemtest-dashboard.yml
+          workflow: ci-teradata-teradata_main-systemtest.yml
           workflow_conclusion: completed
           name: airflow-system-test-report
           path: .
