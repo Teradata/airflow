@@ -137,7 +137,11 @@ jobs:
          destination: ./_site
       - name: "Prepares the built site for deployment and upload it to GITHUB"
         if: always()
-        uses: actions/upload-pages-artifact@v2
+        uses: actions/upload-pages-artifact@v3
+      - name: "Publish Teradata Airflow Provider System Tests Report to GITHUB page"
+        if: always()
+        id: deployment
+        uses: actions/deploy-pages@v2
 
      
               
