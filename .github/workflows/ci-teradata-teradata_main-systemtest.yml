@@ -55,7 +55,7 @@ jobs:
             cp .github/workflows/system-tests-files/report_index_template.html .
             cp .github/workflows/system-tests-files/report_parse_xml.py .
       - name: "Download System Test Log Report"
-        uses: dawidd6/action-download-artifact@v3
+        uses: dawidd6/action-download-artifact@v9
         with:
           workflow: ci-teradata-teradata_main-systemtest.yml
           workflow_conclusion: completed
