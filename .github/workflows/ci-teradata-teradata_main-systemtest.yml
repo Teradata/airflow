@@ -36,8 +36,6 @@ jobs:
       image: ubuntu:22.04
       options: --user root
     steps:
-      - name: Cleanup repo
-        run: docker run -v "${GITHUB_WORKSPACE}:/workspace" -u 0:0 bash -c "rm -rf /workspace/*"
       - name: "Checkout Teradata Airflow Source Code"
         uses: actions/checkout@v4
         with:
