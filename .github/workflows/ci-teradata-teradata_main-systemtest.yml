@@ -32,6 +32,9 @@ jobs:
   teradata-systemtest:
     name: "Manage Teradata Provider System Tests Dashboard"
     runs-on: "ubuntu-22.04"
+    container:
+      image: ubuntu:22.04
+      options: --user root
     steps:
       - name: Cleanup repo
         run: docker run -v "${GITHUB_WORKSPACE}:/workspace" -u 0:0 bash -c "rm -rf /workspace/*"
