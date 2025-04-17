@@ -128,6 +128,12 @@ jobs:
           path: |
             reporttest.csv
             report_test.xml
+      - name: "Build GITHUB Page for Teradata Airflow Provider System Tests Report"
+        if: always()
+        uses: actions/jekyll-build-pages@v1
+        with:
+         source: ./teradata_report
+         destination: ./_site
      
               
               
