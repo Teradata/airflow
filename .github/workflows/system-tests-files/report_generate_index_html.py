@@ -25,11 +25,11 @@ df = pd.read_csv(fileName, delimiter=',', header=None)
 # the code for running locally
 origdir = os.getcwd()
 os.chdir("../../..")
-directory = os.getcwd() + '/tests/system/providers/teradata'
+directory = os.getcwd() + '/providers/teradata/tests/system/teradata'
 os.chdir(origdir)
 """
 # Read system test files under system tests directory
-directory = 'tests/system/providers/teradata'
+directory = 'providers/teradata/tests/system/teradata'
 # List all file names in the directory
 file_names = os.listdir(directory)
 
@@ -49,7 +49,7 @@ formatted_date = now.strftime('%B %d, %Y at %I:%M:%S %p GMT%z')
 for system_test_file in system_test_files:
     record = Record('', 0, 0,[], '', '')
     system_test_file = system_test_file[:-3]
-    system_test_file = 'tests.system.providers.teradata.' + system_test_file.strip()
+    system_test_file = 'providers.teradata.tests.system.teradata.' + system_test_file.strip()
     record.filename = system_test_file
     liRecords = []
     for index, row in df.iterrows():
