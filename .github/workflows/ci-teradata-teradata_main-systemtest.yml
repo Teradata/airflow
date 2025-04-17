@@ -33,7 +33,7 @@ jobs:
     name: "Manage Teradata Provider System Tests Dashboard"
     runs-on: "ubuntu-22.04"
     container:
-      image: ubuntu:22.04
+      image: python:3.10-slim
       options: --user root
     steps:
       - name: "Checkout Teradata Airflow Source Code"
