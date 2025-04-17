@@ -16,7 +16,7 @@
 # under the License.
 #
 ---
-name: airflow-teradata-main-systemtest
+name: airflow-teradata-main-systemtest-dashboard
 on:
   push:
     branches:
