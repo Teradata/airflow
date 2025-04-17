@@ -34,6 +34,47 @@ For high-level changelog, see :doc:`package information including changelog <ind
 
 
 
+5.2.2
+.....
+
+Latest change: 2025-04-16
+
+==================================================================================================  ===========  ==================================================================================
+Commit                                                                                              Committed    Subject
+==================================================================================================  ===========  ==================================================================================
+`19af68db79 <https://github.com/apache/airflow/commit/19af68db7909131dcfbafb250707714610808199>`__  2025-04-16   ``HttpHook: allways add port if given (#48573)``
+`cb295c351a <https://github.com/apache/airflow/commit/cb295c351a016c0a10cab07f2a628b865cff3ca3>`__  2025-04-14   ``remove superfluous else block (#49199)``
+`4a8567b20b <https://github.com/apache/airflow/commit/4a8567b20bdd6555cbdc936d6674bf4fa390b0d5>`__  2025-04-10   ``Prepare docs for Apr 2nd wave of providers (#49051)``
+`7b2ec33c7a <https://github.com/apache/airflow/commit/7b2ec33c7ad4998d9c9735b79593fcdcd3b9dd1f>`__  2025-04-08   ``Remove unnecessary entries in get_provider_info and update the schema (#48849)``
+`139673d3ce <https://github.com/apache/airflow/commit/139673d3ce5552c2cf8bcb2d202e97342c4b237c>`__  2025-04-07   ``Remove fab from preinstalled providers (#48457)``
+`67858fd7e7 <https://github.com/apache/airflow/commit/67858fd7e7ac82788854844c1e6ef5a35f1d0d23>`__  2025-04-06   ``Improve documentation building iteration (#48760)``
+`adbb062b50 <https://github.com/apache/airflow/commit/adbb062b50e2e128fe475a76b7ce10ec93c39ee2>`__  2025-04-06   ``Prepare docs for Apr 1st wave of providers (#48828)``
+`d4473555c0 <https://github.com/apache/airflow/commit/d4473555c0e7022e073489b7163d49102881a1a6>`__  2025-04-02   ``Simplify tooling by switching completely to uv (#48223)``
+`47002feacd <https://github.com/apache/airflow/commit/47002feacd8aaf794b47c2dd241aa25068354a2a>`__  2025-03-30   ``Upgrade ruff to latest version (#48553)``
+`347c98cd8c <https://github.com/apache/airflow/commit/347c98cd8c285b7b8ca3a8a626be89d16a572bbf>`__  2025-03-28   ``Move 'BaseSensorOperator' to TaskSDK definitions (#48244)``
+`c762e17820 <https://github.com/apache/airflow/commit/c762e17820cae6b162caa3eec5123760e07d56cc>`__  2025-03-26   ``Prepare docs for Mar 2nd wave of providers (#48383)``
+`6adb2dbae4 <https://github.com/apache/airflow/commit/6adb2dbae47341eb61dbc62dbc56176d9aa83fd9>`__  2025-03-25   ``Upgrade providers flit build requirements to 3.12.0 (#48362)``
+`243fe86d4b <https://github.com/apache/airflow/commit/243fe86d4b3e59bb12977b3e36ca3f2ed27ca0f8>`__  2025-03-21   ``Move airflow sources to airflow-core package (#47798)``
+`935d2831fe <https://github.com/apache/airflow/commit/935d2831fe8fd509b618a738bf00e0c34e186e11>`__  2025-03-15   ``Remove links to x/twitter.com (#47801)``
+==================================================================================================  ===========  ==================================================================================
+
+5.2.1
+.....
+
+Latest change: 2025-03-09
+
+==================================================================================================  ===========  =====================================================================
+Commit                                                                                              Committed    Subject
+==================================================================================================  ===========  =====================================================================
+`492ecfe5c0 <https://github.com/apache/airflow/commit/492ecfe5c03102bfb710108038ebd5fc50cb55b5>`__  2025-03-09   ``Prepare docs for Mar 1st wave of providers (#47545)``
+`e4002c3305 <https://github.com/apache/airflow/commit/e4002c3305a757f5926f96c996e701e8f998a042>`__  2025-03-05   ``Move tests_common package to devel-common project (#47281)``
+`1addb55154 <https://github.com/apache/airflow/commit/1addb55154fbef31bfa021537cfbd4395696381c>`__  2025-02-28   ``Improve documentation for updating provider dependencies (#47203)``
+`c6c4f95ed9 <https://github.com/apache/airflow/commit/c6c4f95ed9e3220133815b9126c135e805637022>`__  2025-02-25   ``Add legacy namespace packages to airflow.providers (#47064)``
+`e810f00d2d <https://github.com/apache/airflow/commit/e810f00d2d7ee622bd3ff023dd5941a769425429>`__  2025-02-24   ``Fix HttpSensor to enable returning xcom value (#46848)``
+`dbf8bb4092 <https://github.com/apache/airflow/commit/dbf8bb409223687c7d2ad10649a92d02c24bb3b4>`__  2025-02-24   ``Remove extra whitespace in provider readme template (#46975)``
+`b28c336e8b <https://github.com/apache/airflow/commit/b28c336e8b7aa1d69c0f9520b182b1b661377337>`__  2025-02-21   ``Upgrade flit to 3.11.0 (#46938)``
+==================================================================================================  ===========  =====================================================================
+
 5.2.0
 .....
 
@@ -42,6 +83,7 @@ Latest change: 2025-02-21
 ==================================================================================================  ===========  ===================================================================================
 Commit                                                                                              Committed    Subject
 ==================================================================================================  ===========  ===================================================================================
+`0653ffe78e <https://github.com/apache/airflow/commit/0653ffe78e4a0acaf70801a5ceef8dbabdac8b15>`__  2025-02-21   ``Prepare docs for Feb 1st wave of providers (fixed) (#46962)``
 `5d87bddf0a <https://github.com/apache/airflow/commit/5d87bddf0aa5f485f3684c909fb95f461e5a2ab6>`__  2025-02-21   ``Prepare docs for Feb 1st wave of providers (#46893)``
 `a29c840d93 <https://github.com/apache/airflow/commit/a29c840d938d56783909e0293896ceb2029821f4>`__  2025-02-20   ``Allow check_response to be defined in extra_options of HTTP connection (#45451)``
 `4d5846f58f <https://github.com/apache/airflow/commit/4d5846f58fe0de9b43358c0be75dd72e968dacc4>`__  2025-02-16   ``Move provider_tests to unit folder in provider tests (#46800)``

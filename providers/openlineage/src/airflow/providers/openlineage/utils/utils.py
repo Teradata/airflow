@@ -26,6 +26,7 @@ from importlib import metadata
 from typing import TYPE_CHECKING, Any, Callable
 
 import attrs
+from openlineage.client.utils import RedactMixin
 
 from airflow import __version__ as AIRFLOW_VERSION
 
@@ -53,8 +54,9 @@ from airflow.providers.openlineage.version_compat import AIRFLOW_V_2_10_PLUS, AI
 from airflow.sensors.base import BaseSensorOperator
 from airflow.serialization.serialized_objects import SerializedBaseOperator
 from airflow.utils.module_loading import import_string
-from airflow.utils.session import NEW_SESSION, provide_session
-from openlineage.client.utils import RedactMixin
+
+if not AIRFLOW_V_3_0_PLUS:
+    from airflow.utils.session import NEW_SESSION, provide_session
 
 try:
     from airflow.sdk import BaseOperator as SdkBaseOperator
@@ -62,6 +64,9 @@ except ImportError:
     SdkBaseOperator = BaseOperator  # type: ignore[misc]
 
 if TYPE_CHECKING:
+    from openlineage.client.event_v2 import Dataset as OpenLineageDataset
+    from openlineage.client.facet_v2 import RunFacet, processing_engine_run
+
     from airflow.models import TaskInstance
     from airflow.providers.common.compat.assets import Asset
     from airflow.sdk import DAG, MappedOperator
@@ -72,8 +77,6 @@ if TYPE_CHECKING:
         should_hide_value_for_key,
     )
     from airflow.utils.state import DagRunState, TaskInstanceState
-    from openlineage.client.event_v2 import Dataset as OpenLineageDataset
-    from openlineage.client.facet_v2 import RunFacet, processing_engine_run
 else:
     try:
         from airflow.sdk import DAG, MappedOperator
@@ -194,34 +197,41 @@ def is_selective_lineage_enabled(obj: DAG | BaseOperator | MappedOperator | SdkB
         return True
     if isinstance(obj, DAG):
         return is_dag_lineage_enabled(obj)
-    elif isinstance(obj, (BaseOperator, MappedOperator, SdkBaseOperator)):
+    if isinstance(obj, (BaseOperator, MappedOperator, SdkBaseOperator)):
         return is_task_lineage_enabled(obj)
-    else:
-        raise TypeError("is_selective_lineage_enabled can only be used on DAG or Operator objects")
+    raise TypeError("is_selective_lineage_enabled can only be used on DAG or Operator objects")
 
 
-@provide_session
-def is_ti_rescheduled_already(ti: TaskInstance, session=NEW_SESSION):
-    from sqlalchemy import exists
+if not AIRFLOW_V_3_0_PLUS:
 
-    if not isinstance(ti.task, BaseSensorOperator):
-        return False
+    @provide_session
+    def is_ti_rescheduled_already(ti: TaskInstance, session=NEW_SESSION):
+        from sqlalchemy import exists
 
-    if not ti.task.reschedule:
-        return False
+        if not isinstance(ti.task, BaseSensorOperator):
+            return False
 
-    return (
-        session.query(
-            exists().where(
-                TaskReschedule.dag_id == ti.dag_id,
-                TaskReschedule.task_id == ti.task_id,
-                TaskReschedule.run_id == ti.run_id,
-                TaskReschedule.map_index == ti.map_index,
-                TaskReschedule.try_number == ti.try_number,
+        if not ti.task.reschedule:
+            return False
+        if AIRFLOW_V_3_0_PLUS:
+            return (
+                session.query(
+                    exists().where(TaskReschedule.ti_id == ti.id, TaskReschedule.try_number == ti.try_number)
+                ).scalar()
+                is True
             )
-        ).scalar()
-        is True
-    )
+        return (
+            session.query(
+                exists().where(
+                    TaskReschedule.dag_id == ti.dag_id,
+                    TaskReschedule.task_id == ti.task_id,
+                    TaskReschedule.run_id == ti.run_id,
+                    TaskReschedule.map_index == ti.map_index,
+                    TaskReschedule.try_number == ti.try_number,
+                )
+            ).scalar()
+            is True
+        )
 
 
 class InfoJsonEncodable(dict):
@@ -315,6 +325,7 @@ class DagInfo(InfoJsonEncodable):
         "description",
         "fileloc",
         "owner",
+        "owner_links",
         "schedule_interval",  # For Airflow 2.
         "timetable_summary",  # For Airflow 3.
         "start_date",
@@ -325,25 +336,35 @@ class DagInfo(InfoJsonEncodable):
 
     @classmethod
     def serialize_timetable(cls, dag: DAG) -> dict[str, Any]:
-        serialized = dag.timetable.serialize()
-        if serialized != {} and serialized is not None:
-            return serialized
-        if (
-            hasattr(dag, "dataset_triggers")
-            and isinstance(dag.dataset_triggers, list)
-            and len(dag.dataset_triggers)
-        ):
-            triggers = dag.dataset_triggers
-            return {
-                "dataset_condition": {
+        # This is enough for Airflow 2.10+ and has all the information needed
+        serialized = dag.timetable.serialize() or {}
+
+        # In Airflow 2.9 when using Dataset scheduling we do not receive datasets in serialized timetable
+        # Also for DatasetOrTimeSchedule, we only receive timetable without dataset_condition
+        if hasattr(dag, "dataset_triggers") and "dataset_condition" not in serialized:
+            try:
+                # Make sure we are in Airflow version where these are importable
+                from airflow.datasets import BaseDatasetEventInput, DatasetAll, DatasetAny
+            except ImportError:
+                log.warning("OpenLineage could not serialize full dag's timetable for dag `%s`.", dag.dag_id)
+                return serialized
+
+            def _serialize_ds(ds: BaseDatasetEventInput) -> dict[str, Any]:
+                if isinstance(ds, (DatasetAny, DatasetAll)):
+                    return {
+                        "__type": "dataset_all" if isinstance(ds, DatasetAll) else "dataset_any",
+                        "objects": [_serialize_ds(child) for child in ds.objects],
+                    }
+                return {"__type": "dataset", "uri": ds.uri, "extra": ds.extra}
+
+            if isinstance(dag.dataset_triggers, BaseDatasetEventInput):
+                serialized["dataset_condition"] = _serialize_ds(dag.dataset_triggers)
+            elif isinstance(dag.dataset_triggers, list) and len(dag.dataset_triggers):
+                serialized["dataset_condition"] = {
                     "__type": "dataset_all",
-                    "objects": [
-                        {"__type": "dataset", "uri": trigger.uri, "extra": trigger.extra}
-                        for trigger in triggers
-                    ],
+                    "objects": [_serialize_ds(trigger) for trigger in dag.dataset_triggers],
                 }
-            }
-        return {}
+        return serialized
 
 
 class DagRunInfo(InfoJsonEncodable):
@@ -354,11 +375,24 @@ class DagRunInfo(InfoJsonEncodable):
         "dag_id",
         "data_interval_start",
         "data_interval_end",
-        "external_trigger",
+        "external_trigger",  # Removed in Airflow 3, use run_type instead
+        "logical_date",  # Airflow 3
+        "run_after",  # Airflow 3
         "run_id",
         "run_type",
         "start_date",
+        "end_date",
     ]
+
+    casts = {"duration": lambda dagrun: DagRunInfo.duration(dagrun)}
+
+    @classmethod
+    def duration(cls, dagrun: DagRun) -> float | None:
+        if not getattr(dagrun, "end_date", None) or not isinstance(dagrun.end_date, datetime.datetime):
+            return None
+        if not getattr(dagrun, "start_date", None) or not isinstance(dagrun.start_date, datetime.datetime):
+            return None
+        return (dagrun.end_date - dagrun.start_date).total_seconds()
 
 
 class TaskInstanceInfo(InfoJsonEncodable):
@@ -414,7 +448,6 @@ class TaskInfo(InfoJsonEncodable):
         "upstream_task_ids",
         "wait_for_downstream",
         "wait_for_past_depends_before_skipping",
-        "weight_rule",
     ]
     casts = {
         "operator_class": lambda task: task.task_type,
@@ -684,7 +717,7 @@ class OpenLineageRedactor(SecretsMasker):
                                 ),
                             )
                     return item
-                elif is_json_serializable(item) and hasattr(item, "__dict__"):
+                if is_json_serializable(item) and hasattr(item, "__dict__"):
                     for dict_key, subval in item.__dict__.items():
                         if type(subval).__name__ == "Proxy":
                             return "<<non-redactable: Proxy>>"
@@ -700,8 +733,7 @@ class OpenLineageRedactor(SecretsMasker):
                                 ),
                             )
                     return item
-                else:
-                    return super()._redact(item, name, depth, max_depth)
+                return super()._redact(item, name, depth, max_depth)
         except Exception as exc:
             log.warning("Unable to redact %r. Error was: %s: %s", item, type(exc).__name__, exc)
         return item
@@ -729,7 +761,9 @@ def print_warning(log):
                 return f(*args, **kwargs)
             except Exception:
                 log.warning(
-                    "OpenLineage event emission failed. Exception below is being caught: it's printed for visibility. This has no impact on actual task execution status.",
+                    "OpenLineage event emission failed. "
+                    "Exception below is being caught but it's printed for visibility. "
+                    "This has no impact on actual task execution status.",
                     exc_info=True,
                 )
 

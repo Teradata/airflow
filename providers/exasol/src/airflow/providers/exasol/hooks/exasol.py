@@ -234,8 +234,8 @@ class ExasolHook(DbApiHook):
             self.set_autocommit(conn, autocommit)
             results = []
             for sql_statement in sql_list:
+                self.log.info("Running statement: %s, parameters: %s", sql_statement, parameters)
                 with closing(conn.execute(sql_statement, parameters)) as exa_statement:
-                    self.log.info("Running statement: %s, parameters: %s", sql_statement, parameters)
                     if handler is not None:
                         result = self._make_common_data_structure(  # type: ignore[attr-defined]
                             handler(exa_statement)
@@ -257,8 +257,7 @@ class ExasolHook(DbApiHook):
         if return_single_query_results(sql, return_last, split_statements):
             self.descriptions = [_last_columns]
             return _last_result
-        else:
-            return results
+        return results
 
     def set_autocommit(self, conn, autocommit: bool) -> None:
         """

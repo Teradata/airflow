@@ -27,6 +27,11 @@ from collections.abc import Sequence
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, SupportsAbs
 
+from google.api_core.exceptions import Conflict
+from google.api_core.gapic_v1.method import DEFAULT, _MethodDefault
+from google.cloud.bigquery import DEFAULT_RETRY, CopyJob, ExtractJob, LoadJob, QueryJob, Row
+from google.cloud.bigquery.table import RowIterator, Table, TableListItem, TableReference
+
 from airflow.configuration import conf
 from airflow.exceptions import AirflowException, AirflowProviderDeprecationWarning, AirflowSkipException
 from airflow.providers.common.sql.operators.sql import (  # type: ignore[attr-defined] # for _parse_boolean
@@ -57,15 +62,12 @@ from airflow.providers.google.cloud.utils.bigquery import convert_job_id
 from airflow.providers.google.common.deprecated import deprecated
 from airflow.providers.google.common.hooks.base_google import PROVIDE_PROJECT_ID
 from airflow.utils.helpers import exactly_one
-from google.api_core.exceptions import Conflict
-from google.api_core.gapic_v1.method import DEFAULT, _MethodDefault
-from google.cloud.bigquery import DEFAULT_RETRY, CopyJob, ExtractJob, LoadJob, QueryJob, Row
-from google.cloud.bigquery.table import RowIterator, Table, TableListItem, TableReference
 
 if TYPE_CHECKING:
-    from airflow.utils.context import Context
     from google.api_core.retry import Retry
     from google.cloud.bigquery import UnknownJob
+
+    from airflow.utils.context import Context
 
 
 BIGQUERY_JOB_DETAILS_LINK_FMT = "https://console.cloud.google.com/bigquery?j={job_id}"
@@ -285,7 +287,7 @@ class BigQueryCheckOperator(
     def _validate_records(self, records) -> None:
         if not records:
             raise AirflowException(f"The following query returned zero rows: {self.sql}")
-        elif not all(records):
+        if not all(records):
             self._raise_exception(  # type: ignore[attr-defined]
                 f"Test failed.\nQuery:\n{self.sql}\nResults:\n{records!s}"
             )
@@ -2895,7 +2897,7 @@ class BigQueryInsertJobOperator(GoogleCloudBaseOperator, _BigQueryInsertJobOpera
 
     def _add_job_labels(self) -> None:
         dag_label = self.dag_id.lower()
-        task_label = self.task_id.lower()
+        task_label = self.task_id.lower().replace(".", "-")
 
         if LABEL_REGEX.match(dag_label) and LABEL_REGEX.match(task_label):
             automatic_labels = {"airflow-dag": dag_label, "airflow-task": task_label}
@@ -2974,14 +2976,13 @@ class BigQueryInsertJobOperator(GoogleCloudBaseOperator, _BigQueryInsertJobOpera
                     f"Or, if you want to reattach in this scenario add {job.state} to `reattach_states`"
                 )
 
-            else:
-                # Job already reached state DONE
-                if job.state == "DONE":
-                    raise AirflowException("Job is already in state DONE. Can not reattach to this job.")
+            # Job already reached state DONE
+            if job.state == "DONE":
+                raise AirflowException("Job is already in state DONE. Can not reattach to this job.")
 
-                # We are reattaching to a job
-                self.log.info("Reattaching to existing Job in state %s", job.state)
-                self._handle_job_error(job)
+            # We are reattaching to a job
+            self.log.info("Reattaching to existing Job in state %s", job.state)
+            self._handle_job_error(job)
 
         job_types = {
             LoadJob._JOB_TYPE: ["sourceTable", "destinationTable"],
@@ -3034,24 +3035,23 @@ class BigQueryInsertJobOperator(GoogleCloudBaseOperator, _BigQueryInsertJobOpera
             self._handle_job_error(job)
 
             return self.job_id
-        else:
-            if job.running():
-                self.defer(
-                    timeout=self.execution_timeout,
-                    trigger=BigQueryInsertJobTrigger(
-                        conn_id=self.gcp_conn_id,
-                        job_id=self.job_id,
-                        project_id=self.project_id,
-                        location=self.location or hook.location,
-                        poll_interval=self.poll_interval,
-                        impersonation_chain=self.impersonation_chain,
-                        cancel_on_kill=self.cancel_on_kill,
-                    ),
-                    method_name="execute_complete",
-                )
-            self.log.info("Current state of job %s is %s", job.job_id, job.state)
-            self._handle_job_error(job)
-            return self.job_id
+        if job.running():
+            self.defer(
+                timeout=self.execution_timeout,
+                trigger=BigQueryInsertJobTrigger(
+                    conn_id=self.gcp_conn_id,
+                    job_id=self.job_id,
+                    project_id=self.project_id,
+                    location=self.location or hook.location,
+                    poll_interval=self.poll_interval,
+                    impersonation_chain=self.impersonation_chain,
+                    cancel_on_kill=self.cancel_on_kill,
+                ),
+                method_name="execute_complete",
+            )
+        self.log.info("Current state of job %s is %s", job.job_id, job.state)
+        self._handle_job_error(job)
+        return self.job_id
 
     def execute_complete(self, context: Context, event: dict[str, Any]) -> str | None:
         """

@@ -34,6 +34,87 @@ For high-level changelog, see :doc:`package information including changelog <ind
 
 
 
+7.3.2
+.....
+
+Latest change: 2025-04-14
+
+==================================================================================================  ===========  =============================================================================
+Commit                                                                                              Committed    Subject
+==================================================================================================  ===========  =============================================================================
+`cb295c351a <https://github.com/apache/airflow/commit/cb295c351a016c0a10cab07f2a628b865cff3ca3>`__  2025-04-14   ``remove superfluous else block (#49199)``
+`9dcce2f71b <https://github.com/apache/airflow/commit/9dcce2f71b80e829f4b216d2ec48a8f9fbe29b1f>`__  2025-04-13   ``Fixing DatabricksNotebookOperator invalid dependency graph issue (#48492)``
+==================================================================================================  ===========  =============================================================================
+
+7.3.1
+.....
+
+Latest change: 2025-04-10
+
+==================================================================================================  ===========  =====================================================================================
+Commit                                                                                              Committed    Subject
+==================================================================================================  ===========  =====================================================================================
+`4a8567b20b <https://github.com/apache/airflow/commit/4a8567b20bdd6555cbdc936d6674bf4fa390b0d5>`__  2025-04-10   ``Prepare docs for Apr 2nd wave of providers (#49051)``
+`7b2ec33c7a <https://github.com/apache/airflow/commit/7b2ec33c7ad4998d9c9735b79593fcdcd3b9dd1f>`__  2025-04-08   ``Remove unnecessary entries in get_provider_info and update the schema (#48849)``
+`139673d3ce <https://github.com/apache/airflow/commit/139673d3ce5552c2cf8bcb2d202e97342c4b237c>`__  2025-04-07   ``Remove fab from preinstalled providers (#48457)``
+`659150689e <https://github.com/apache/airflow/commit/659150689e631c610ea18485b9986e3ff27f0b36>`__  2025-04-07   ``Fix Databricks provider tests (#48877)``
+`7933b44a1b <https://github.com/apache/airflow/commit/7933b44a1b52711826ab9cc6a47e1a70a689baa1>`__  2025-04-07   ``Fix static checks in mock_databricks_hook (#48869)``
+`b752f7e9c0 <https://github.com/apache/airflow/commit/b752f7e9c0f5ab1bb19d8d0d7de4806afa48a7b7>`__  2025-04-07   ``fix for databricks repair buttons not overriding the template parameters (#46704)``
+`67858fd7e7 <https://github.com/apache/airflow/commit/67858fd7e7ac82788854844c1e6ef5a35f1d0d23>`__  2025-04-06   ``Improve documentation building iteration (#48760)``
+==================================================================================================  ===========  =====================================================================================
+
+7.3.0
+.....
+
+Latest change: 2025-04-06
+
+==================================================================================================  ===========  =============================================================
+Commit                                                                                              Committed    Subject
+==================================================================================================  ===========  =============================================================
+`adbb062b50 <https://github.com/apache/airflow/commit/adbb062b50e2e128fe475a76b7ce10ec93c39ee2>`__  2025-04-06   ``Prepare docs for Apr 1st wave of providers (#48828)``
+`7fb5abad64 <https://github.com/apache/airflow/commit/7fb5abad64332596dce55ad9b9cba35ac13fbc4a>`__  2025-04-03   ``Add DatabricksSQLStatementsOperator (#48507)``
+`d4473555c0 <https://github.com/apache/airflow/commit/d4473555c0e7022e073489b7163d49102881a1a6>`__  2025-04-02   ``Simplify tooling by switching completely to uv (#48223)``
+`47002feacd <https://github.com/apache/airflow/commit/47002feacd8aaf794b47c2dd241aa25068354a2a>`__  2025-03-30   ``Upgrade ruff to latest version (#48553)``
+`347c98cd8c <https://github.com/apache/airflow/commit/347c98cd8c285b7b8ca3a8a626be89d16a572bbf>`__  2025-03-28   ``Move 'BaseSensorOperator' to TaskSDK definitions (#48244)``
+==================================================================================================  ===========  =============================================================
+
+7.2.2
+.....
+
+Latest change: 2025-03-26
+
+==================================================================================================  ===========  ================================================================
+Commit                                                                                              Committed    Subject
+==================================================================================================  ===========  ================================================================
+`c762e17820 <https://github.com/apache/airflow/commit/c762e17820cae6b162caa3eec5123760e07d56cc>`__  2025-03-26   ``Prepare docs for Mar 2nd wave of providers (#48383)``
+`6adb2dbae4 <https://github.com/apache/airflow/commit/6adb2dbae47341eb61dbc62dbc56176d9aa83fd9>`__  2025-03-25   ``Upgrade providers flit build requirements to 3.12.0 (#48362)``
+`243fe86d4b <https://github.com/apache/airflow/commit/243fe86d4b3e59bb12977b3e36ca3f2ed27ca0f8>`__  2025-03-21   ``Move airflow sources to airflow-core package (#47798)``
+`91b0f610ab <https://github.com/apache/airflow/commit/91b0f610ab109f39e27a5a00d9f6d5bf590b47ff>`__  2025-03-17   ``AIP-72: Handle Custom XCom Backend on Task SDK (#47339)``
+`935d2831fe <https://github.com/apache/airflow/commit/935d2831fe8fd509b618a738bf00e0c34e186e11>`__  2025-03-15   ``Remove links to x/twitter.com (#47801)``
+==================================================================================================  ===========  ================================================================
+
+7.2.1
+.....
+
+Latest change: 2025-03-09
+
+==================================================================================================  ===========  ========================================================================
+Commit                                                                                              Committed    Subject
+==================================================================================================  ===========  ========================================================================
+`492ecfe5c0 <https://github.com/apache/airflow/commit/492ecfe5c03102bfb710108038ebd5fc50cb55b5>`__  2025-03-09   ``Prepare docs for Mar 1st wave of providers (#47545)``
+`8cc9f1fca9 <https://github.com/apache/airflow/commit/8cc9f1fca9343768e9aa7bb4c802e7d2fc109719>`__  2025-03-07   ``Relocate airflow.auth to airflow.api_fastapi.auth (#47492)``
+`aa07160892 <https://github.com/apache/airflow/commit/aa0716089235407f555fee06ac6363419b390bcc>`__  2025-03-07   ``AIP-72: Moving BaseOperatorLink to task sdk (#47008)``
+`e4002c3305 <https://github.com/apache/airflow/commit/e4002c3305a757f5926f96c996e701e8f998a042>`__  2025-03-05   ``Move tests_common package to devel-common project (#47281)``
+`0f21f0ab42 <https://github.com/apache/airflow/commit/0f21f0ab426257d2258a886194591973d7e1e36b>`__  2025-03-03   ``Move 'airflow.www.auth' to 'airflow.providers.fab.www.auth' (#47307)``
+`65d00988ed <https://github.com/apache/airflow/commit/65d00988ed9da6de6684c8e557ed673f7d1642ab>`__  2025-03-01   ``Remove 'api_connexion' (#47171)``
+`1addb55154 <https://github.com/apache/airflow/commit/1addb55154fbef31bfa021537cfbd4395696381c>`__  2025-02-28   ``Improve documentation for updating provider dependencies (#47203)``
+`28c93d93ca <https://github.com/apache/airflow/commit/28c93d93ca27a509182e7c6acfacc60ad45e739f>`__  2025-02-27   ``fIx deprecation warnings in common.sql (#47169)``
+`51415547d6 <https://github.com/apache/airflow/commit/51415547d681942ec389f143125e8f9f163d690c>`__  2025-02-26   ``Remove old UI and webserver (#46942)``
+`c6c4f95ed9 <https://github.com/apache/airflow/commit/c6c4f95ed9e3220133815b9126c135e805637022>`__  2025-02-25   ``Add legacy namespace packages to airflow.providers (#47064)``
+`dbf8bb4092 <https://github.com/apache/airflow/commit/dbf8bb409223687c7d2ad10649a92d02c24bb3b4>`__  2025-02-24   ``Remove extra whitespace in provider readme template (#46975)``
+`b28c336e8b <https://github.com/apache/airflow/commit/b28c336e8b7aa1d69c0f9520b182b1b661377337>`__  2025-02-21   ``Upgrade flit to 3.11.0 (#46938)``
+==================================================================================================  ===========  ========================================================================
+
 7.2.0
 .....
 
@@ -42,6 +123,7 @@ Latest change: 2025-02-21
 ==================================================================================================  ===========  ============================================================================================
 Commit                                                                                              Committed    Subject
 ==================================================================================================  ===========  ============================================================================================
+`0653ffe78e <https://github.com/apache/airflow/commit/0653ffe78e4a0acaf70801a5ceef8dbabdac8b15>`__  2025-02-21   ``Prepare docs for Feb 1st wave of providers (fixed) (#46962)``
 `5d87bddf0a <https://github.com/apache/airflow/commit/5d87bddf0aa5f485f3684c909fb95f461e5a2ab6>`__  2025-02-21   ``Prepare docs for Feb 1st wave of providers (#46893)``
 `4d5846f58f <https://github.com/apache/airflow/commit/4d5846f58fe0de9b43358c0be75dd72e968dacc4>`__  2025-02-16   ``Move provider_tests to unit folder in provider tests (#46800)``
 `e027457a24 <https://github.com/apache/airflow/commit/e027457a24d0c6235bfed9c2a8399f75342e82f1>`__  2025-02-15   ``Removed the unused provider's distribution (#46608)``
