@@ -63,9 +63,11 @@ jobs:
           path: .
       - name: "Define CSAE env name"
         id: define-environment-name
+        if: always()
         run: |
               echo "env-name=airflow-ci-$(date +%s%N)" >> $GITHUB_OUTPUT
       - name: "Create CSAE environment"
+        if: always()
         id: create-csae-environment
         shell: bash
         run: |
@@ -77,6 +79,7 @@ jobs:
           CSAE_ENV_PASSWORD: ${{ secrets.CSAE_AIRFLOW_ENV_PASSWORD }}
           CSAE_ENV_NAME: ${{ steps.define-environment-name.outputs.env-name}}
       - name: "Install Airflow Teradata Provider and Run System tests"
+        if: always()
         run: |
               export AIRFLOW_HOME=~/airflow
               mkdir -p $AIRFLOW_HOME
