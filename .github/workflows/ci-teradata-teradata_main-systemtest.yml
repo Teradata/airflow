@@ -24,24 +24,17 @@ on:
   schedule:
   - cron: "0 6 * * *"
   workflow_dispatch:
-permissions:
-  contents: write
-  pages: write
-  id-token: write
 jobs:
   teradata-systemtest:
     name: "Manage Teradata Provider System Tests Dashboard"
     runs-on: "ubuntu-22.04"
     steps:
-      - name: Show current user
-        run: |
-          whoami
       - name: Cleanup repo
         run: docker run -v "${GITHUB_WORKSPACE}:/workspace" -u 0:0 bash -c "rm -rf /workspace/*"
       - name: "Checkout Teradata Airflow Source Code"
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: teradata_main
           persist-credentials: false
       - name: "Checkout ClearScape Scripts and Report Generation supported files"
         run: |
@@ -53,14 +46,7 @@ jobs:
             git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/system-tests-files/report_parse_xml.py
             cp .github/workflows/system-tests-files/report_generate_index_html.py .
             cp .github/workflows/system-tests-files/report_index_template.html .
-            cp .github/workflows/system-tests-files/report_parse_xml.py .
-      - name: "Download System Test Log Report"
-        uses: dawidd6/action-download-artifact@v9
-        with:
-          workflow: ci-teradata-teradata_main-systemtest.yml
-          workflow_conclusion: completed
-          name: airflow-system-test-report
-          path: .
+            cp .github/workflows/system-tests-files/report_parse_xml.py .     
       - name: "Define CSAE env name"
         id: define-environment-name
         if: always()
@@ -122,36 +108,7 @@ jobs:
         env:
             CSAE_TOKEN: ${{ secrets.CSAE_AIRFLOW_TOKEN }}
             CSAE_ENV_NAME: ${{ steps.define-environment-name.outputs.env-name}}
-      - name: "Generate Teradata Airflow Provider System Tests Report"
-        if: always()
-        run:  |
-              cat report_test.xml
-              python report_parse_xml.py
-              python report_generate_index_html.py
-              mkdir teradata_report
-              cp index.html teradata_report/index.html
-              cat reporttest.csv
-      - name: Upload airflow teradata system test report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: airflow-system-test-report
-          path: |
-            reporttest.csv
-            report_test.xml
-      - name: "Build GITHUB Page for Teradata Airflow Provider System Tests Report"
-        if: always()
-        uses: actions/jekyll-build-pages@v1
-        with:
-         source: ./teradata_report
-         destination: ./_site
-      - name: "Prepares the built site for deployment and upload it to GITHUB"
-        if: always()
-        uses: actions/upload-pages-artifact@v3
-      - name: "Deploy Teradata Airflow Provider System Tests Report to GITHUB page"
-        if: always()
-        id: deployment
-        uses: actions/deploy-pages@v4 
+      
 
      
               
