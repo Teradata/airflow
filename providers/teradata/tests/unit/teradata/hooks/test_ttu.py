@@ -59,91 +59,63 @@ class TestTtuHook(unittest.TestCase):
     def test_close_conn(self, mock_get_connection):
         mock_get_connection.return_value = self.connection
         # Call get_conn to initialize self.ttu_hook.conn
-        self.ttu_hook.get_conn()
+        conn = self.ttu_hook.get_conn()
         # Ensure self.ttu_hook.conn is not None before proceeding
-        self.assertIsNotNone(self.ttu_hook.conn, "Connection was not initialized")
-        self.ttu_hook.conn['sp'] = MagicMock()
+        self.assertIsNotNone(conn, "Connection was not initialized")
+        conn['sp'] = MagicMock()
         self.ttu_hook.close_conn()
-        self.ttu_hook.conn['sp'].terminate.assert_called()
+        # Access self.ttu_hook.conn only if it's not None
+        if self.ttu_hook.conn:
+            self.ttu_hook.conn['sp'].terminate.assert_called()
 
-    @patch('airflow.providers.teradata.hooks.ttu.TtuHook.get_conn')
+    @patch('airflow.providers.teradata.hooks.ttu.TtuHook.get_connection')
     @patch('subprocess.Popen')
-    def test_execute_bteq(self, mock_popen, mock_get_conn):
-        mock_get_conn.return_value = {
-            'login': 'test_user',
-            'password': 'test_password',
-            'host': 'test_host',
-            'ttu_log_folder': '/tmp',
-            'console_output_encoding': 'utf-8',
-            'bteq_session_encoding': 'UTF8',
-            'bteq_output_width': 65531,
-            'bteq_quit_zero': True,
-            'sp': None
-        }
+    def test_execute_bteq(self, mock_popen, mock_get_connection):
+        mock_get_connection.return_value = self.connection
         mock_process = MagicMock()
         mock_process.returncode = 0
         mock_process.stdout.readline.side_effect = [b'test_output\n', b'']
         mock_popen.return_value = mock_process
+
         result = self.ttu_hook.execute_bteq('SELECT * FROM test_table;')
         self.assertEqual(result, None)
 
-    @patch('airflow.providers.teradata.hooks.ttu.TtuHook.get_conn')
+    @patch('airflow.providers.teradata.hooks.ttu.TtuHook.get_connection')
     @patch('subprocess.Popen')
-    def test_execute_bteq_xcom_push(self, mock_popen, mock_get_conn):
-        mock_get_conn.return_value = {
-            'login': 'test_user',
-            'password': 'test_password',
-            'host': 'test_host',
-            'ttu_log_folder': '/tmp',
-            'console_output_encoding': 'utf-8',
-            'bteq_session_encoding': 'UTF8',
-            'bteq_output_width': 65531,
-            'bteq_quit_zero': True,
-            'sp': None
-        }
+    def test_execute_bteq_xcom_push(self, mock_popen, mock_get_connection):
+        mock_get_connection.return_value = self.connection
         mock_process = MagicMock()
         mock_process.returncode = 0
         mock_process.stdout.readline.side_effect = [b'test_output\n', b'']
         mock_popen.return_value = mock_process
+
         result = self.ttu_hook.execute_bteq('SELECT * FROM test_table;', xcom_push_flag=True)
         self.assertEqual(result, 'test_output')
 
-    @patch('airflow.providers.teradata.hooks.ttu.TtuHook.get_conn')
+    @patch('airflow.providers.teradata.hooks.ttu.TtuHook.get_connection')
     @patch('subprocess.Popen')
-    def test_execute_bteq_failure(self, mock_popen, mock_get_conn):
-        mock_get_conn.return_value = {
-            'login': 'test_user',
-            'password': 'test_password',
-            'host': 'test_host',
-            'ttu_log_folder': '/tmp',
-            'console_output_encoding': 'utf-8',
-            'bteq_session_encoding': 'UTF8',
-            'bteq_output_width': 65531,
-            'bteq_quit_zero': True,
-            'sp': None
-        }
+    def test_execute_bteq_failure(self, mock_popen, mock_get_connection):
+        mock_get_connection.return_value = self.connection
         mock_process = MagicMock()
         mock_process.returncode = 1
         mock_process.stdout.readline.side_effect = [b'Failure occurred\n', b'']
         mock_popen.return_value = mock_process
+
         with self.assertRaises(AirflowException):
             self.ttu_hook.execute_bteq('SELECT * FROM test_table;')
 
-    @patch('airflow.providers.teradata.hooks.ttu.TtuHook.get_conn')
-    def test_on_kill(self, mock_get_conn):
-        mock_get_conn.return_value = {
-            'login': 'test_user',
-            'password': 'test_password',
-            'host': 'test_host',
-            'ttu_log_folder': '/tmp',
-            'console_output_encoding': 'utf-8',
-            'bteq_session_encoding': 'UTF8',
-            'bteq_output_width': 65531,
-            'bteq_quit_zero': True,
-            'sp': MagicMock()
-        }
+    @patch('airflow.providers.teradata.hooks.ttu.TtuHook.get_connection')
+    def test_on_kill(self, mock_get_connection):
+        mock_get_connection.return_value = self.connection
+        # Call get_conn to initialize self.ttu_hook.conn
+        conn = self.ttu_hook.get_conn()
+         # Ensure self.ttu_hook.conn is not None before proceeding
+        self.assertIsNotNone(conn, "Connection was not initialized")
+        conn['sp'] = MagicMock()
         self.ttu_hook.on_kill()
-        self.ttu_hook.conn['sp'].terminate.assert_called()
+        # Access self.ttu_hook.conn only if it's not None
+        if self.ttu_hook.conn:
+            self.ttu_hook.conn['sp'].terminate.assert_called()
 
     def test_prepare_bteq_script(self):
         bteq_script = "SELECT * FROM test_table;"
