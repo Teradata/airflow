@@ -36,17 +36,6 @@ class TtuHook(BaseHook, LoggingMixin):
 
     Note: It is required that TTU is previously installed and properly configured.
 
-    Extras example:
-    ```
-    {
-        "ttu_log_folder": "/path/to/logs",
-        "console_output_encoding": "utf-8",
-        "bteq_session_encoding": "UTF8",
-        "bteq_output_width": 65531,
-        "bteq_quit_zero": true
-    }
-    ```
-
     Key Features:
     - Execute BTEQ scripts with connection parameters.
     - Export data from Teradata tables to files using TPT.
@@ -65,8 +54,8 @@ class TtuHook(BaseHook, LoggingMixin):
     """
     conn_name_attr = 'ttu_conn_id'
     default_conn_name = 'ttu_default'
-    conn_type = 'ttu'
-    hook_name = 'TTU'
+    conn_type = 'teradata'
+    hook_name = 'Ttu'
 
     def __init__(self, ttu_conn_id: str = 'ttu_default') -> None:
         super().__init__()
