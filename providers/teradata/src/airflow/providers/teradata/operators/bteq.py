@@ -15,10 +15,14 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-from typing import Iterable, Mapping, Optional, Union
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import Optional
 
 from airflow.models import BaseOperator
 from airflow.providers.teradata.hooks.ttu import TtuHook
+
 
 class BteqOperator(BaseOperator):
     """
@@ -32,17 +36,15 @@ class BteqOperator(BaseOperator):
     :type ttu_conn_id: str
     """
 
-    template_fields = ('bteq',)
-    template_ext = ('.sql', '.bteq',)
-    ui_color = '#ff976d'
+    template_fields = ("bteq",)
+    template_ext = (
+        ".sql",
+        ".bteq",
+    )
+    ui_color = "#ff976d"
 
     def __init__(
-        self,
-        *,
-        bteq: str,
-        xcom_push: bool = True,
-        ttu_conn_id: str = TtuHook.default_conn_name,
-        **kwargs
+        self, *, bteq: str, xcom_push: bool = True, ttu_conn_id: str = TtuHook.default_conn_name, **kwargs
     ) -> None:
         super().__init__(**kwargs)
         self.bteq = bteq
@@ -69,5 +71,3 @@ class BteqOperator(BaseOperator):
             self._hook.on_kill()
         else:
             self.log.warning("TtuHook was not initialized. Nothing to terminate.")
-
-

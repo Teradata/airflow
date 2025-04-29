@@ -20,12 +20,12 @@
 BteqOperator
 ============
 
-The BteqOperator allows you to execute BTEQ (Basic Teradata Query) scripts against Teradata databases. 
-These scripts can contain SQL queries, BTEQ commands, and data manipulation statements, providing 
+The BteqOperator allows you to execute BTEQ (Basic Teradata Query) scripts against Teradata databases.
+These scripts can contain SQL queries, BTEQ commands, and data manipulation statements, providing
 comprehensive interaction with your Teradata environment.
 
-This operator leverages the TTU (Teradata Tools and Utilities) to establish connections and execute 
-commands efficiently. The operator handles script formatting, execution, and response parsing, making 
+This operator leverages the TTU (Teradata Tools and Utilities) to establish connections and execute
+commands efficiently. The operator handles script formatting, execution, and response parsing, making
 it easy to integrate Teradata operations into your data pipelines.
 
 Key features:
@@ -85,7 +85,7 @@ The BTEQ script above handles the data export with options for formatting, file 
 Fetching and processing records from your Teradata database
 -----------------------------------------------------------
 
-You can use BteqOperator to query and retrieve data from your Teradata tables. The following example demonstrates 
+You can use BteqOperator to query and retrieve data from your Teradata tables. The following example demonstrates
 how to fetch specific records from the employee table with filtering and formatting:
 
 .. exampleinclude:: /../../teradata/tests/system/teradata/example_bteq.py
@@ -150,5 +150,3 @@ When we put everything together, our DAG should look like this:
     :language: python
     :start-after: [START bteq_operator_howto_guide]
     :end-before: [END bteq_operator_howto_guide]
-
-

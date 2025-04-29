@@ -15,23 +15,23 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+from __future__ import annotations
 
 import os
-import uuid
 import subprocess
-from typing import Any, Dict, Iterator, List, Optional, Union
-from tempfile import gettempdir, NamedTemporaryFile, TemporaryDirectory
+from tempfile import NamedTemporaryFile, TemporaryDirectory
+from typing import Any, Optional
 
-from airflow import configuration as conf
 from airflow.exceptions import AirflowException
-from airflow.utils.log.logging_mixin import LoggingMixin
 from airflow.hooks.base import BaseHook
+from airflow.utils.log.logging_mixin import LoggingMixin
+
 
 class TtuHook(BaseHook, LoggingMixin):
     """
     Interact with Teradata using Teradata Tools and Utilities (TTU) binaries.
 
-    This hook provides methods to execute BTEQ scripts, export data using TPT, 
+    This hook provides methods to execute BTEQ scripts, export data using TPT,
     load data into Teradata tables, and perform Teradata-to-Teradata data transfers.
 
     Note: It is required that TTU is previously installed and properly configured.
@@ -52,12 +52,13 @@ class TtuHook(BaseHook, LoggingMixin):
     ttu_hook.execute_bteq("SELECT * FROM my_table;")
     ```
     """
-    conn_name_attr = 'ttu_conn_id'
-    default_conn_name = 'ttu_default'
-    conn_type = 'teradata'
-    hook_name = 'Ttu'
 
-    def __init__(self, ttu_conn_id: str = 'ttu_default') -> None:
+    conn_name_attr = "ttu_conn_id"
+    default_conn_name = "ttu_default"
+    conn_type = "teradata"
+    hook_name = "Ttu"
+
+    def __init__(self, ttu_conn_id: str = "ttu_default") -> None:
         super().__init__()
         self.ttu_conn_id = ttu_conn_id
         self.conn = None
@@ -89,18 +90,21 @@ class TtuHook(BaseHook, LoggingMixin):
                 login=connection.login,
                 password=connection.password,
                 host=connection.host,
-                ttu_log_folder=extras.get('ttu_log_folder', '/tmp'),
-                console_output_encoding=extras.get('console_output_encoding', 'utf-8'),
-                bteq_session_encoding=extras.get('bteq_session_encoding', 'ASCII'),
-                bteq_output_width=extras.get('bteq_output_width', 65531),
-                bteq_quit_zero=extras.get('bteq_quit_zero', False),
-                sp=None  # Subprocess placeholder
+                ttu_log_folder=extras.get("ttu_log_folder", "/tmp"),
+                console_output_encoding=extras.get("console_output_encoding", "utf-8"),
+                bteq_session_encoding=extras.get("bteq_session_encoding", "ASCII"),
+                bteq_output_width=extras.get("bteq_output_width", 65531),
+                bteq_quit_zero=extras.get("bteq_quit_zero", False),
+                sp=None,  # Subprocess placeholder
             )
+            # log the extras for debugging
+            self.log.info("TTU connection extras: %s", extras)
+            self.log.info("TTU connection details: %s", self.conn)
 
             # Ensure log folder exists
-            if not os.path.exists(self.conn['ttu_log_folder']):
+            if not os.path.exists(self.conn["ttu_log_folder"]):
                 self.log.debug(f"Creating TTU log folder at {self.conn['ttu_log_folder']}")
-                os.makedirs(self.conn['ttu_log_folder'], exist_ok=True)
+                os.makedirs(self.conn["ttu_log_folder"], exist_ok=True)
 
         return self.conn
 
@@ -110,14 +114,14 @@ class TtuHook(BaseHook, LoggingMixin):
         Ensures that the subprocess, if running, is terminated gracefully.
         """
         if self.conn:
-            if self.conn.get('sp') and self.conn['sp'].poll() is None:
+            if self.conn.get("sp") and self.conn["sp"].poll() is None:
                 self.log.info("Terminating subprocess...")
-                self.conn['sp'].terminate()
+                self.conn["sp"].terminate()
                 try:
-                    self.conn['sp'].wait(timeout=5)
+                    self.conn["sp"].wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     self.log.warning("Subprocess did not terminate in time. Forcing kill...")
-                    self.conn['sp'].kill()
+                    self.conn["sp"].kill()
             self.log.info("Closing TTU connection.")
             self.conn = None
 
@@ -135,42 +139,42 @@ class TtuHook(BaseHook, LoggingMixin):
         self.log.info("Executing BTEQ script...")
 
         # Create a temporary directory for storing the BTEQ script
-        with TemporaryDirectory(prefix='airflowtmp_ttu_bteq_') as tmp_dir:
+        with TemporaryDirectory(prefix="airflowtmp_ttu_bteq_") as tmp_dir:
             # Create a temporary file to write the BTEQ script
-            with NamedTemporaryFile(dir=tmp_dir, mode='wb') as tmp_file:
+            with NamedTemporaryFile(dir=tmp_dir, mode="wb") as tmp_file:
                 # Prepare the BTEQ script with connection parameters
                 bteq_file_content = self._prepare_bteq_script(
                     bteq_string=bteq_script,
-                    host=conn['host'],
-                    login=conn['login'],
-                    password=conn['password'],
-                    bteq_output_width=conn['bteq_output_width'],
-                    bteq_session_encoding=conn['bteq_session_encoding'],
-                    bteq_quit_zero=conn['bteq_quit_zero']
+                    host=conn["host"],
+                    login=conn["login"],
+                    password=conn["password"],
+                    bteq_output_width=conn["bteq_output_width"],
+                    bteq_session_encoding=conn["bteq_session_encoding"],
+                    bteq_quit_zero=conn["bteq_quit_zero"],
                 )
                 self.log.debug("Generated BTEQ script:\n%s", bteq_file_content)
 
                 # Write the BTEQ script to the temporary file
-                tmp_file.write(bytes(bteq_file_content, 'UTF-8'))
+                tmp_file.write(bytes(bteq_file_content, "UTF-8"))
                 tmp_file.flush()
                 tmp_file.seek(0)
 
                 # Execute the BTEQ script using the BTEQ binary
-                conn['sp'] = subprocess.Popen(
-                    ['bteq'],
+                conn["sp"] = subprocess.Popen(
+                    ["bteq"],
                     stdin=tmp_file,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     cwd=tmp_dir,
-                    preexec_fn=os.setsid
+                    preexec_fn=os.setsid,
                 )
 
                 # Capture and log the output of the BTEQ command
-                last_line = ''
-                failure_message = 'An error occurred during the BTEQ operation. Please review the full BTEQ output for details.'
+                last_line = ""
+                failure_message = "An error occurred during the BTEQ operation. Please review the full BTEQ output for details."
                 self.log.info("BTEQ Output:")
-                for line in iter(conn['sp'].stdout.readline, b''):
-                    decoded_line = line.decode(conn['console_output_encoding']).strip()
+                for line in iter(conn["sp"].stdout.readline, b""):
+                    decoded_line = line.decode(conn["console_output_encoding"]).strip()
                     self.log.info(decoded_line)
                     last_line = decoded_line
                     if "Failure" in decoded_line:
@@ -178,11 +182,11 @@ class TtuHook(BaseHook, LoggingMixin):
                         failure_message = decoded_line
 
                 # Wait for the BTEQ process to complete
-                conn['sp'].wait()
-                self.log.info("BTEQ command exited with return code %s", conn['sp'].returncode)
+                conn["sp"].wait()
+                self.log.info("BTEQ command exited with return code %s", conn["sp"].returncode)
 
                 # Raise an exception if the BTEQ command failed
-                if conn['sp'].returncode:
+                if conn["sp"].returncode:
                     raise AirflowException(
                         f"BTEQ command exited with return code {conn['sp'].returncode} due to: {failure_message}"
                     )
@@ -196,24 +200,31 @@ class TtuHook(BaseHook, LoggingMixin):
         Terminates the subprocess if it is running.
         Ensures that the process is terminated gracefully and logs the status.
         """
-        self.log.debug('Attempting to kill child process...')
+        self.log.debug("Attempting to kill child process...")
         conn = self.get_conn()
-        if conn.get('sp'):
+        if conn.get("sp"):
             try:
-                self.log.info('Terminating subprocess...')
-                conn['sp'].terminate()
-                conn['sp'].wait(timeout=5)
-                self.log.info('Subprocess terminated successfully.')
+                self.log.info("Terminating subprocess...")
+                conn["sp"].terminate()
+                conn["sp"].wait(timeout=5)
+                self.log.info("Subprocess terminated successfully.")
             except subprocess.TimeoutExpired:
-                self.log.warning('Subprocess did not terminate in time. Forcing kill...')
-                conn['sp'].kill()
-                self.log.info('Subprocess killed forcefully.')
+                self.log.warning("Subprocess did not terminate in time. Forcing kill...")
+                conn["sp"].kill()
+                self.log.info("Subprocess killed forcefully.")
             except Exception as e:
-                self.log.error(f'Failed to terminate subprocess: {e}')
+                self.log.error(f"Failed to terminate subprocess: {e}")
 
     @staticmethod
-    def _prepare_bteq_script(bteq_string: str, host: str, login: str, password: str, bteq_output_width: int, 
-                             bteq_session_encoding: str, bteq_quit_zero: bool) -> str:
+    def _prepare_bteq_script(
+        bteq_string: str,
+        host: str,
+        login: str,
+        password: str,
+        bteq_output_width: int,
+        bteq_session_encoding: str,
+        bteq_quit_zero: bool,
+    ) -> str:
         """
         Prepare a BTEQ file with connection parameters for executing SQL sentences with BTEQ syntax.
 
@@ -232,10 +243,10 @@ class TtuHook(BaseHook, LoggingMixin):
         # Construct the BTEQ script
         bteq_list = [
             f".LOGON {host}/{login},{password};",
-            f".IF ERRORCODE <> 0 THEN .QUIT 8;",
+            ".IF ERRORCODE <> 0 THEN .QUIT 8;",
             f".SET WIDTH {bteq_output_width};",
             f".SET SESSION CHARSET '{bteq_session_encoding}';",
-            bteq_string.strip()
+            bteq_string.strip(),
         ]
 
         # Add optional .QUIT 0 command if specified
@@ -249,6 +260,3 @@ class TtuHook(BaseHook, LoggingMixin):
         bteq_script = "\n".join(bteq_list)
 
         return bteq_script
-
-
-
