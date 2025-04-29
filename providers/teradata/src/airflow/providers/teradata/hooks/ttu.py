@@ -20,14 +20,13 @@ from __future__ import annotations
 import os
 import subprocess
 from tempfile import NamedTemporaryFile, TemporaryDirectory
-from typing import Any, Optional
+from typing import Any
 
 from airflow.exceptions import AirflowException
 from airflow.hooks.base import BaseHook
-from airflow.utils.log.logging_mixin import LoggingMixin
 
 
-class TtuHook(BaseHook, LoggingMixin):
+class TtuHook(BaseHook):
     """
     Interact with Teradata using Teradata Tools and Utilities (TTU) binaries.
 
@@ -61,7 +60,7 @@ class TtuHook(BaseHook, LoggingMixin):
     def __init__(self, ttu_conn_id: str = "ttu_default") -> None:
         super().__init__()
         self.ttu_conn_id = ttu_conn_id
-        self.conn = None
+        self.conn: dict[str, Any] | None = None
 
     def __enter__(self):
         return self
@@ -70,9 +69,10 @@ class TtuHook(BaseHook, LoggingMixin):
         if self.conn is not None:
             self.close_conn()
 
-    def get_conn(self) -> dict:
+    def get_conn(self) -> dict[str, Any]:
         """
-        Establishes and returns a connection dictionary with Teradata connection details.
+        Establish and return a connection dictionary with Teradata connection details.
+
         If the connection is already established, it reuses the existing connection.
 
         :return: A dictionary containing connection details and configuration options.
@@ -102,15 +102,16 @@ class TtuHook(BaseHook, LoggingMixin):
             self.log.info("TTU connection details: %s", self.conn)
 
             # Ensure log folder exists
-            if not os.path.exists(self.conn["ttu_log_folder"]):
-                self.log.debug(f"Creating TTU log folder at {self.conn['ttu_log_folder']}")
+            if self.conn and not os.path.exists(self.conn["ttu_log_folder"]):
+                self.log.debug("Creating TTU log folder at %s", self.conn["ttu_log_folder"])
                 os.makedirs(self.conn["ttu_log_folder"], exist_ok=True)
 
         return self.conn
 
     def close_conn(self):
         """
-        Closes the connection and cleans up any resources associated with it.
+        Close the connection and clean up any resources associated with it.
+
         Ensures that the subprocess, if running, is terminated gracefully.
         """
         if self.conn:
@@ -125,9 +126,9 @@ class TtuHook(BaseHook, LoggingMixin):
             self.log.info("Closing TTU connection.")
             self.conn = None
 
-    def execute_bteq(self, bteq_script: str, xcom_push_flag: bool = False) -> Optional[str]:
+    def execute_bteq(self, bteq_script: str, xcom_push_flag: bool = False) -> str | None:
         """
-        Executes BTEQ (Basic Teradata Query) sentences using the BTEQ binary.
+        Execute BTEQ (Basic Teradata Query) sentences using the BTEQ binary.
 
         :param bteq_script: A string containing BTEQ sentences to execute.
         :param xcom_push_flag: If True, pushes the last line of the BTEQ log to XCom.
@@ -194,10 +195,12 @@ class TtuHook(BaseHook, LoggingMixin):
                 # Return the last line of the BTEQ log if xcom_push_flag is True
                 if xcom_push_flag:
                     return last_line
+                return None
 
     def on_kill(self):
         """
         Terminates the subprocess if it is running.
+
         Ensures that the process is terminated gracefully and logs the status.
         """
         self.log.debug("Attempting to kill child process...")
@@ -213,7 +216,7 @@ class TtuHook(BaseHook, LoggingMixin):
                 conn["sp"].kill()
                 self.log.info("Subprocess killed forcefully.")
             except Exception as e:
-                self.log.error(f"Failed to terminate subprocess: {e}")
+                self.log.error("Failed to terminate subprocess: %s", e)
 
     @staticmethod
     def _prepare_bteq_script(
