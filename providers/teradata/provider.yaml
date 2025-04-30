@@ -64,6 +64,9 @@ hooks:
   - integration-name: Ttu
     python-modules:
       - airflow.providers.teradata.hooks.ttu
+  - integration-name: Bteq
+    python-modules:
+      - airflow.providers.teradata.hooks.bteq
 
 transfers:
   - source-integration-name: Teradata

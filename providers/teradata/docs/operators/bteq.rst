@@ -29,6 +29,7 @@ commands efficiently. The operator handles script formatting, execution, and res
 it easy to integrate Teradata operations into your data pipelines.
 
 Key features:
+
 - Execute complex BTEQ scripts with full Teradata SQL support
 - Support for BTEQ-specific commands and formatting
 - Integration with Teradata connection configurations
