@@ -16,7 +16,7 @@
 # under the License.
 #
 ---
-name: airflow-teradata-teradata_main-systemtest
+name: airflow-teradata-teradata_main-systemtest-dashboard
 on:
   push:
     branches:
@@ -24,11 +24,18 @@ on:
   schedule:
   - cron: "0 6 * * *"
   workflow_dispatch:
+permissions:
+  contents: write
+  pages: write
+  id-token: write
 jobs:
   teradata-systemtest:
-    name: "Manage Teradata Provider System Tests Dashboard"
+    name: "Manage Teradata Provider System Tests Dashboard for teradata_main branch"
     runs-on: "ubuntu-22.04"
     steps:
+      - name: Show current user
+        run: |
+          whoami
       - name: Cleanup repo
         run: docker run -v "${GITHUB_WORKSPACE}:/workspace" -u 0:0 bash -c "rm -rf /workspace/*"
       - name: "Checkout Teradata Airflow Source Code"
@@ -38,15 +45,9 @@ jobs:
           persist-credentials: false
       - name: "Checkout ClearScape Scripts and Report Generation supported files"
         run: |
-            git fetch origin ${{vars.WORKFLOW_HELP_BRANCH}}
-            git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/scripts/createTestEnvironments.sh
-            git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/scripts/deleteTestEnvironments.sh
-            git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/system-tests-files/report_generate_index_html.py
-            git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/system-tests-files/report_index_template.html
-            git checkout origin/${{vars.WORKFLOW_HELP_BRANCH}} -- .github/workflows/system-tests-files/report_parse_xml.py
             cp .github/workflows/system-tests-files/report_generate_index_html.py .
             cp .github/workflows/system-tests-files/report_index_template.html .
-            cp .github/workflows/system-tests-files/report_parse_xml.py .     
+            cp .github/workflows/system-tests-files/report_parse_xml.py .
       - name: "Define CSAE env name"
         id: define-environment-name
         if: always()
@@ -98,7 +99,7 @@ jobs:
               export AIRFLOW_VAR_AWS_SECRET_ACCESS_KEY=${{ secrets.TERADATA_DOWNLOAD_AWS_SECRET_ACCESS_KEY }}
 
               
-              uv run pytest --system  --junitxml=report_test.xml --ignore=providers/teradata/tests/system/teradata/example_s3_to_teradata_transfer.py --ignore=providers/teradata/tests/system/teradata/example_teradata_compute_cluster.py providers/teradata/tests/system/teradata/*.py
+              uv run pytest --system  --junitxml=report_test.xml providers/teradata/tests/system/teradata/example_teradata.py providers/teradata/tests/system/teradata/example_ssl_teradata.py providers/teradata/tests/system/teradata/example_teradata_to_teradata_transfer.py providers/teradata/tests/system/teradata/example_teradata_call_sp.py providers/teradata/tests/system/teradata/example_azure_blob_to_teradata_transfer.py
               cat report_test.xml
       - name: "Delete CSAE environment"
         if: always()
@@ -108,11 +109,3 @@ jobs:
         env:
             CSAE_TOKEN: ${{ secrets.CSAE_AIRFLOW_TOKEN }}
             CSAE_ENV_NAME: ${{ steps.define-environment-name.outputs.env-name}}
-      
-
-     
-              
-              
-
-
-
