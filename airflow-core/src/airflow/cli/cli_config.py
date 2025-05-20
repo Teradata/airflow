@@ -233,6 +233,13 @@ ARG_SKIP_SERVE_LOGS = Arg(
     action="store_true",
 )
 
+# list_dags
+ARG_LIST_LOCAL = Arg(
+    ("-l", "--local"),
+    action="store_true",
+    help="Shows local parsed DAGs and their import errors, ignores content serialized in DB",
+)
+
 # list_dag_runs
 ARG_NO_BACKFILL = Arg(
     ("--no-backfill",), help="filter all the backfill dagruns given the dag id", action="store_true"
@@ -348,6 +355,13 @@ ARG_TREAT_DAG_ID_AS_REGEX = Arg(
 )
 
 # test_dag
+ARG_DAGFILE_PATH = Arg(
+    (
+        "-f",
+        "--dagfile-path",
+    ),
+    help="Path to the dag file. Can be absolute or relative to current directory",
+)
 ARG_SHOW_DAGRUN = Arg(
     ("--show-dagrun",),
     help=(
@@ -959,13 +973,13 @@ DAGS_COMMANDS = (
         name="list",
         help="List all the DAGs",
         func=lazy_load_command("airflow.cli.commands.dag_command.dag_list_dags"),
-        args=(ARG_OUTPUT, ARG_VERBOSE, ARG_DAG_LIST_COLUMNS, ARG_BUNDLE_NAME),
+        args=(ARG_OUTPUT, ARG_VERBOSE, ARG_DAG_LIST_COLUMNS, ARG_BUNDLE_NAME, ARG_LIST_LOCAL),
     ),
     ActionCommand(
         name="list-import-errors",
         help="List all the DAGs that have import errors",
         func=lazy_load_command("airflow.cli.commands.dag_command.dag_list_import_errors"),
-        args=(ARG_BUNDLE_NAME, ARG_OUTPUT, ARG_VERBOSE),
+        args=(ARG_BUNDLE_NAME, ARG_OUTPUT, ARG_VERBOSE, ARG_LIST_LOCAL),
     ),
     ActionCommand(
         name="report",
@@ -1117,6 +1131,16 @@ DAGS_COMMANDS = (
         description=(
             "Execute one single DagRun for a given DAG and logical date.\n"
             "\n"
+            "You can test a DAG in three ways:\n"
+            "1. Using default bundle:\n"
+            "   airflow dags test <DAG_ID>\n"
+            "\n"
+            "2. Using a specific bundle if multiple DAG bundles are configured:\n"
+            "   airflow dags test <DAG_ID> --bundle-name <BUNDLE_NAME> (or -B <BUNDLE_NAME>)\n"
+            "\n"
+            "3. Using a specific DAG file:\n"
+            "   airflow dags test <DAG_ID> --dagfile-path <PATH> (or -f <PATH>)\n"
+            "\n"
             "The --imgcat-dagrun option only works in iTerm.\n"
             "\n"
             "For more information, see: https://www.iterm2.com/documentation-images.html\n"
@@ -1137,6 +1161,8 @@ DAGS_COMMANDS = (
         args=(
             ARG_DAG_ID,
             ARG_LOGICAL_DATE_OPTIONAL,
+            ARG_BUNDLE_NAME,
+            ARG_DAGFILE_PATH,
             ARG_CONF,
             ARG_SHOW_DAGRUN,
             ARG_IMGCAT_DAGRUN,
@@ -1588,6 +1614,12 @@ PROVIDERS_COMMANDS = (
         name="executors",
         help="Get information about executors provided",
         func=lazy_load_command("airflow.cli.commands.provider_command.executors_list"),
+        args=(ARG_OUTPUT, ARG_VERBOSE),
+    ),
+    ActionCommand(
+        name="queues",
+        help="Get information about queues provided",
+        func=lazy_load_command("airflow.cli.commands.provider_command.queues_list"),
         args=(ARG_OUTPUT, ARG_VERBOSE),
     ),
     ActionCommand(

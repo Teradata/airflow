@@ -19,7 +19,7 @@
 Pythonic DAGs with the TaskFlow API
 ===================================
 
-In the first tutorial, you built your first Airflow DAG using traditional Operators like ``PythonOperator``.
+In the first tutorial, you built your first Airflow DAG using traditional Operators like ``BashOperator``.
 Now let's look at a more modern and Pythonic way to write workflows using the **TaskFlow API** — introduced in Airflow
 2.0.
 
@@ -269,7 +269,7 @@ system-level packages. TaskFlow supports multiple execution environments to isol
 Creates a temporary virtualenv at task runtime. Great for experimental or dynamic tasks, but may have cold start
 overhead.
 
-.. exampleinclude:: /../src/airflow/example_dags/example_python_decorator.py
+.. exampleinclude:: /../../providers/standard/tests/system/standard/example_python_decorator.py
     :language: python
     :dedent: 4
     :start-after: [START howto_operator_python_venv]
@@ -283,7 +283,7 @@ overhead.
 
 Executes the task using a pre-installed Python interpreter — ideal for consistent environments or shared virtualenvs.
 
-.. exampleinclude:: /../src/airflow/example_dags/example_python_decorator.py
+.. exampleinclude:: /../../providers/standard/tests/system/standard/example_python_decorator.py
     :language: python
     :dedent: 4
     :start-after: [START howto_operator_external_python]
@@ -333,7 +333,7 @@ Using Sensors
 Use ``@task.sensor`` to build lightweight, reusable sensors using Python functions. These support both poke and reschedule
 modes.
 
-.. exampleinclude:: /../src/airflow/example_dags/example_sensor_decorator.py
+.. exampleinclude:: /../../providers/standard/tests/system/standard/example_sensor_decorator.py
     :language: python
     :start-after: [START tutorial]
     :end-before: [END tutorial]
@@ -388,7 +388,7 @@ method.
 
 .. code-block:: python
 
-    from airflow.providers.standard.operators.python import get_current_context
+    from airflow.sdk import get_current_context
 
 
     def some_function_in_your_library():
@@ -423,6 +423,6 @@ What's Next
 
 Now that you've seen how to build clean, maintainable DAGs using the TaskFlow API, here are some good next steps:
 
-- Explore asset-aware workflows in :doc:`/authoring-and-scheduling/datasets`
+- Explore asset-aware workflows in :doc:`/authoring-and-scheduling/asset-scheduling`
 - Dive into scheduling patterns in :ref:`Scheduling Options <scheduling-section>`
 - Move to the next tutorial: :doc:`/tutorial/pipeline`
