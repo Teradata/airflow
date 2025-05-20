@@ -51,14 +51,13 @@ class TtuHook(BaseHook):
     ```
     """
 
-    conn_name_attr = "ttu_conn_id"
-    default_conn_name = "ttu_default"
+    conn_name_attr = "teradata_conn_id"
     conn_type = "teradata"
     hook_name = "Ttu"
 
-    def __init__(self, ttu_conn_id: str = "ttu_default") -> None:
+    def __init__(self, teradata_conn_id: str = "teradata_default") -> None:
         super().__init__()
-        self.ttu_conn_id = ttu_conn_id
+        self.teradata_conn_id = teradata_conn_id
         self.conn: dict[str, Any] | None = None
 
     def __enter__(self):
@@ -77,7 +76,7 @@ class TtuHook(BaseHook):
         :return: A dictionary containing connection details and configuration options.
         """
         if not self.conn:
-            connection = self.get_connection(self.ttu_conn_id)
+            connection = self.get_connection(self.teradata_conn_id)
             extras = connection.extra_dejson
 
             # Validate required fields

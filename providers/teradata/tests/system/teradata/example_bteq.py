@@ -42,14 +42,14 @@ except ImportError:
 
 ENV_ID = os.environ.get("SYSTEM_TESTS_ENV_ID")
 DAG_ID = "example_bteq"
-CONN_ID = "ttu_default"
+CONN_ID = "teradata_default"
 
 with DAG(
     dag_id=DAG_ID,
     start_date=datetime.datetime(2020, 2, 2),
     schedule="@once",
     catchup=False,
-    default_args={"ttu_conn_id": CONN_ID},
+    default_args={"teradata_conn_id": CONN_ID},
 ) as dag:
     # [START bteq_operator_howto_guide_create_table]
     create_table = BteqOperator(

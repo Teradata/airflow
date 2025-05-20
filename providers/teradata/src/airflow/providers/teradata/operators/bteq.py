@@ -21,6 +21,7 @@ from collections.abc import Mapping
 
 from airflow.models import BaseOperator
 from airflow.providers.teradata.hooks.bteq import BteqHook
+from airflow.providers.teradata.hooks.teradata import TeradataHook
 
 
 class BteqOperator(BaseOperator):
@@ -44,19 +45,21 @@ class BteqOperator(BaseOperator):
         *,
         bteq: str,
         xcom_push_flag: bool = True,
-        ttu_conn_id: str = BteqHook.default_conn_name,
+        teradata_conn_id: str = TeradataHook.default_conn_name,
+        ssh_conn_id: str | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
         self.bteq = bteq
         self.xcom_push_flag = xcom_push_flag
-        self.ttu_conn_id = ttu_conn_id
+        self.teradata_conn_id = teradata_conn_id
+        self.ssh_conn_id = ssh_conn_id
         self._hook: BteqHook | None = None
 
     def execute(self, context: Mapping) -> str | None:
         """Execute BTEQ code using the BteqHook."""
-        self.log.info("Initializing BteqHook with connection ID: %s", self.ttu_conn_id)
-        self._hook = BteqHook(ttu_conn_id=self.ttu_conn_id)
+        self.log.info("Initializing BteqHook with connection ID: %s", self.teradata_conn_id)
+        self._hook = BteqHook(teradata_conn_id=self.teradata_conn_id, ssh_conn_id=self.ssh_conn_id)
 
         self.log.info("Executing BTEQ script...")
         result = self._hook.execute_bteq(self.bteq, self.xcom_push_flag)

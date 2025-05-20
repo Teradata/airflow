@@ -1,4 +1,3 @@
-#
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -15,6 +14,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
 from __future__ import annotations
 
 import os
@@ -22,6 +22,7 @@ import subprocess
 from tempfile import NamedTemporaryFile, TemporaryDirectory
 
 from airflow.exceptions import AirflowException
+from airflow.providers.ssh.hooks.ssh import SSHHook
 from airflow.providers.teradata.hooks.ttu import TtuHook
 
 
@@ -29,34 +30,97 @@ class BteqHook(TtuHook):
     """
     Hook for executing BTEQ (Basic Teradata Query) scripts.
 
-    This hook inherits connection handling from TtuHook and adds BTEQ execution capabilities.
+    This hook provides functionality to execute BTEQ scripts either locally or remotely via SSH.
+    It extends the `TtuHook` and integrates with Airflow's SSHHook for remote execution.
+
+    The BTEQ scripts are used to interact with Teradata databases, allowing users to perform
+    operations such as querying, data manipulation, and administrative tasks.
+
+    Features:
+    - Supports both local and remote execution of BTEQ scripts.
+    - Handles connection details, script preparation, and execution.
+    - Provides robust error handling and logging for debugging.
+    - Allows configuration of session parameters like output width and encoding.
+
+    .. seealso::
+        - :ref:`Teradata API connection <howto/connection:teradata>`
+
+    :param teradata_conn_id: Reference to a specific Teradata connection.
+    :param ssh_conn_id: Optional SSH connection ID for remote execution.
+    :param args: Additional arguments passed to the parent `TtuHook`.
+    :param kwargs: Additional keyword arguments passed to the parent `TtuHook`.
     """
 
-    def __init__(self, *args, **kwargs):
-        """Initialize the BteqHook by calling the parent's __init__ method."""
+    def __init__(self, ssh_conn_id: str | None = None, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        self.ssh_conn_id = ssh_conn_id
+        self.ssh_hook = SSHHook(ssh_conn_id=ssh_conn_id) if ssh_conn_id else None
 
     def execute_bteq(
         self, bteq_script: str, xcom_push_flag: bool = False, timeout: int | None = None
     ) -> str | None:
-        """
-        Execute BTEQ (Basic Teradata Query) sentences using the BTEQ binary.
+        """Execute the BTEQ script."""
+        if self.ssh_hook:
+            return self._execute_bteq_remote(bteq_script, xcom_push_flag, timeout)
+        return self._execute_bteq_local(bteq_script, xcom_push_flag, timeout)
 
-        :param bteq_script: A string containing BTEQ sentences to execute.
-        :param xcom_push_flag: If True, pushes the last line of the BTEQ log to XCom.
-        :param timeout: Timeout in seconds for the BTEQ execution.
-        :return: The last line of the BTEQ log if xcom_push_flag is True, otherwise None.
-        :raises AirflowException: If the BTEQ command fails or returns a non-zero exit code.
-        """
-        # Establish connection and retrieve connection details
+    def _execute_bteq_remote(self, bteq_script: str, xcom_push_flag: bool, timeout: int | None) -> str | None:
         conn = self.get_conn()
-        self.log.info("Executing BTEQ script...")
+        self.log.info("Executing BTEQ script remotely via SSH...")
 
-        # Create a temporary directory for storing the BTEQ script
+        bteq_file_content = self._prepare_bteq_script(
+            bteq_string=bteq_script,
+            host=conn["host"],
+            login=conn["login"],
+            password=conn["password"],
+            bteq_output_width=conn["bteq_output_width"],
+            bteq_session_encoding=conn["bteq_session_encoding"],
+            bteq_quit_zero=conn["bteq_quit_zero"],
+        )
+
+        if self.ssh_hook:
+            with (
+                self.ssh_hook.get_conn() as ssh_client,
+                TemporaryDirectory(prefix="airflowtmp_ssh_bteq_") as tmp_dir,
+            ):
+                local_script_path = os.path.join(tmp_dir, "bteq_script.txt")
+                with open(local_script_path, "w") as script_file:
+                    script_file.write(bteq_file_content)
+
+                import tempfile
+
+                remote_script_path = tempfile.gettempdir() + "/bteq_script.txt"
+                sftp_client = ssh_client.open_sftp()
+                sftp_client.put(local_script_path, remote_script_path)
+                sftp_client.close()
+
+                command = f"bteq < {remote_script_path}"
+                stdin, stdout, stderr = ssh_client.exec_command(command, timeout=timeout)
+
+                last_line = ""
+                failure_message = "An error occurred during the remote BTEQ operation."
+                self.log.info("Remote BTEQ Output:")
+                for line in stdout:
+                    decoded_line = line.strip()
+                    self.log.info(decoded_line)
+                    last_line = decoded_line
+                    if "Failure" in decoded_line:
+                        failure_message = decoded_line
+
+                exit_status = stdout.channel.recv_exit_status()
+                if exit_status != 0:
+                    raise AirflowException(f"Remote BTEQ failed (exit {exit_status}): {failure_message}")
+
+                return last_line if xcom_push_flag else None
+        else:
+            raise AirflowException("SSH connection is not established. Cannot execute BTEQ script remotely.")
+
+    def _execute_bteq_local(self, bteq_script: str, xcom_push_flag: bool, timeout: int | None) -> str | None:
+        conn = self.get_conn()
+        self.log.info("Executing BTEQ script locally...")
+
         with TemporaryDirectory(prefix="airflowtmp_ttu_bteq_") as tmp_dir:
-            # Create a temporary file to write the BTEQ script
-            with NamedTemporaryFile(dir=tmp_dir, mode="wb") as tmp_file:
-                # Prepare the BTEQ script with connection parameters
+            with NamedTemporaryFile(dir=tmp_dir, mode="w+", delete=False) as tmp_file:
                 bteq_file_content = self._prepare_bteq_script(
                     bteq_string=bteq_script,
                     host=conn["host"],
@@ -67,73 +131,61 @@ class BteqHook(TtuHook):
                     bteq_quit_zero=conn["bteq_quit_zero"],
                 )
                 self.log.debug("Generated BTEQ script:\n%s", bteq_file_content)
-
-                # Write the BTEQ script to the temporary file
-                tmp_file.write(bytes(bteq_file_content, "UTF-8"))
+                tmp_file.write(bteq_file_content)
                 tmp_file.flush()
-                tmp_file.seek(0)
 
-                # Execute the BTEQ script using the BTEQ binary
-                conn["sp"] = subprocess.Popen(
+                process = subprocess.Popen(
                     ["bteq"],
-                    stdin=tmp_file,
+                    stdin=open(tmp_file.name, "rb"),
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     cwd=tmp_dir,
                     preexec_fn=os.setsid,
                 )
 
-                # Capture and log the output of the BTEQ command
+                conn["sp"] = process  # Store reference for `on_kill`
                 last_line = ""
-                failure_message = "An error occurred during the BTEQ operation. Please review the full BTEQ output for details."
+                failure_message = "An error occurred during the BTEQ operation."
+
+                if process.stdout is None:
+                    raise AirflowException("Process stdout is None. Unable to read output.")
+
                 self.log.info("BTEQ Output:")
-                for line in iter(conn["sp"].stdout.readline, b""):
+                for line in iter(process.stdout.readline, b""):
                     decoded_line = line.decode(conn["console_output_encoding"]).strip()
                     self.log.info(decoded_line)
                     last_line = decoded_line
                     if "Failure" in decoded_line:
-                        # Save the last failure message
                         failure_message = decoded_line
 
-                # Wait for the BTEQ process to complete with optional timeout
                 try:
-                    conn["sp"].wait(timeout=timeout)
-                    self.log.info("BTEQ command exited with return code %s", conn["sp"].returncode)
+                    process.wait(timeout=timeout)
                 except subprocess.TimeoutExpired:
                     self.on_kill()
-                    raise AirflowException(f"BTEQ command timed out after {timeout} seconds")
+                    raise AirflowException(f"BTEQ command timed out after {timeout} seconds.")
 
-                # Raise an exception if the BTEQ command failed
-                if conn["sp"].returncode:
+                if process.returncode != 0:
                     raise AirflowException(
-                        f"BTEQ command exited with return code {conn['sp'].returncode} due to: {failure_message}"
+                        f"BTEQ exited with return code {process.returncode}: {failure_message}"
                     )
 
-                # Return the last line of the BTEQ log if xcom_push_flag is True
-                if xcom_push_flag:
-                    return last_line
-                return None
+                return last_line if xcom_push_flag else None
 
     def on_kill(self):
-        """
-        Terminates the subprocess if it is running.
-
-        Ensures that the process is terminated gracefully and logs the status.
-        """
+        """Terminate the subprocess if running."""
         self.log.debug("Attempting to kill child process...")
         conn = self.get_conn()
-        if conn.get("sp"):
+        process = conn.get("sp")
+        if process:
             try:
                 self.log.info("Terminating subprocess...")
-                conn["sp"].terminate()
-                conn["sp"].wait(timeout=5)
-                self.log.info("Subprocess terminated successfully.")
+                process.terminate()
+                process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 self.log.warning("Subprocess did not terminate in time. Forcing kill...")
-                conn["sp"].kill()
-                self.log.info("Subprocess killed forcefully.")
-            except (ProcessLookupError, OSError) as e:
-                self.log.error("Failed to terminate subprocess: %s", e)
+                process.kill()
+            except Exception as e:
+                self.log.error("Failed to terminate subprocess: %s", str(e))
 
     @staticmethod
     def _prepare_bteq_script(
@@ -145,35 +197,15 @@ class BteqHook(TtuHook):
         bteq_session_encoding: str,
         bteq_quit_zero: bool,
     ) -> str:
-        """
-        Prepare a BTEQ file with connection parameters for executing SQL sentences with BTEQ syntax.
-
-        :param bteq_string: BTEQ sentences to execute.
-        :param host: Teradata Host.
-        :param login: Username for login.
-        :param password: Password for login.
-        :param bteq_output_width: Width of BTEQ output in the console.
-        :param bteq_session_encoding: Session encoding. See official Teradata docs for possible values.
-        :param bteq_quit_zero: If True, force a .QUIT 0 sentence at the end of the script (forcing return code = 0).
-        :return: A formatted BTEQ script as a string.
-        :raises ValueError: If any required parameters are invalid.
-        """
-        # Validate input parameters
-        if not bteq_string or not bteq_string.strip():
-            raise ValueError("BTEQ script cannot be empty.")
-        if not host:
-            raise ValueError("Host parameter cannot be empty.")
-        if not login:
-            raise ValueError("Login parameter cannot be empty.")
-        if not password:
-            raise ValueError("Password parameter cannot be empty.")
+        """Build a BTEQ script with necessary connection and session commands."""
+        if not all([bteq_string.strip(), host, login, password]):
+            raise ValueError("Host, login, password, and BTEQ script must be provided.")
         if not isinstance(bteq_output_width, int) or bteq_output_width <= 0:
-            raise ValueError("BTEQ output width must be a positive integer.")
+            raise ValueError("Output width must be a positive integer.")
         if not bteq_session_encoding:
-            raise ValueError("BTEQ session encoding cannot be empty.")
+            raise ValueError("Session encoding must be specified.")
 
-        # Construct the BTEQ script
-        bteq_list = [
+        script_lines = [
             f".LOGON {host}/{login},{password};",
             ".IF ERRORCODE <> 0 THEN .QUIT 8;",
             f".SET WIDTH {bteq_output_width};",
@@ -181,14 +213,8 @@ class BteqHook(TtuHook):
             bteq_string.strip(),
         ]
 
-        # Add optional .QUIT 0 command if specified
         if bteq_quit_zero:
-            bteq_list.append(".QUIT 0;")
+            script_lines.append(".QUIT 0;")
 
-        # Ensure proper termination of the script
-        bteq_list.extend([".LOGOFF;", ".EXIT;"])
-
-        # Join the script lines with newlines
-        bteq_script = "\n".join(bteq_list)
-
-        return bteq_script
+        script_lines.extend([".LOGOFF;", ".EXIT;"])
+        return "\n".join(script_lines)
