@@ -1,13 +1,31 @@
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+from __future__ import annotations
+
 import os
-import pytest
+import shutil
 import tempfile
 from unittest import mock
+
+import pytest
+
 from airflow.exceptions import AirflowException
 from airflow.providers.teradata.hooks.tpt import TptHook
-import io
-import builtins
-import uuid
-import shutil
 
 
 # Fixtures
@@ -621,7 +639,7 @@ def test_prepare_tdload_script_tdload_options_overrides(tmp_path, source_conn_di
     os.remove(file_path)
 
 
-# Add a test for _prepare_tdload_script  mode == "table_to_table" and select_stmt
+# Test for _prepare_tdload_script  mode == "table_to_table" and select_stmt
 def test_prepare_tdload_script_table_to_table_with_select_stmt(tmp_path, source_conn_dict, target_conn_dict):
     hook = TptHook()
     file_path = hook._prepare_tdload_script(
@@ -901,7 +919,6 @@ def test_execute_tdload_table_to_table_with_select_stmt(source_conn_dict):
         )
 
 
-# Add a test to execute code after try block
 @mock.patch("airflow.providers.teradata.hooks.tpt.TptHook.get_conn")
 @mock.patch("airflow.providers.teradata.hooks.tpt.TptHook._prepare_tdload_script")
 @mock.patch("airflow.providers.teradata.hooks.tpt.TptHook._execute_tdload_locally")
@@ -953,7 +970,11 @@ def test_execute_tdload_runs_code_after_try_block(
     assert tdload_job_variable_file in tdload_cmd
     assert any(arg.startswith("airflow_tdload_") for arg in tdload_cmd)
     # The command should include the tdload_options as command-line args
-    assert "-ErrorLimit" in tdload_cmd and "100" in tdload_cmd
-    assert "-LogLevel" in tdload_cmd and "DEBUG" in tdload_cmd
+    assert "-ErrorLimit" in tdload_cmd, "ErrorLimit option not found in tdload command"
+    assert "100" in tdload_cmd, "ErrorLimit value '100' not found in tdload command"
+    # Check that LogLevel option is included in the command
+    assert "-LogLevel" in tdload_cmd, "LogLevel option not found in tdload command"
+    # Check that the DEBUG value is included in the command
+    assert "DEBUG" in tdload_cmd, "LogLevel value 'DEBUG' not found in tdload command"
     # The result should be returned
     assert result == "TDLOAD OK"

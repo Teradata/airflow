@@ -104,7 +104,6 @@ class TptHook(TtuHook):
                 f.flush()
 
             self.log.debug("Temporary TPT Template location: %s", script_file)
-            self.log.info("TPT Template content:\n%s", script_content)
 
             tbuild_cmd = ["tbuild", "-f", script_file, f"airflow_tpt_{job_id}"]
 
@@ -653,6 +652,6 @@ class TptHook(TtuHook):
             var_file.write(job_var_content)
             var_file_path = var_file.name
 
-        self.log.info("Created job variable file at %s with content:\n%s", var_file_path, job_var_content)
+        self.log.info("Created job variable file at %s.\n", var_file_path)
 
         return var_file_path

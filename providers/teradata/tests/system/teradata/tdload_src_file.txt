@@ -1,0 +1,4 @@
+Chris|Johnson|E0870|Finance
+Michael|Smith|E0331|Sales
+David|Garcia|E0693|Engineering
+Sarah|Martinez|E0009|HR

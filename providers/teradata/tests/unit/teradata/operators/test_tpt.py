@@ -1,23 +1,42 @@
-import unittest
-from unittest import mock
-from unittest.mock import patch, MagicMock, call
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+from __future__ import annotations
 
+import unittest
 from datetime import datetime
+from unittest import mock
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 from airflow.exceptions import AirflowException
-from airflow.models import Connection, DAG, TaskInstance
-from airflow.providers.teradata.hooks.tpt import TptHook
+from airflow.models import DAG, Connection, TaskInstance
 from airflow.providers.teradata.operators.tpt import TdLoadOperator
 from airflow.utils.session import provide_session
-from airflow.utils.state import State
 
 
 # Add this patch at the class level to intercept all subprocess calls
 @patch("subprocess.Popen")
-class TestTdLoadOperator(unittest.TestCase):
+class TestTdLoadOperator:
     """Tests for TdLoadOperator"""
 
     @provide_session
-    def setUp(self, session=None):
+    def setup_method(self, method, session=None):
         # Delete existing connections if they exist
         session.query(Connection).filter(
             Connection.conn_id.in_(["teradata_default", "teradata_target"])
@@ -72,10 +91,10 @@ class TestTdLoadOperator(unittest.TestCase):
         )
 
         # Assertions
-        with self.assertRaises(AirflowException) as context:
+        with pytest.raises(AirflowException) as context:
             operator.execute({})
 
-        self.assertIn("File to table loading failed", str(context.exception))
+        assert "File to table loading failed" in str(context.value)
 
     @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_tdload")
     def test_file_to_table_mode(self, mock_execute_tdload, mock_popen):
@@ -106,8 +125,8 @@ class TestTdLoadOperator(unittest.TestCase):
         result = operator.execute(context)
 
         # Assertions
-        self.assertEqual("1000 rows loaded successfully", result)
-        self.assertEqual("file_to_table", operator.mode)
+        assert result == "1000 rows loaded successfully"
+        assert operator.mode == "file_to_table"
         mock_execute_tdload.assert_called_once()
         context["ti"].xcom_push.assert_called_once_with(
             key="tdload_result", value="1000 rows loaded successfully"
@@ -116,22 +135,22 @@ class TestTdLoadOperator(unittest.TestCase):
     def test_invalid_parameter_combinations(self, mock_popen):
         """Test invalid parameter combinations"""
         # Missing both source and target parameters
-        with self.assertRaises(ValueError) as context:
+        with pytest.raises(ValueError) as context:
             TdLoadOperator(
                 task_id="test_invalid_params",
                 teradata_conn_id="teradata_default",
             )
-        self.assertIn("Invalid parameter combination", str(context.exception))
+        assert "Invalid parameter combination" in str(context.value)
 
         # Missing target_teradata_conn_id for table_to_table mode
-        with self.assertRaises(ValueError) as context:
+        with pytest.raises(ValueError) as context:
             TdLoadOperator(
                 task_id="test_missing_target_conn",
                 source_table="source_db.source_table",
                 target_table="target_db.target_table",
                 teradata_conn_id="teradata_default",
             )
-        self.assertIn("target_teradata_conn_id must be provided", str(context.exception))
+        assert "target_teradata_conn_id must be provided" in str(context.value)
 
     def test_on_kill(self, mock_popen):
         """Test the on_kill method"""
@@ -157,7 +176,7 @@ class TestTdLoadOperator(unittest.TestCase):
 
     def test_source_and_select_stmt_validation(self, mock_popen):
         """Test that providing both source_table and select_stmt raises ValueError"""
-        with self.assertRaises(ValueError) as context:
+        with pytest.raises(ValueError) as context:
             TdLoadOperator(
                 task_id="test_validation",
                 source_table="source_db.table",
@@ -166,7 +185,7 @@ class TestTdLoadOperator(unittest.TestCase):
                 teradata_conn_id="teradata_default",
             )
 
-        self.assertIn("Both source_table and select_stmt cannot be provided", str(context.exception))
+        assert "Both source_table and select_stmt cannot be provided", str(context.exception)
 
     @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_tdload")
     def test_table_to_file_mode(self, mock_execute_tdload, mock_popen):
@@ -196,8 +215,8 @@ class TestTdLoadOperator(unittest.TestCase):
         result = operator.execute(context)
 
         # Assertions
-        self.assertEqual("1000 rows exported successfully", result)
-        self.assertEqual("table_to_file", operator.mode)
+        assert result == "1000 rows exported successfully"
+        assert operator.mode == "table_to_file"
         mock_execute_tdload.assert_called_once()
         context["ti"].xcom_push.assert_called_once_with(
             key="tdload_result", value="1000 rows exported successfully"
@@ -232,8 +251,8 @@ class TestTdLoadOperator(unittest.TestCase):
         result = operator.execute(context)
 
         # Assertions
-        self.assertEqual("1000 rows transferred successfully", result)
-        self.assertEqual("table_to_table", operator.mode)
+        assert result == "1000 rows transferred successfully"
+        assert operator.mode == "table_to_table"
         mock_execute_tdload.assert_called_once()
         context["ti"].xcom_push.assert_called_once_with(
             key="tdload_result", value="1000 rows transferred successfully"
@@ -319,10 +338,10 @@ class TestTdLoadOperator(unittest.TestCase):
         )
 
         # Import DagRun model
-        from airflow.models import DagRun
-
         # Create proper DagRun objects with timezone-aware datetime
         from datetime import timezone
+
+        from airflow.models import DagRun
 
         execution_date = datetime(2021, 1, 1, tzinfo=timezone.utc)
 
@@ -364,14 +383,14 @@ class TestTdLoadOperator(unittest.TestCase):
         ti_t2t.render_templates()
 
         # Check rendered values
-        self.assertEqual(f2t_operator.source_file_name, "/path/to/2021-01-01.csv")
-        self.assertEqual(f2t_operator.target_table, "target_20210101")
+        assert f2t_operator.source_file_name == "/path/to/2021-01-01.csv"
+        assert f2t_operator.target_table == "target_20210101"
 
-        self.assertEqual(t2f_operator.source_table, "source_20210101")
-        self.assertEqual(t2f_operator.target_file_name, "/path/to/export_20210101.csv")
+        assert t2f_operator.source_table == "source_20210101"
+        assert t2f_operator.target_file_name == "/path/to/export_20210101.csv"
 
-        self.assertEqual(t2t_operator.source_table, "source_20210101")
-        self.assertEqual(t2t_operator.target_table, "target_20210101")
+        assert t2t_operator.source_table == "source_20210101"
+        assert t2t_operator.target_table == "target_20210101"
 
     @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_tdload")
     def test_xcom_push_disabled(self, mock_execute_tdload, mock_popen):
@@ -402,7 +421,7 @@ class TestTdLoadOperator(unittest.TestCase):
         result = operator.execute(context)
 
         # Assertions
-        self.assertEqual("1000 rows loaded successfully", result)
+        assert result == "1000 rows loaded successfully"
         context["ti"].xcom_push.assert_not_called()
 
 

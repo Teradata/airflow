@@ -53,20 +53,23 @@ class DdlOperator(BaseOperator):
     :raises AirflowException: If the DDL operation fails, an AirflowException is raised
                               with details of the failure.
 
-    Example usage:
+    Example usage::
+
         # Example of creating a table using DdlOperator
         ddl = DdlOperator(
-            task_id='create_table_task',
-            sql_stmt='CREATE TABLE my_table (id INT, name VARCHAR(100))',
-            teradata_conn_id='my_teradata_conn'
+            task_id="create_table_task",
+            sql_stmt="CREATE TABLE my_table (id INT, name VARCHAR(100))",
+            teradata_conn_id="my_teradata_conn",
         )
 
         # Example of dropping a table using DdlOperator
         ddl = DdlOperator(
-            task_id='drop_table_task',
-            sql_stmt='DROP TABLE my_table',
-            teradata_conn_id='my_teradata_conn'
+            task_id="drop_table_task",
+            sql_stmt="DROP TABLE my_table",
+            teradata_conn_id="my_teradata_conn",
         )
+
+
     """
 
     template_fields = ("sql_stmt", "error_list")
@@ -147,30 +150,34 @@ class TdLoadOperator(BaseOperator):
         :param source_text_delimiter: Source text delimiter (default: ',')
         :param target_text_delimiter: Target text delimiter (default: ',')
 
-    Example usage for file to table:
+    Example usage::
+
+        # Example usage for file to table:
         load_file = TdLoadOperator(
-            task_id='load_from_file',
-            source_file_name='/path/to/data.csv',
-            target_table='my_database.my_table',
-            target_teradata_conn_id='teradata_target_conn'
+            task_id="load_from_file",
+            source_file_name="/path/to/data.csv",
+            target_table="my_database.my_table",
+            target_teradata_conn_id="teradata_target_conn",
         )
 
-    Example usage for table to file:
+        # Example usage for table to file:
         export_data = TdLoadOperator(
-            task_id='export_to_file',
-            source_table='my_database.my_table',
-            target_file_name='/path/to/export.csv',
-            teradata_conn_id='teradata_source_conn'
+            task_id="export_to_file",
+            source_table="my_database.my_table",
+            target_file_name="/path/to/export.csv",
+            teradata_conn_id="teradata_source_conn",
         )
 
-    Example usage for table to table:
+        # Example usage for table to table:
         transfer_data = TdLoadOperator(
-            task_id='transfer_between_tables',
-            source_table='source_db.source_table',
-            target_table='target_db.target_table',
-            teradata_conn_id='teradata_source_conn',
-            target_teradata_conn_id='teradata_target_conn'
+            task_id="transfer_between_tables",
+            source_table="source_db.source_table",
+            target_table="target_db.target_table",
+            teradata_conn_id="teradata_source_conn",
+            target_teradata_conn_id="teradata_target_conn",
         )
+
+
     """
 
     template_fields = ("source_table", "target_table", "source_file_name", "target_file_name")
