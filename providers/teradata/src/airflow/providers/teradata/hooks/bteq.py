@@ -115,7 +115,6 @@ class BteqHook(TtuHook):
     ) -> str | None:
         if not self.ssh_hook:
             raise AirflowException("SSHHook is not initialized. Please provide a valid `ssh_conn_id`.")
-        local_script_path, remote_script_path = None, None
         try:
             with (
                 self.ssh_hook.get_conn() as ssh_client,
@@ -125,43 +124,52 @@ class BteqHook(TtuHook):
                     raise AirflowException("Failed to establish SSH connection. `ssh_client` is None.")
 
                 verify_bteq_installed_remote(ssh_client)
-                # Write script to local temp file
-                local_script_path = os.path.join(tmp_dir, "bteq_script.txt")
-                with open(local_script_path, "w") as script_file:
-                    script_file.write(bteq_file_content)
+                try:
+                    # Write script to local temp file
+                    local_script_path = os.path.join(tmp_dir, "bteq_script.txt")
+                    with open(local_script_path, "w") as script_file:
+                        script_file.write(bteq_file_content)
 
-                # Upload script to remote temp directory
-                remote_script_path = os.path.join("/tmp", "bteq_script.txt")
-                sftp_client = ssh_client.open_sftp()
-                sftp_client.put(local_script_path, remote_script_path)
-                sftp_client.close()
-                command = f"bteq < {remote_script_path}"
-                stdin, stdout, stderr = ssh_client.exec_command(command, timeout=timeout)
-                last_line = ""
-                failure_message = "An error occurred during the remote BTEQ operation."
+                    # Upload script to remote temp directory
+                    remote_script_path = os.path.join("/tmp", "bteq_script.txt")
+                    sftp_client = ssh_client.open_sftp()
+                    sftp_client.put(local_script_path, remote_script_path)
+                    sftp_client.close()
+                    command = f"bteq < {remote_script_path}"
+                    stdin, stdout, stderr = ssh_client.exec_command(command, timeout=timeout)
+                    last_line = ""
+                    failure_message = "An error occurred during the remote BTEQ operation."
 
-                for line in stdout:
-                    self.log.debug("Process stdout: ", line.strip())
-                    last_line = line.strip()
+                    for line in stdout:
+                        self.log.debug("Process stdout: ", line.strip())
+                        last_line = line.strip()
 
-                for line in stderr:
-                    decoded_line = line.strip()
-                    self.log.debug("Process stderr: ", line.strip())
-                    if "Failure" in decoded_line:
-                        failure_message = decoded_line
+                    for line in stderr:
+                        decoded_line = line.strip()
+                        self.log.debug("Process stderr: ", line.strip())
+                        if "Failure" in decoded_line:
+                            failure_message = decoded_line
 
-                if failure_message:
-                    raise AirflowException(
-                        f"BTEQ task failed on remote machine with error: {failure_message}"
-                    )
+                    if failure_message:
+                        raise AirflowException(
+                            f"BTEQ task failed on remote machine with error: {failure_message}"
+                        )
 
-                exit_status = stdout.channel.recv_exit_status()
-                if exit_status != 0:
-                    raise AirflowException(
-                        f"BTEQ task failed on remote machine with error code: {exit_status}"
-                    )
+                    exit_status = stdout.channel.recv_exit_status()
+                    if exit_status != 0:
+                        raise AirflowException(
+                            f"BTEQ task failed on remote machine with error code: {exit_status}"
+                        )
 
-                return last_line if xcom_push_flag else None
+                    return last_line if xcom_push_flag else None
+                finally:
+                    # Remove the local script file
+                    if local_script_path and os.path.exists(local_script_path):
+                        os.remove(local_script_path)
+                    # Cleanup: Delete the remote temporary file
+                    if remote_script_path:
+                        cleanup_command = f"rm -f {remote_script_path}"
+                        ssh_client.exec_command(cleanup_command)
         except (OSError, socket.gaierror):
             raise AirflowException(
                 "SSH connection timed out. Please check the network or server availability."
@@ -170,14 +178,6 @@ class BteqHook(TtuHook):
             raise AirflowException(f"SSH connection failed: {str(e)}")
         except Exception as e:
             raise AirflowException(f"An unexpected error occurred during SSH connection: {str(e)}")
-        finally:
-            # Remove the local script file
-            if local_script_path and os.path.exists(local_script_path):
-                os.remove(local_script_path)
-            # Cleanup: Delete the remote temporary file
-            if remote_script_path:
-                cleanup_command = f"rm -f {remote_script_path}"
-                ssh_client.exec_command(cleanup_command)
 
     def _execute_bteq_local(
         self, xcom_push_flag: bool, timeout: int | None, bteq_file_content: str, conn: dict
