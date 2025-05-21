@@ -58,19 +58,13 @@ class BteqOperator(BaseOperator):
 
     def execute(self, context: Mapping) -> str | None:
         """Execute BTEQ code using the BteqHook."""
-        self.log.info("Initializing BteqHook with connection ID: %s", self.teradata_conn_id)
         self._hook = BteqHook(teradata_conn_id=self.teradata_conn_id, ssh_conn_id=self.ssh_conn_id)
-
-        self.log.info("Executing BTEQ script...")
         result = self._hook.execute_bteq(self.bteq, self.xcom_push_flag)
-
-        self.log.info("BTEQ script execution completed.")
         return result if self.xcom_push_flag else None
 
     def on_kill(self) -> None:
         """Handle task termination by invoking the on_kill method of BteqHook."""
         if self._hook:
-            self.log.info("Terminating BTEQ execution...")
             self._hook.on_kill()
         else:
             self.log.warning("BteqHook was not initialized. Nothing to terminate.")

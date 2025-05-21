@@ -88,6 +88,7 @@ class TtuHook(BaseHook):
                 login=connection.login,
                 password=connection.password,
                 host=connection.host,
+                database=connection.schema,
                 ttu_log_folder=extras.get("ttu_log_folder", "/tmp"),
                 console_output_encoding=extras.get("console_output_encoding", "utf-8"),
                 bteq_session_encoding=extras.get("bteq_session_encoding", "ASCII"),
@@ -96,8 +97,8 @@ class TtuHook(BaseHook):
                 sp=None,  # Subprocess placeholder
             )
             # log the extras for debugging
-            self.log.info("TTU connection extras: %s", extras)
-            self.log.info("TTU connection details: %s", self.conn)
+            self.log.debug("TTU connection extras: %s", extras)
+            self.log.debug("TTU connection details: %s", self.conn)
 
             # Ensure log folder exists
             if self.conn and not os.path.exists(self.conn["ttu_log_folder"]):
@@ -114,12 +115,10 @@ class TtuHook(BaseHook):
         """
         if self.conn:
             if self.conn.get("sp") and self.conn["sp"].poll() is None:
-                self.log.info("Terminating subprocess...")
                 self.conn["sp"].terminate()
                 try:
                     self.conn["sp"].wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     self.log.warning("Subprocess did not terminate in time. Forcing kill...")
                     self.conn["sp"].kill()
-            self.log.info("Closing TTU connection.")
             self.conn = None
