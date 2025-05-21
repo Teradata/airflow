@@ -58,7 +58,7 @@ class TestTtuHook:
         mock_conn.password = "test_pass"
         mock_conn.host = "test_host"
         mock_conn.extra_dejson = {
-            "ttu_log_folder": "/custom/path",
+            "ttu_log_folder": "/tmp",
             "console_output_encoding": "latin-1",
             "bteq_session_encoding": "UTF-8",
             "bteq_output_width": 100,
@@ -71,7 +71,7 @@ class TestTtuHook:
         conn = hook.get_conn()
 
         # Assert
-        assert conn["ttu_log_folder"] == "/custom/path"
+        assert conn["ttu_log_folder"] == "/tmp"
         assert conn["console_output_encoding"] == "latin-1"
         assert conn["bteq_session_encoding"] == "UTF-8"
         assert conn["bteq_output_width"] == 100

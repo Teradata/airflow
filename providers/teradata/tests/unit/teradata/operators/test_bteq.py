@@ -50,6 +50,32 @@ class TestBteqOperator:
 
     @mock.patch.object(BteqHook, "execute_bteq")
     @mock.patch.object(BteqHook, "__init__", return_value=None)
+    def test_execute_with_xcom_push_remote(self, mock_hook_init, mock_execute_bteq):
+        task_id = "test_bteq_operator"
+        bteq = "SELECT * FROM my_table;"
+        teradata_conn_id = "teradata_default"
+        ssh_conn_id = "ssh_default"
+        mock_context = {}
+        # Given
+        expected_result = "BTEQ execution result"
+        mock_execute_bteq.return_value = expected_result
+        operator = BteqOperator(
+            task_id=task_id,
+            bteq=bteq,
+            xcom_push_flag=True,
+            teradata_conn_id=teradata_conn_id,
+            ssh_conn_id=ssh_conn_id,
+        )
+
+        # When
+        result = operator.execute(mock_context)
+        # Then
+        mock_hook_init.assert_called_once_with(teradata_conn_id=teradata_conn_id, ssh_conn_id=ssh_conn_id)
+        mock_execute_bteq.assert_called_once_with("SELECT * FROM my_table;", True)
+        assert result == expected_result
+
+    @mock.patch.object(BteqHook, "execute_bteq")
+    @mock.patch.object(BteqHook, "__init__", return_value=None)
     def test_execute_without_xcom_push(self, mock_hook_init, mock_execute_bteq):
         task_id = "test_bteq_operator"
         bteq = "SELECT * FROM my_table;"
@@ -70,6 +96,33 @@ class TestBteqOperator:
 
         # Then
         mock_hook_init.assert_called_once_with(teradata_conn_id=teradata_conn_id, ssh_conn_id=None)
+        mock_execute_bteq.assert_called_once_with(bteq, False)
+        assert result is None
+
+    @mock.patch.object(BteqHook, "execute_bteq")
+    @mock.patch.object(BteqHook, "__init__", return_value=None)
+    def test_execute_without_xcom_push_remote(self, mock_hook_init, mock_execute_bteq):
+        task_id = "test_bteq_operator"
+        bteq = "SELECT * FROM my_table;"
+        teradata_conn_id = "teradata_default"
+        ssh_conn_id = "ssh_default"
+        mock_context = {}
+        # Given
+        expected_result = "BTEQ execution result"
+        mock_execute_bteq.return_value = expected_result
+        operator = BteqOperator(
+            task_id=task_id,
+            bteq=bteq,
+            xcom_push_flag=False,
+            teradata_conn_id=teradata_conn_id,
+            ssh_conn_id=ssh_conn_id,
+        )
+
+        # When
+        result = operator.execute(mock_context)
+
+        # Then
+        mock_hook_init.assert_called_once_with(teradata_conn_id=teradata_conn_id, ssh_conn_id=ssh_conn_id)
         mock_execute_bteq.assert_called_once_with(bteq, False)
         assert result is None
 
