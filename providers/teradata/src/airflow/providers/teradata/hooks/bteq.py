@@ -70,7 +70,7 @@ class BteqHook(TtuHook):
     - Allows configuration of session parameters like output width and encoding.
 
     .. seealso::
-        - :ref:`Teradata API connection <howto/connection:teradata>`
+        - :ref:`hook API connection <howto/connection:teradata>`
 
     :param teradata_conn_id: Reference to a specific Teradata connection.
     :param ssh_conn_id: Optional SSH connection ID for remote execution.
@@ -138,7 +138,7 @@ class BteqHook(TtuHook):
                     command = f"bteq < {remote_script_path}"
                     stdin, stdout, stderr = ssh_client.exec_command(command, timeout=timeout)
                     last_line = ""
-                    failure_message = "An error occurred during the remote BTEQ operation."
+                    failure_message = None
 
                     for line in stdout:
                         self.log.debug("Process stdout: ", line.strip())
@@ -208,7 +208,7 @@ class BteqHook(TtuHook):
 
                 conn["sp"] = process  # For `on_kill` support
                 last_line = ""
-                failure_message = "An error occurred during the BTEQ operation."
+                failure_message = None
 
                 if process.stdout is None:
                     raise AirflowException("Process stdout is None. Unable to read BTEQ output.")

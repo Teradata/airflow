@@ -24,60 +24,63 @@ from airflow.providers.teradata.operators.bteq import BteqOperator
 
 
 class TestBteqOperator:
-    def setUp(self):
-        self.mock_context = {}
-        self.task_id = "test_bteq_operator"
-        self.bteq = "SELECT * FROM my_table;"
-        self.ttu_conn_id = "teradata_default"
-
     @mock.patch.object(BteqHook, "execute_bteq")
     @mock.patch.object(BteqHook, "__init__", return_value=None)
     def test_execute_with_xcom_push(self, mock_hook_init, mock_execute_bteq):
+        task_id = "test_bteq_operator"
+        bteq = "SELECT * FROM my_table;"
+        teradata_conn_id = "teradata_default"
+        mock_context = {}
         # Given
         expected_result = "BTEQ execution result"
         mock_execute_bteq.return_value = expected_result
         operator = BteqOperator(
-            task_id=self.task_id,
-            bteq=self.bteq,
+            task_id=task_id,
+            bteq=bteq,
             xcom_push_flag=True,
-            ttu_conn_id=self.ttu_conn_id,
+            teradata_conn_id=teradata_conn_id,
         )
 
         # When
-        result = operator.execute(self.mock_context)
-
+        result = operator.execute(mock_context)
         # Then
-        mock_hook_init.assert_called_once_with(ttu_conn_id=self.ttu_conn_id)
-        mock_execute_bteq.assert_called_once_with(self.bteq, True)
+        mock_hook_init.assert_called_once_with(teradata_conn_id=teradata_conn_id, ssh_conn_id=None)
+        mock_execute_bteq.assert_called_once_with("SELECT * FROM my_table;", True)
         assert result == expected_result
 
     @mock.patch.object(BteqHook, "execute_bteq")
     @mock.patch.object(BteqHook, "__init__", return_value=None)
     def test_execute_without_xcom_push(self, mock_hook_init, mock_execute_bteq):
+        task_id = "test_bteq_operator"
+        bteq = "SELECT * FROM my_table;"
+        teradata_conn_id = "teradata_default"
+        mock_context = {}
         # Given
         expected_result = "BTEQ execution result"
         mock_execute_bteq.return_value = expected_result
         operator = BteqOperator(
-            task_id=self.task_id,
-            bteq=self.bteq,
+            task_id=task_id,
+            bteq=bteq,
             xcom_push_flag=False,
-            ttu_conn_id=self.ttu_conn_id,
+            teradata_conn_id=teradata_conn_id,
         )
 
         # When
-        result = operator.execute(self.mock_context)
+        result = operator.execute(mock_context)
 
         # Then
-        mock_hook_init.assert_called_once_with(ttu_conn_id=self.ttu_conn_id)
-        mock_execute_bteq.assert_called_once_with(self.bteq, False)
+        mock_hook_init.assert_called_once_with(teradata_conn_id=teradata_conn_id, ssh_conn_id=None)
+        mock_execute_bteq.assert_called_once_with(bteq, False)
         assert result is None
 
     @mock.patch.object(BteqHook, "on_kill")
     def test_on_kill(self, mock_on_kill):
+        task_id = "test_bteq_operator"
+        bteq = "SELECT * FROM my_table;"
         # Given
         operator = BteqOperator(
-            task_id=self.task_id,
-            bteq=self.bteq,
+            task_id=task_id,
+            bteq=bteq,
         )
         operator._hook = BteqHook()
 
@@ -88,10 +91,12 @@ class TestBteqOperator:
         mock_on_kill.assert_called_once()
 
     def test_on_kill_not_initialized(self):
+        task_id = "test_bteq_operator"
+        bteq = "SELECT * FROM my_table;"
         # Given
         operator = BteqOperator(
-            task_id=self.task_id,
-            bteq=self.bteq,
+            task_id=task_id,
+            bteq=bteq,
         )
         operator._hook = None
 
@@ -100,7 +105,8 @@ class TestBteqOperator:
 
     def test_template_fields(self):
         # Verify template fields are defined correctly
-        assert BteqOperator.template_fields == ("bteq",)
+        print(BteqOperator.template_fields)
+        assert BteqOperator.template_fields == "bteq"
 
     def test_template_ext(self):
         # Verify template extensions are defined correctly

@@ -26,11 +26,28 @@ from airflow.providers.teradata.hooks.teradata import TeradataHook
 
 class BteqOperator(BaseOperator):
     """
-    Executes BTEQ code in a specific Teradata database.
+    Teradata Operator to execute BTEQ (Basic Teradata Query) scripts using Teradata BTEQ utility.
 
-    :param bteq: The BTEQ code to be executed. (templated)
-    :param xcom_push_flag: Whether to push the result of the BTEQ execution to XCom. Defaults to True.
-    :param ttu_conn_id: Reference to a specific Teradata TTU connection. Defaults to BteqHook.default_conn_name.
+    This supports execution of BTEQ scripts either locally or remotely via SSH.
+
+    The BTEQ scripts are used to interact with Teradata databases, allowing users to perform
+    operations such as querying, data manipulation, and administrative tasks.
+
+    Features:
+    - Supports both local and remote execution of BTEQ scripts.
+    - Handles connection details, script preparation, and execution.
+    - Provides robust error handling and logging for debugging.
+    - Allows configuration of session parameters like output width and encoding.
+
+    .. seealso::
+        For more information on how to use this operator, take a look at the guide:
+        :ref:`howto/operator:TeradataOperator`
+
+
+    :param bteq: The BTEQ script to be executed. (templated) :param xcom_push_flag: Whether to push the
+    result of the BTEQ execution to XCom. Defaults to True. :param teradata_conn_id: Reference to a
+    specific Teradata connection. :param ssh_conn_id: Optional SSH connection ID for remote execution. This
+    parameter is used only for remote execution.
     """
 
     template_fields = "bteq"
