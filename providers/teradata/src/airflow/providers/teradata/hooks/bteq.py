@@ -149,16 +149,10 @@ class BteqHook(TtuHook):
                         self.log.debug("Process stderr: ", line.strip())
                         if "Failure" in decoded_line:
                             failure_message = decoded_line
-
-                    if failure_message:
+                    exit_status = stdout.channel.recv_exit_status()
+                    if failure_message and exit_status != 0:
                         raise AirflowException(
                             f"BTEQ task failed on remote machine with error: {failure_message}"
-                        )
-
-                    exit_status = stdout.channel.recv_exit_status()
-                    if exit_status != 0:
-                        raise AirflowException(
-                            f"BTEQ task failed on remote machine with error code: {exit_status}"
                         )
 
                     return last_line if xcom_push_flag else None
@@ -221,11 +215,8 @@ class BteqHook(TtuHook):
                     last_line = decoded_line
                     if "Failure" in decoded_line:
                         failure_message = decoded_line
-
-                if failure_message:
+                if failure_message and process.returncode != 0:
                     raise AirflowException(f"BTEQ task failed with error: {failure_message}")
-                if process.returncode != 0:
-                    raise AirflowException(f"BTEQ task failed with error code: {process.returncode}")
 
                 return last_line if xcom_push_flag else None
             finally:
