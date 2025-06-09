@@ -89,7 +89,8 @@ def _prepare_bteq_command(
     if bteq_session_encoding:
         bteq_core_cmd.append(f" -e {bteq_script_encoding}")
         bteq_core_cmd.append(f" -c {bteq_session_encoding}")
-    bteq_core_cmd.append(f'".SET EXITONDELAY ON MAXREQTIME {timeout}')
+    bteq_core_cmd.append('"')
+    bteq_core_cmd.append(f".SET EXITONDELAY ON MAXREQTIME {timeout}")
     if timeout_rc is not None and timeout_rc >= 0:
         bteq_core_cmd.append(f" RC {timeout_rc}")
     bteq_core_cmd.append(";")
@@ -105,7 +106,9 @@ def prepare_bteq_command_for_remote_execution(
     timeout_rc: int,
 ) -> str:
     """Prepare the BTEQ command with necessary parameters."""
-    return " ".join(_prepare_bteq_command(timeout, bteq_script_encoding, bteq_session_encoding, timeout_rc))
+    bteq_core_cmd = _prepare_bteq_command(timeout, bteq_script_encoding, bteq_session_encoding, timeout_rc)
+    bteq_core_cmd.append('"')
+    return " ".join(bteq_core_cmd)
 
 
 def prepare_bteq_command_for_local_execution(
@@ -120,7 +123,8 @@ def prepare_bteq_command_for_local_execution(
     host = conn["host"]
     login = conn["login"]
     password = conn["password"]
-    bteq_core_cmd.append(f' .LOGON {host}/{login},{password}"')
+    bteq_core_cmd.append(f" .LOGON {host}/{login},{password}")
+    bteq_core_cmd.append('"')
     bteq_command_str = " ".join(bteq_core_cmd)
     return bteq_command_str
 

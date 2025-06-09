@@ -159,14 +159,14 @@ with DAG(
     # [START bteq_operator_howto_guide_bteq_file_input]
     execute_bteq_file = BteqOperator(
         task_id="execute_bteq_file",
-        file_path="providers/teradata/tests/system/teradata/script.bteq",
+        file_path="/home/devtools/satish/airflow/script.bteq",
         params=params,
     )
     # [END bteq_operator_howto_guide_bteq_file_input]
     # [START bteq_operator_howto_guide_bteq_file_utf8_input]
     execute_bteq_utf8_file = BteqOperator(
         task_id="execute_bteq_utf8_file",
-        file_path="providers/teradata/tests/system/teradata/script.bteq",
+        file_path="/home/devtools/satish/airflow/script.bteq",
         params=params,
         bteq_script_encoding="UTF-8",
     )
@@ -174,7 +174,7 @@ with DAG(
     # [START bteq_operator_howto_guide_bteq_file_utf8_session_ascii_input]
     execute_bteq_utf8_session_ascii_file = BteqOperator(
         task_id="execute_bteq_utf8_session_ascii_file",
-        file_path="providers/teradata/tests/system/teradata/script.bteq",
+        file_path="/home/devtools/satish/airflow/script.bteq",
         params=params,
         bteq_script_encoding="UTF-8",
         bteq_session_encoding="ASCII",
@@ -183,7 +183,7 @@ with DAG(
     # [START bteq_operator_howto_guide_bteq_file_utf8_session_utf8_input]
     execute_bteq_utf8_session_utf8_file = BteqOperator(
         task_id="execute_bteq_utf8_session_utf8_file",
-        file_path="providers/teradata/tests/system/teradata/script.bteq",
+        file_path="/home/devtools/satish/airflow/script.bteq",
         params=params,
         bteq_script_encoding="UTF-8",
         bteq_session_encoding="UTF-8",
@@ -192,16 +192,16 @@ with DAG(
     # [START bteq_operator_howto_guide_bteq_file_utf8_session_utf16_input]
     execute_bteq_utf8_session_utf16_file = BteqOperator(
         task_id="execute_bteq_utf8_session_utf16_file",
-        file_path="providers/teradata/tests/system/teradata/script.bteq",
+        file_path="/home/devtools/satish/airflow/script.bteq",
         params=params,
         bteq_script_encoding="UTF-8",
-        bteq_session_encoding="UTF-16",
+        bteq_session_encoding="UTF-8",
     )
     # [END bteq_operator_howto_guide_bteq_file_utf8_session_utf16_input]
     # [START bteq_operator_howto_guide_bteq_file_utf16_input]
     execute_bteq_utf16_file = BteqOperator(
         task_id="execute_bteq_utf16_file",
-        file_path="providers/teradata/tests/system/teradata/script_utf16.bteq",
+        file_path="/home/devtools/satish/airflow/script_utf16.bteq",
         params=params,
         bteq_script_encoding="UTF-16",
     )
@@ -209,7 +209,7 @@ with DAG(
     # [START bteq_operator_howto_guide_bteq_file_utf16_input]
     execute_bteq_utf16_session_ascii_file = BteqOperator(
         task_id="execute_bteq_utf16_session_ascii_file",
-        file_path="providers/teradata/tests/system/teradata/script_utf16.bteq",
+        file_path="/home/devtools/satish/airflow/script_utf16.bteq",
         params=params,
         bteq_script_encoding="UTF-16",
         bteq_session_encoding="ASCII",
@@ -218,7 +218,7 @@ with DAG(
     # [START bteq_operator_howto_guide_bteq_file_utf16_session_utf8_input]
     execute_bteq_utf16_session_utf8_file = BteqOperator(
         task_id="execute_bteq_utf16_session_utf8_file",
-        file_path="providers/teradata/tests/system/teradata/script_utf16.bteq",
+        file_path="/home/devtools/satish/airflow/script_utf16.bteq",
         params=params,
         bteq_script_encoding="UTF-16",
         bteq_session_encoding="UTF-8",
@@ -227,7 +227,7 @@ with DAG(
     # [START bteq_operator_howto_guide_bteq_file_utf16_session_utf8_input]
     execute_bteq_utf16_session_utf16_file = BteqOperator(
         task_id="execute_bteq_utf16_session_utf16_file",
-        file_path="providers/teradata/tests/system/teradata/script_utf16.bteq",
+        file_path="/home/devtools/satish/airflow/script_utf16.bteq",
         params=params,
         bteq_script_encoding="UTF-16",
         bteq_session_encoding="UTF-16",

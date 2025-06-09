@@ -129,6 +129,8 @@ class BteqOperator(BaseOperator):
 
         if not self.remote_working_dir:
             self.remote_working_dir = "/tmp"
+
+        self.log.info("sshconec - %s", self._ssh_hook)
         # Handling execution on local:
         if not self._ssh_hook:
             if self.sql:
@@ -163,6 +165,8 @@ class BteqOperator(BaseOperator):
                 )
         # Execution on Remote machine
         elif self._ssh_hook:
+            self.log.info("Entered  - %s", self._ssh_hook)
+            self.log.info("sql  - %s", self.sql)
             # When sql statement is provided as input through sql parameter, Preparing the bteq script
             if self.sql:
                 bteq_script = prepare_bteq_script_for_remote_execution(
@@ -178,14 +182,23 @@ class BteqOperator(BaseOperator):
                     self.bteq_session_encoding,
                     self.bteq_quit_rc,
                 )
-            with self._ssh_hook.get_conn() as ssh_client:
-                # When .sql or .bteq remote file path is provided as input through file_path parameter, executing on remote machine
-                if self.file_path and is_valid_remote_bteq_script_file(ssh_client, self.file_path):
-                    return self._handle_remote_bteq_file(
-                        ssh_client=self._ssh_hook.get_conn(),
-                        file_path=self.file_path,
-                        context=context,
+            if self.file_path:
+                self.log.info("file_path  - %s", self.file_path)
+                with self._ssh_hook.get_conn() as ssh_client:
+                    # When .sql or .bteq remote file path is provided as input through file_path parameter, executing on remote machine
+                    if self.file_path and is_valid_remote_bteq_script_file(ssh_client, self.file_path):
+                        return self._handle_remote_bteq_file(
+                            ssh_client=self._ssh_hook.get_conn(),
+                            file_path=self.file_path,
+                            context=context,
+                        )
+                    raise ValueError(
+                        f"The provided remote file path '{self.file_path}' is invalid or file does not exist on remote machine at given path."
                     )
+            else:
+                raise ValueError(
+                    "BteqOperator requires either the 'sql' or 'file_path' parameter. Both are missing."
+                )
         return None
 
     def _handle_remote_bteq_file(
@@ -199,7 +212,7 @@ class BteqOperator(BaseOperator):
                 sftp = ssh_client.open_sftp()
                 try:
                     with sftp.open(file_path, "r") as remote_file:
-                        original_content = remote_file.read().decode(self.bteq_session_encoding or "UTF-8")
+                        original_content = remote_file.read().decode(self.bteq_script_encoding or "UTF-8")
                 finally:
                     sftp.close()
                 rendered_content = original_content
