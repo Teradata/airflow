@@ -100,8 +100,8 @@ class TestEncryptionUtils:
 
         ssh_client.exec_command.assert_called_once_with(expected_cmd)
         assert exit_status == 0
-        assert output == b"decrypted output"
-        assert err == b""
+        assert output == "decrypted output"
+        assert err == ""
 
 
 if __name__ == "__main__":
