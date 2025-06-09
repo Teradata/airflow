@@ -18,39 +18,28 @@
 from __future__ import annotations
 
 import os
-import shutil
 import socket
 import subprocess
-from tempfile import NamedTemporaryFile, TemporaryDirectory
-from typing import TYPE_CHECKING
+import tempfile
+from contextlib import contextmanager
 
 from paramiko import SSHException
-
-if TYPE_CHECKING:
-    from paramiko import SSHClient
 
 from airflow.exceptions import AirflowException
 from airflow.providers.ssh.hooks.ssh import SSHHook
 from airflow.providers.teradata.hooks.ttu import TtuHook
-
-
-def verify_bteq_installed():
-    """Verify if BTEQ is installed and available in the system's PATH."""
-    if shutil.which("bteq") is None:
-        raise AirflowException("BTEQ is not installed or not available in the system's PATH.")
-
-
-def verify_bteq_installed_remote(ssh_client: SSHClient):
-    """Verify if BTEQ is installed on the remote machine."""
-    stdin, stdout, stderr = ssh_client.exec_command("which bteq")
-    exit_status = stdout.channel.recv_exit_status()
-    output = stdout.read().strip()
-    error = stderr.read().strip()
-
-    if exit_status != 0 or not output:
-        raise AirflowException(
-            f"BTEQ is not installed or not available in PATH. stderr: {error.decode() if error else 'N/A'}"
-        )
+from airflow.providers.teradata.utils.bteq_util import (
+    prepare_bteq_command_for_local_execution,
+    prepare_bteq_command_for_remote_execution,
+    transfer_file_sftp,
+    verify_bteq_installed,
+    verify_bteq_installed_remote,
+)
+from airflow.providers.teradata.utils.encryption_utils import (
+    decrypt_remote_file_to_string,
+    generate_encrypted_file_with_openssl,
+    generate_random_password,
+)
 
 
 class BteqHook(TtuHook):
@@ -74,154 +63,234 @@ class BteqHook(TtuHook):
 
     :param teradata_conn_id: Reference to a specific Teradata connection.
     :param ssh_conn_id: Optional SSH connection ID for remote execution.
-    :param args: Additional arguments passed to the parent `TtuHook`.
-    :param kwargs: Additional keyword arguments passed to the parent `TtuHook`.
+    :param bteq_input: The BTEQ script to be executed. (templated)
+    :param bteq_session_encoding: The encoding for the BTEQ session.
+    :param bteq_script_encoding: The encoding for the BTEQ script.
+    :param bteq_quit_rc: The return code for the BTEQ quit command.
+    :param timeout: The timeout for the BTEQ execution.
     """
 
-    def __init__(self, ssh_conn_id: str | None = None, *args, **kwargs):
+    def __init__(self, ssh_conn_id: str | None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.ssh_conn_id = ssh_conn_id
         self.ssh_hook = SSHHook(ssh_conn_id=ssh_conn_id) if ssh_conn_id else None
 
-    def execute_bteq(
-        self, bteq_script: str, xcom_push_flag: bool = False, timeout: int | None = None
-    ) -> str | None:
+    def execute_bteq_script(
+        self,
+        bteq_script: str,
+        remote_working_dir: str | None,
+        bteq_script_encoding: str | None,
+        timeout: int,
+        timeout_rc: int | None,
+        bteq_session_encoding: str | None,
+        bteq_quit_rc: int | list[int] | tuple[int, ...] | None,
+    ) -> int | None:
         """Execute the BTEQ script either in local machine or on remote host based on ssh_conn_id."""
-        conn = self.get_conn()
-        if not all([bteq_script.strip(), conn["host"], conn["login"], conn["password"]]):
-            raise ValueError("Host, login, password, and BTEQ script must be provided.")
-        if not isinstance(conn["bteq_output_width"], int) or conn["bteq_output_width"] <= 0:
-            raise ValueError("Output width must be a positive integer.")
-        if not conn["bteq_session_encoding"]:
-            raise ValueError("Session encoding must be specified.")
-
-        bteq_file_content = self._prepare_bteq_script(
-            bteq_string=bteq_script,
-            host=conn["host"],
-            login=conn["login"],
-            password=conn["password"],
-            bteq_output_width=conn["bteq_output_width"],
-            bteq_session_encoding=conn["bteq_session_encoding"],
-            bteq_quit_zero=conn["bteq_quit_zero"],
-            database=conn.get("database"),
-        )
         # Remote execution
         if self.ssh_hook:
-            return self._execute_bteq_remote(xcom_push_flag, timeout, bteq_file_content)
-        return self._execute_bteq_local(xcom_push_flag, timeout, bteq_file_content, conn)
+            # Write script to local temp file
+            # Encrypt the file locally
+            return self.execute_bteq_script_at_remote(
+                bteq_script,
+                remote_working_dir,
+                bteq_script_encoding,
+                timeout,
+                timeout_rc,
+                bteq_session_encoding,
+                bteq_quit_rc,
+            )
+        return self.execute_bteq_script_at_local(
+            bteq_script, bteq_script_encoding, timeout, timeout_rc, bteq_quit_rc, bteq_session_encoding
+        )
 
-    def _execute_bteq_remote(
-        self, xcom_push_flag: bool, timeout: int | None, bteq_file_content: str
-    ) -> str | None:
-        if not self.ssh_hook:
-            raise AirflowException("SSHHook is not initialized. Please provide a valid `ssh_conn_id`.")
+    def execute_bteq_script_at_remote(
+        self,
+        bteq_script: str,
+        remote_working_dir: str | None,
+        bteq_script_encoding: str | None,
+        timeout: int,
+        timeout_rc: int | None,
+        bteq_session_encoding: str | None,
+        bteq_quit_rc: int | list[int] | tuple[int, ...] | None,
+    ) -> int | None:
+        with (
+            self.preferred_temp_directory() as tmp_dir,
+        ):
+            # Preparing lo
+            file_path = os.path.join(tmp_dir, "bteq_script.txt")
+            with open(file_path, "w", encoding=str(bteq_script_encoding or "UTF-8")) as f:
+                f.write(bteq_script)
+            return self._transfer_to_and_execute_bteq_on_remote(
+                file_path,
+                remote_working_dir,
+                bteq_script_encoding,
+                timeout,
+                timeout_rc,
+                bteq_quit_rc,
+                bteq_session_encoding,
+                tmp_dir,
+            )
+
+    def _transfer_to_and_execute_bteq_on_remote(
+        self,
+        file_path: str,
+        remote_working_dir: str | None,
+        bteq_script_encoding: str | None,
+        timeout: int,
+        timeout_rc: int | None,
+        bteq_quit_rc: int | list[int] | tuple[int, ...] | None,
+        bteq_session_encoding: str | None,
+        tmp_dir: str,
+    ) -> int | None:
+        encrypted_file_path = None
+        remote_encrypted_path = None
         try:
-            with (
-                self.ssh_hook.get_conn() as ssh_client,
-                TemporaryDirectory(prefix="airflowtmp_ssh_bteq_") as tmp_dir,
-            ):
-                if ssh_client is None:
-                    raise AirflowException("Failed to establish SSH connection. `ssh_client` is None.")
+            if self.ssh_hook and self.ssh_hook.get_conn():
+                with self.ssh_hook.get_conn() as ssh_client:
+                    if ssh_client is None:
+                        raise AirflowException("Failed to establish SSH connection. `ssh_client` is None.")
+                    verify_bteq_installed_remote(ssh_client)
+                    password = generate_random_password()  # Encryption/Decryption password
+                    encrypted_file_path = os.path.join(tmp_dir, "bteq_script.enc")
+                    generate_encrypted_file_with_openssl(file_path, password, encrypted_file_path)
+                    remote_encrypted_path = os.path.join(remote_working_dir or "", "bteq_script.enc")
 
-                verify_bteq_installed_remote(ssh_client)
-                try:
-                    # Write script to local temp file
-                    local_script_path = os.path.join(tmp_dir, "bteq_script.txt")
-                    with open(local_script_path, "w") as script_file:
-                        script_file.write(bteq_file_content)
+                    transfer_file_sftp(ssh_client, encrypted_file_path, remote_encrypted_path)
 
-                    # Upload script to remote temp directory
-                    remote_script_path = os.path.join("/tmp", "bteq_script.txt")
-                    sftp_client = ssh_client.open_sftp()
-                    sftp_client.put(local_script_path, remote_script_path)
-                    sftp_client.close()
-                    command = f"bteq < {remote_script_path}"
-                    stdin, stdout, stderr = ssh_client.exec_command(command, timeout=timeout)
-                    last_line = ""
+                    bteq_command_str = prepare_bteq_command_for_remote_execution(
+                        timeout=timeout,
+                        bteq_script_encoding=bteq_script_encoding or "",
+                        bteq_session_encoding=bteq_session_encoding or "",
+                        timeout_rc=timeout_rc or -1,
+                    )
+
+                    exit_status, stdout, stderr = decrypt_remote_file_to_string(
+                        ssh_client,
+                        remote_encrypted_path,
+                        password,
+                        bteq_command_str,
+                    )
+
                     failure_message = None
-
-                    for line in stdout:
-                        self.log.debug("Process stdout: ", line.strip())
-                        last_line = line.strip()
 
                     for line in stderr:
                         decoded_line = line.strip()
                         self.log.debug("Process stderr: ", line.strip())
                         if "Failure" in decoded_line:
                             failure_message = decoded_line
-                    exit_status = stdout.channel.recv_exit_status()
-                    if failure_message and exit_status != 0:
-                        raise AirflowException(
-                            f"BTEQ task failed on remote machine with error: {failure_message}"
+                    self.log.info("BTEQ command executed with exit status: %s", exit_status)
+                    # Raising an exception if there is any failure in bteq and also user wants to fail the
+                    # task otherwise just log the error message as warning to not fail the task.
+                    if (
+                        failure_message
+                        and exit_status != 0
+                        and exit_status
+                        not in (
+                            bteq_quit_rc
+                            if isinstance(bteq_quit_rc, (list, tuple))
+                            else [bteq_quit_rc if bteq_quit_rc is not None else 0]
                         )
-
-                    return last_line if xcom_push_flag else None
-                finally:
-                    # Remove the local script file
-                    if local_script_path and os.path.exists(local_script_path):
-                        os.remove(local_script_path)
-                    # Cleanup: Delete the remote temporary file
-                    if remote_script_path:
-                        cleanup_command = f"rm -f {remote_script_path}"
-                        ssh_client.exec_command(cleanup_command)
+                    ):
+                        raise AirflowException(f"BTEQ task failed with error: {failure_message}")
+                    if failure_message:
+                        self.log.warning(failure_message)
+                    return exit_status
+            else:
+                raise AirflowException("SSH connection is not established. `ssh_hook` is None or invalid.")
         except (OSError, socket.gaierror):
             raise AirflowException(
                 "SSH connection timed out. Please check the network or server availability."
             )
         except SSHException as e:
-            raise AirflowException(f"SSH connection failed: {str(e)}")
-        except Exception as e:
             raise AirflowException(f"An unexpected error occurred during SSH connection: {str(e)}")
+        except AirflowException as e:
+            raise e
+        except Exception as e:
+            raise AirflowException(
+                f"An unexpected error occurred while executing BTEQ script on remote machine: {str(e)}"
+            )
+        finally:
+            # Remove the local script file
+            if encrypted_file_path and os.path.exists(encrypted_file_path):
+                os.remove(encrypted_file_path)
+            # Cleanup: Delete the remote temporary file
+            if encrypted_file_path:
+                cleanup_en_command = f"rm -f {remote_encrypted_path}"
+                if self.ssh_hook and self.ssh_hook.get_conn():
+                    with self.ssh_hook.get_conn() as ssh_client:
+                        if ssh_client is None:
+                            raise AirflowException(
+                                "Failed to establish SSH connection. `ssh_client` is None."
+                            )
+                        ssh_client.exec_command(cleanup_en_command)
 
-    def _execute_bteq_local(
-        self, xcom_push_flag: bool, timeout: int | None, bteq_file_content: str, conn: dict
-    ) -> str | None:
+    def execute_bteq_script_at_local(
+        self,
+        bteq_script: str,
+        bteq_script_encoding: str | None,
+        timeout: int,
+        timeout_rc: int | None,
+        bteq_quit_rc: int | list[int] | tuple[int, ...] | None,
+        bteq_session_encoding: str | None,
+    ) -> int | None:
         verify_bteq_installed()
-        with TemporaryDirectory(prefix="airflowtmp_ttu_bteq_") as tmp_dir:
-            tmp_file_path = None
+        bteq_command_str = prepare_bteq_command_for_local_execution(
+            self.get_conn(),
+            timeout=timeout,
+            bteq_script_encoding=bteq_script_encoding or "",
+            bteq_session_encoding=bteq_session_encoding or "",
+            timeout_rc=timeout_rc or -1,
+        )
+        self.log.info("Executing BTEQ command after adding logon details: %s", bteq_command_str)
+        process = subprocess.Popen(
+            bteq_command_str,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            shell=True,
+            preexec_fn=os.setsid,
+        )
+        encode_bteq_script = bteq_script.encode(str(bteq_script_encoding or "UTF-8"))
+        stdout_data, _ = process.communicate(input=encode_bteq_script)
+        try:
+            # https://docs.python.org/3.10/library/subprocess.html#subprocess.Popen.wait  timeout is in seconds
+            process.wait(timeout=timeout + 60)  # Adding 1 minute extra for BTEQ script timeout
+        except subprocess.TimeoutExpired:
+            self.on_kill()
+            raise AirflowException(f"BTEQ command timed out after {timeout} seconds.")
+        conn = self.get_conn()
+        conn["sp"] = process  # For `on_kill` support
+        failure_message = None
+        self.log.info("Bteq output is : %s", stdout_data)
+        if stdout_data is None:
+            raise AirflowException("Process stdout is None. Unable to read BTEQ output.")
+        decoded_line = ""
+        for line in stdout_data.splitlines():
             try:
-                with NamedTemporaryFile(dir=tmp_dir, mode="w+", delete=False) as tmp_file:
-                    tmp_file.write(bteq_file_content)
-                    tmp_file.flush()
-                    tmp_file_path = tmp_file.name
+                decoded_line = line.decode(str(bteq_script_encoding or "UTF-8")).strip()
+                self.log.debug("Process output: %s", decoded_line)
+            except UnicodeDecodeError:
+                self.log.warning("Failed to decode line: %s", line)
+            if "Failure" in decoded_line:
+                failure_message = decoded_line
+        self.log.info("BTEQ command executed with exit status: %s", process.returncode)
+        # Raising an exception if there is any failure in bteq and also user wants to fail the
+        # task otherwise just log the error message as warning to not fail the task.
+        if (
+            failure_message
+            and process.returncode != 0
+            and process.returncode
+            not in (
+                bteq_quit_rc
+                if isinstance(bteq_quit_rc, (list, tuple))
+                else [bteq_quit_rc if bteq_quit_rc is not None else 0]
+            )
+        ):
+            raise AirflowException(f"BTEQ task failed with error: {failure_message}")
+        if failure_message:
+            self.log.warning(failure_message)
 
-                process = subprocess.Popen(
-                    ["bteq"],
-                    stdin=open(tmp_file.name, "rb"),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    cwd=tmp_dir,
-                    preexec_fn=os.setsid,
-                )
-
-                try:
-                    process.wait(timeout=timeout)
-                except subprocess.TimeoutExpired:
-                    self.on_kill()
-                    raise AirflowException(f"BTEQ command timed out after {timeout} seconds.")
-
-                conn["sp"] = process  # For `on_kill` support
-                last_line = ""
-                failure_message = None
-
-                if process.stdout is None:
-                    raise AirflowException("Process stdout is None. Unable to read BTEQ output.")
-                for line in iter(process.stdout.readline, b""):
-                    try:
-                        decoded_line = line.decode(conn["console_output_encoding"]).strip()
-                        self.log.debug("Process output: %s", decoded_line)
-                    except UnicodeDecodeError:
-                        decoded_line = "<Decoding error: Non-UTF-8 output>"
-                    last_line = decoded_line
-                    if "Failure" in decoded_line:
-                        failure_message = decoded_line
-                if failure_message and process.returncode != 0:
-                    raise AirflowException(f"BTEQ task failed with error: {failure_message}")
-
-                return last_line if xcom_push_flag else None
-            finally:
-                if tmp_file_path and os.path.exists(tmp_file_path):
-                    os.remove(tmp_file_path)
+        return process.returncode
 
     def on_kill(self):
         """Terminate the subprocess if running."""
@@ -238,33 +307,18 @@ class BteqHook(TtuHook):
             except Exception as e:
                 self.log.error("Failed to terminate subprocess: %s", str(e))
 
-    def _prepare_bteq_script(
-        self,
-        bteq_string: str,
-        host: str,
-        login: str,
-        password: str,
-        bteq_output_width: int,
-        bteq_session_encoding: str,
-        bteq_quit_zero: bool,
-        database: str | None = None,
-    ) -> str:
-        """Build a BTEQ script with necessary connection and session commands."""
-        script_lines = [
-            f".LOGON {host}/{login},{password}",
-            ".IF ERRORCODE <> 0 THEN .QUIT 8",
-            f".SET WIDTH {bteq_output_width}",
-            f".SET SESSION CHARSET '{bteq_session_encoding}'",
-        ]
+    def get_airflow_home_dir(self) -> str:
+        """Get the AIRFLOW_HOME directory."""
+        return os.environ.get("AIRFLOW_HOME", "~/airflow")
 
-        if database:
-            script_lines.append(f"DATABASE {database};")
+    @contextmanager
+    def preferred_temp_directory(self, prefix="bteq_"):
+        try:
+            temp_dir = tempfile.gettempdir()
+            if not os.path.isdir(temp_dir) or not os.access(temp_dir, os.W_OK):
+                raise OSError("OS temp dir not usable")
+        except Exception:
+            temp_dir = self.get_airflow_home_dir()
 
-        script_lines.append(bteq_string.strip())
-
-        if bteq_quit_zero:
-            script_lines.append(".QUIT 0")
-
-        script_lines.extend([".LOGOFF", ".EXIT"])
-        self.log.debug("BTEQ Script: %s", script_lines)
-        return "\n".join(script_lines)
+        with tempfile.TemporaryDirectory(dir=temp_dir, prefix=prefix) as tmp:
+            yield tmp

@@ -43,102 +43,196 @@ except ImportError:
 ENV_ID = os.environ.get("SYSTEM_TESTS_ENV_ID")
 DAG_ID = "example_bteq"
 CONN_ID = "teradata_default"
+SSH_CONN_ID = "ssh_default"
 
+host = os.environ.get("host", "localhost")
+username = os.environ.get("username", "temp")
+password = os.environ.get("password", "temp")
+params = {
+    "host": host,
+    "username": username,
+    "password": password,
+    "DATABASE_NAME": "airflow",
+    "TABLE_NAME": "my_employees",
+    "DB_TABLE_NAME": "airflow.my_employees",
+}
 with DAG(
     dag_id=DAG_ID,
     start_date=datetime.datetime(2020, 2, 2),
     schedule="@once",
     catchup=False,
-    default_args={"teradata_conn_id": CONN_ID},
+    default_args={"teradata_conn_id": CONN_ID, "params": params},
 ) as dag:
     # [START bteq_operator_howto_guide_create_table]
     create_table = BteqOperator(
         task_id="create_table",
-        bteq=r"""
-        CREATE SET TABLE my_employees (
-          emp_id INT,
-          emp_name VARCHAR(100),
-          dept VARCHAR(50)
-        ) PRIMARY INDEX (emp_id);
-        """,
+        sql=r"""
+                CREATE SET TABLE {{params.DB_TABLE_NAME}} (
+                  emp_id INT,
+                  emp_name VARCHAR(100),
+                  dept VARCHAR(50)
+                ) PRIMARY INDEX (emp_id);
+                """,
+        bteq_quit_rc=[0, 4],
+        timeout=20,
+        bteq_session_encoding="UTF8",
+        bteq_script_encoding="UTF8",
+        params=params,
     )
     # [END bteq_operator_howto_guide_create_table]
-
     # [START bteq_operator_howto_guide_populate_table]
     populate_table = BteqOperator(
         task_id="populate_table",
-        bteq=r"""
-        INSERT INTO my_employees VALUES (1, 'John Doe', 'IT');
-        INSERT INTO my_employees VALUES (2, 'Jane Smith', 'HR');
-        """,
+        sql=r"""
+                INSERT INTO {{params.DB_TABLE_NAME}} VALUES (1, 'John Doe', 'IT');
+                INSERT INTO {{params.DB_TABLE_NAME}} VALUES (2, 'Jane Smith', 'HR');
+                """,
+        params=params,
+        bteq_quit_rc=0,
     )
     # [END bteq_operator_howto_guide_populate_table]
 
     # [START bteq_operator_howto_guide_export_data_to_a_file]
     export_to_a_file = BteqOperator(
         task_id="export_to_a_file",
-        bteq=r"""
-        .EXPORT FILE = employees_output.txt;
-        SELECT * FROM my_employees;
-        .EXPORT RESET;
-        """,
+        sql=r"""
+                .EXPORT FILE = employees_output.txt;
+                SELECT * FROM {{params.DB_TABLE_NAME}};
+                .EXPORT RESET;
+                """,
     )
     # [END bteq_operator_howto_guide_export_data_to_a_file]
 
     # [START bteq_operator_howto_guide_get_it_employees]
     get_it_employees = BteqOperator(
         task_id="get_it_employees",
-        bteq=r"""
-        SELECT * FROM my_employees WHERE dept = 'IT';
-        """,
+        sql=r"""
+                SELECT * FROM {{params.DB_TABLE_NAME}} WHERE dept = 'IT';
+                """,
     )
     # [END bteq_operator_howto_guide_get_it_employees]
 
     # [START bteq_operator_howto_guide_conditional_logic]
     cond_logic = BteqOperator(
         task_id="cond_logic",
-        bteq=r"""
-        .IF ERRORCODE <> 0 THEN .GOTO handle_error;
+        sql=r"""
+                .IF ERRORCODE <> 0 THEN .GOTO handle_error;
 
-        SELECT COUNT(*) FROM my_employees;
+                SELECT COUNT(*) FROM {{params.DB_TABLE_NAME}};
 
-        .LABEL handle_error;
-        """,
+                .LABEL handle_error;
+                """,
     )
     # [END bteq_operator_howto_guide_conditional_logic]
 
     # [START bteq_operator_howto_guide_error_handling]
     error_handling = BteqOperator(
         task_id="error_handling",
-        bteq=r"""
-        DROP TABLE my_temp;
-        .IF ERRORCODE = 3807 THEN .GOTO table_not_found;
-        SELECT 'Table dropped successfully.';
-        .GOTO end;
+        sql=r"""
+                DROP TABLE my_temp;
+                .IF ERRORCODE = 3807 THEN .GOTO table_not_found;
+                SELECT 'Table dropped successfully.';
+                .GOTO end;
 
-        .LABEL table_not_found;
-        SELECT 'Table not found - continuing execution';
-        .LABEL end;
-        .LOGOFF;
-        .QUIT 0;
-        """,
+                .LABEL table_not_found;
+                SELECT 'Table not found - continuing execution';
+                .LABEL end;
+                .LOGOFF;
+                .QUIT 0;
+                """,
     )
     # [END bteq_operator_howto_guide_error_handling]
 
     # [START bteq_operator_howto_guide_drop_table]
     drop_table = BteqOperator(
         task_id="drop_table",
-        bteq=r"""
-        DROP TABLE my_employees;
-        .IF ERRORCODE = 3807 THEN .GOTO end;
+        sql=r"""
+                DROP TABLE {{params.DB_TABLE_NAME}};
+                .IF ERRORCODE = 3807 THEN .GOTO end;
 
-        .LABEL end;
-        .LOGOFF;
-        .QUIT 0;
-        """,
+                .LABEL end;
+                .LOGOFF;
+                .QUIT 0;
+                """,
     )
     # [END bteq_operator_howto_guide_drop_table]
-
+    # [START bteq_operator_howto_guide_bteq_file_input]
+    execute_bteq_file = BteqOperator(
+        task_id="execute_bteq_file",
+        file_path="providers/teradata/tests/system/teradata/script.bteq",
+        params=params,
+    )
+    # [END bteq_operator_howto_guide_bteq_file_input]
+    # [START bteq_operator_howto_guide_bteq_file_utf8_input]
+    execute_bteq_utf8_file = BteqOperator(
+        task_id="execute_bteq_utf8_file",
+        file_path="providers/teradata/tests/system/teradata/script.bteq",
+        params=params,
+        bteq_script_encoding="UTF-8",
+    )
+    # [END bteq_operator_howto_guide_bteq_file_utf8_input]
+    # [START bteq_operator_howto_guide_bteq_file_utf8_session_ascii_input]
+    execute_bteq_utf8_session_ascii_file = BteqOperator(
+        task_id="execute_bteq_utf8_session_ascii_file",
+        file_path="providers/teradata/tests/system/teradata/script.bteq",
+        params=params,
+        bteq_script_encoding="UTF-8",
+        bteq_session_encoding="ASCII",
+    )
+    # [END bteq_operator_howto_guide_bteq_file_utf8_session_ascii_input]
+    # [START bteq_operator_howto_guide_bteq_file_utf8_session_utf8_input]
+    execute_bteq_utf8_session_utf8_file = BteqOperator(
+        task_id="execute_bteq_utf8_session_utf8_file",
+        file_path="providers/teradata/tests/system/teradata/script.bteq",
+        params=params,
+        bteq_script_encoding="UTF-8",
+        bteq_session_encoding="UTF-8",
+    )
+    # [END bteq_operator_howto_guide_bteq_file_utf8_session_utf8_input]
+    # [START bteq_operator_howto_guide_bteq_file_utf8_session_utf16_input]
+    execute_bteq_utf8_session_utf16_file = BteqOperator(
+        task_id="execute_bteq_utf8_session_utf16_file",
+        file_path="providers/teradata/tests/system/teradata/script.bteq",
+        params=params,
+        bteq_script_encoding="UTF-8",
+        bteq_session_encoding="UTF-16",
+    )
+    # [END bteq_operator_howto_guide_bteq_file_utf8_session_utf16_input]
+    # [START bteq_operator_howto_guide_bteq_file_utf16_input]
+    execute_bteq_utf16_file = BteqOperator(
+        task_id="execute_bteq_utf16_file",
+        file_path="providers/teradata/tests/system/teradata/script_utf16.bteq",
+        params=params,
+        bteq_script_encoding="UTF-16",
+    )
+    # [END bteq_operator_howto_guide_bteq_file_utf16_input]
+    # [START bteq_operator_howto_guide_bteq_file_utf16_input]
+    execute_bteq_utf16_session_ascii_file = BteqOperator(
+        task_id="execute_bteq_utf16_session_ascii_file",
+        file_path="providers/teradata/tests/system/teradata/script_utf16.bteq",
+        params=params,
+        bteq_script_encoding="UTF-16",
+        bteq_session_encoding="ASCII",
+    )
+    # [END bteq_operator_howto_guide_bteq_file_utf16_input]
+    # [START bteq_operator_howto_guide_bteq_file_utf16_session_utf8_input]
+    execute_bteq_utf16_session_utf8_file = BteqOperator(
+        task_id="execute_bteq_utf16_session_utf8_file",
+        file_path="providers/teradata/tests/system/teradata/script_utf16.bteq",
+        params=params,
+        bteq_script_encoding="UTF-16",
+        bteq_session_encoding="UTF-8",
+    )
+    # [END bteq_operator_howto_guide_bteq_file_utf16_session_utf8_input]
+    # [START bteq_operator_howto_guide_bteq_file_utf16_session_utf8_input]
+    execute_bteq_utf16_session_utf16_file = BteqOperator(
+        task_id="execute_bteq_utf16_session_utf16_file",
+        file_path="providers/teradata/tests/system/teradata/script_utf16.bteq",
+        params=params,
+        bteq_script_encoding="UTF-16",
+        bteq_session_encoding="UTF-16",
+    )
+    # [END bteq_operator_howto_guide_bteq_file_utf16_session_utf8_input]
     (
         create_table
         >> populate_table
@@ -147,6 +241,15 @@ with DAG(
         >> cond_logic
         >> error_handling
         >> drop_table
+        >> execute_bteq_file
+        >> execute_bteq_utf8_file
+        >> execute_bteq_utf8_session_ascii_file
+        >> execute_bteq_utf8_session_utf8_file
+        >> execute_bteq_utf8_session_utf16_file
+        >> execute_bteq_utf16_file
+        >> execute_bteq_utf16_session_ascii_file
+        >> execute_bteq_utf16_session_utf8_file
+        >> execute_bteq_utf16_session_utf16_file
     )
 
     # [END bteq_operator_howto_guide]
