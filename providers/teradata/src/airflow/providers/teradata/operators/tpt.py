@@ -17,13 +17,8 @@
 # under the License.
 from __future__ import annotations
 
-import logging
-
-from airflow.exceptions import AirflowException
 from airflow.models import BaseOperator
 from airflow.providers.teradata.hooks.tpt import TptHook
-
-log = logging.getLogger(__name__)
 
 
 class DdlOperator(BaseOperator):
@@ -41,12 +36,10 @@ class DdlOperator(BaseOperator):
     - Supports XCom push to share execution results with downstream tasks.
     - Integrates with Airflow's templating engine for dynamic SQL generation.
 
-    :param sql_stmt: The DDL statement to be executed. This can include any valid SQL
-                     DDL command supported by Teradata.
-    :param error_list: Optional list of comma separated error codes to monitor during execution.
+    :param ddl: The DDL statement to be executed. This can include any valid SQL
+                DDL command supported by Teradata.
+    :param error_list: Optional list of error codes to monitor during execution.
                        If provided, the operator will handle these errors accordingly.
-    :param xcom_push_flag: Whether to push the execution result to XCom for downstream task
-                      consumption. Defaults to True.
     :param teradata_conn_id: The connection ID for the Teradata Tools and Utilities (TTU) hook.
                         This is used to establish a connection to the Teradata database.
                         Defaults to 'teradata_default'.
@@ -58,55 +51,65 @@ class DdlOperator(BaseOperator):
         # Example of creating a table using DdlOperator
         ddl = DdlOperator(
             task_id="create_table_task",
-            sql_stmt="CREATE TABLE my_table (id INT, name VARCHAR(100))",
+            ddl="CREATE TABLE my_table (id INT, name VARCHAR(100))",
             teradata_conn_id="my_teradata_conn",
         )
 
         # Example of dropping a table using DdlOperator
         ddl = DdlOperator(
             task_id="drop_table_task",
-            sql_stmt="DROP TABLE my_table",
+            ddl="DROP TABLE my_table",
             teradata_conn_id="my_teradata_conn",
         )
 
 
     """
 
-    template_fields = ("sql_stmt", "error_list")
+    template_fields = ("ddl",)
+    template_ext = (".sql",)
     ui_color = "#a8e4b1"
 
     def __init__(
         self,
         *,
-        sql_stmt: str,
-        error_list: str | None = "[]",
-        xcom_push_flag: bool = False,
+        ddl: str,
+        error_list: int | list[int] | None = None,
         teradata_conn_id: str = TptHook.default_conn_name,
         ssh_conn_id: str | None = None,
+        working_dir: str = "/tmp",
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
-        self.sql_stmt = sql_stmt
+        self.ddl = ddl
         self.error_list = error_list
-        self.xcom_push_flag = xcom_push_flag
         self.teradata_conn_id = teradata_conn_id
         self.ssh_conn_id = ssh_conn_id
+        self.working_dir = working_dir
         self._hook = None
 
     def execute(self, context):
         """Execute the DDL operation using the TptHook."""
-        self._hook = TptHook(teradata_conn_id=self.teradata_conn_id)
-        try:
-            result = self._hook.execute_ddl(
-                sql=self.sql_stmt,
-                error_list=self.error_list,
-                xcom_push_flag=self.xcom_push_flag,
-                ssh_conn_id=self.ssh_conn_id,
+        if not self.ddl:
+            raise ValueError("DDL statement cannot be empty. Please provide a valid DDL statement.")
+        # Normalize error_list to a list of ints
+        if self.error_list is None:
+            self.error_list = []
+        elif isinstance(self.error_list, int):
+            self.error_list = [self.error_list]
+        elif not isinstance(self.error_list, list):
+            raise ValueError(
+                f"error_list must be an int or a list of ints, got {type(self.error_list).__name__}. "
+                "Example: error_list=3803 or error_list=[3803, 3807]"
             )
-            if self.xcom_push_flag:
-                context["ti"].xcom_push(key="ddl_result", value=result)
-        except Exception as e:
-            raise AirflowException(f"TPT DDL operation failed: {e}")
+
+        self._hook = TptHook(teradata_conn_id=self.teradata_conn_id, ssh_conn_id=self.ssh_conn_id)
+
+        return self._hook.execute_ddl(
+            sql=self.ddl,
+            error_list=self.error_list,
+            ssh_conn_id=self.ssh_conn_id,
+            working_dir=self.working_dir,
+        )
 
     def on_kill(self):
         """Handle termination signals and ensure the hook is properly cleaned up."""
@@ -125,8 +128,6 @@ class TdLoadOperator(BaseOperator):
 
     For all scenarios:
         :param teradata_conn_id: Connection ID for Teradata database (source for table operations)
-        :param xcom_push_flag: Whether to push the execution result to XCom for downstream tasks.
-                          Defaults to False.
 
     For file to table loading:
         :param source_file_name: Path to the source file (required for file to table)
@@ -149,6 +150,10 @@ class TdLoadOperator(BaseOperator):
         :param target_format: Format of target data (default: 'Delimited')
         :param source_text_delimiter: Source text delimiter (default: ',')
         :param target_text_delimiter: Target text delimiter (default: ',')
+        :param staging_table: Name of the staging table (optional, used for intermediate storage)
+        :param tdload_options: Additional options for tdload (optional)
+    :param ssh_conn_id: SSH connection ID for secure file transfer (optional, used for file operations)
+    :raises AirflowException: If the operation fails due to invalid parameters or execution errors.
 
     Example usage::
 
@@ -166,6 +171,7 @@ class TdLoadOperator(BaseOperator):
             source_table="my_database.my_table",
             target_file_name="/path/to/export.csv",
             teradata_conn_id="teradata_source_conn",
+            ssh_conn_id="ssh_default",
         )
 
         # Example usage for table to table:
@@ -200,7 +206,7 @@ class TdLoadOperator(BaseOperator):
         target_text_delimiter: str = ",",
         staging_table: str | None = None,
         tdload_options: str | None = None,
-        xcom_push_flag: bool = False,
+        working_dir: str = "/tmp",
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -218,7 +224,7 @@ class TdLoadOperator(BaseOperator):
         self.target_text_delimiter = target_text_delimiter
         self.staging_table = staging_table
         self.tdload_options = tdload_options
-        self.xcom_push_flag = xcom_push_flag
+        self.working_dir = working_dir
         self._src_hook = None
         self._dest_hook = None
 
@@ -255,7 +261,7 @@ class TdLoadOperator(BaseOperator):
 
         # Initialize hooks
         self.log.info("Initializing source connection using teradata_conn_id: %s", self.teradata_conn_id)
-        self._src_hook = TptHook(teradata_conn_id=self.teradata_conn_id)
+        self._src_hook = TptHook(teradata_conn_id=self.teradata_conn_id, ssh_conn_id=self.ssh_conn_id)
 
         if self.mode in ("table_to_table", "file_to_table"):
             self.log.info(
@@ -264,55 +270,38 @@ class TdLoadOperator(BaseOperator):
             )
             self._dest_hook = TptHook(teradata_conn_id=self.target_teradata_conn_id)
 
-        try:
-            # Log operation details based on mode
-            if self.mode == "file_to_table":
-                self.log.info(
-                    "Loading data from file '%s' to table '%s'", self.source_file_name, self.target_table
-                )
-            elif self.mode == "table_to_file":
-                self.log.info(
-                    "Exporting data from table '%s' to file '%s'", self.source_table, self.target_file_name
-                )
-            elif self.mode == "table_to_table":
-                self.log.info(
-                    "Transferring data from table '%s' to table '%s'", self.source_table, self.target_table
-                )
-
-            # Execute tdload
-            result = self._src_hook.execute_tdload(
-                mode=self.mode,
-                ssh_conn_id=self.ssh_conn_id,
-                source_table=self.source_table,
-                select_stmt=self.select_stmt,
-                target_table=self.target_table,
-                source_file_name=self.source_file_name,
-                target_file_name=self.target_file_name,
-                source_format=self.source_format,
-                target_format=self.target_format,
-                source_text_delimiter=self.source_text_delimiter,
-                target_text_delimiter=self.target_text_delimiter,
-                staging_table=self.staging_table,
-                tdload_options=self.tdload_options,
-                target_teradata_conn_id=self.target_teradata_conn_id,
+        # Log operation details based on mode
+        if self.mode == "file_to_table":
+            self.log.info(
+                "Loading data from file '%s' to table '%s'", self.source_file_name, self.target_table
+            )
+        elif self.mode == "table_to_file":
+            self.log.info(
+                "Exporting data from table '%s' to file '%s'", self.source_table, self.target_file_name
+            )
+        elif self.mode == "table_to_table":
+            self.log.info(
+                "Transferring data from table '%s' to table '%s'", self.source_table, self.target_table
             )
 
-            # Push result to XCom if available and xcom_push_flag is True
-            if result and self.xcom_push_flag:
-                self.log.info("TPT tdload operation completed successfully")
-                context["ti"].xcom_push(key="tdload_result", value=result)
-
-            return result
-
-        except Exception as e:
-            operation_type = {
-                "file_to_table": "File to table loading",
-                "table_to_file": "Table to file export",
-                "table_to_table": "Table to table transfer",
-            }.get(self.mode, "TPT operation")
-            error_msg = f"{operation_type} failed: {e}"
-            self.log.error(error_msg)
-            raise AirflowException(error_msg)
+        # Execute tdload
+        return self._src_hook.execute_tdload(
+            mode=self.mode,
+            ssh_conn_id=self.ssh_conn_id,
+            source_table=self.source_table,
+            select_stmt=self.select_stmt,
+            target_table=self.target_table,
+            source_file_name=self.source_file_name,
+            target_file_name=self.target_file_name,
+            source_format=self.source_format,
+            target_format=self.target_format,
+            source_text_delimiter=self.source_text_delimiter,
+            target_text_delimiter=self.target_text_delimiter,
+            staging_table=self.staging_table,
+            tdload_options=self.tdload_options,
+            target_teradata_conn_id=self.target_teradata_conn_id,
+            working_dir=self.working_dir,
+        )
 
     def on_kill(self):
         """Handle termination signals and ensure all hooks are properly cleaned up."""
