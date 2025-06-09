@@ -44,7 +44,6 @@ from airflow.exceptions import AirflowException, SerializationError, TaskDeferre
 from airflow.models.baseoperator import BaseOperator
 from airflow.models.connection import Connection
 from airflow.models.dag import DAG, _get_model_data_interval
-from airflow.models.deadline import DeadlineAlert
 from airflow.models.expandinput import (
     create_expand_input,
 )
@@ -66,6 +65,7 @@ from airflow.sdk.definitions.asset import (
     AssetWatcher,
     BaseAsset,
 )
+from airflow.sdk.definitions.deadline import DeadlineAlert
 from airflow.sdk.definitions.mappedoperator import MappedOperator
 from airflow.sdk.definitions.param import Param, ParamsDict
 from airflow.sdk.definitions.taskgroup import MappedTaskGroup, TaskGroup
@@ -100,7 +100,7 @@ if TYPE_CHECKING:
     from inspect import Parameter
 
     from airflow.models import DagRun
-    from airflow.models.expandinput import ExpandInput
+    from airflow.models.expandinput import SchedulerExpandInput
     from airflow.sdk import BaseOperatorLink
     from airflow.sdk.definitions._internal.node import DAGNode
     from airflow.sdk.types import Operator
@@ -557,7 +557,7 @@ class _ExpandInputRef(NamedTuple):
         possible ExpandInput cases.
         """
 
-    def deref(self, dag: DAG) -> ExpandInput:
+    def deref(self, dag: DAG) -> SchedulerExpandInput:
         """
         De-reference into a concrete ExpandInput object.
 
