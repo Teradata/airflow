@@ -34,13 +34,17 @@ if TYPE_CHECKING:
     try:
         from airflow.sdk.definitions.context import Context
     except ImportError:
-        # TODO: Remove once provider drops support for Airflow 2
         from airflow.utils.context import Context
 
 from airflow.models import BaseOperator
 from airflow.providers.ssh.hooks.ssh import SSHHook
 from airflow.providers.teradata.hooks.bteq import BteqHook
 from airflow.providers.teradata.hooks.teradata import TeradataHook
+
+
+def contains_template(parameter_value):
+    # Check if the parameter contains Jinja templating syntax
+    return "{{" in parameter_value and "}}" in parameter_value
 
 
 class BteqOperator(BaseOperator):
@@ -63,10 +67,10 @@ class BteqOperator(BaseOperator):
         :ref:`howto/operator:BteqOperator`
 
     :param sql: SQL statement(s) to be executed using BTEQ. (templated)
-    :param file_path: Optional path to an existing SQL or BTEQ script file. If provided, this file will be used instead of the `sql` content.
+    :param file_path: Optional path to an existing SQL or BTEQ script file. If provided, this file will be used instead of the `sql` content. This path represents remote file path when executing remotely via SSH, or local file path when executing locally.
     :param teradata_conn_id: Reference to a specific Teradata connection.
     :param ssh_conn_id: Optional SSH connection ID for remote execution. Used only when executing scripts remotely.
-    :param remote_working_dir: Directory on the remote host (via SSH) where the BTEQ script will be transferred and executed.
+    :param remote_working_dir: Temporary directory location on the remote host (via SSH) where the BTEQ script will be transferred and executed. Defaults to `/tmp` if not specified. This is only applicable when `ssh_conn_id` is provided.
     :param bteq_session_encoding: Character set encoding for the BTEQ session. Defaults to ASCII if not specified.
     :param bteq_script_encoding: Character encoding for the BTEQ script file. Defaults to ASCII if not specified.
     :param bteq_quit_rc: Accepts a single integer, list, or tuple of return codes. Specifies which BTEQ return codes should be treated as successful, allowing subsequent tasks to continue execution.
@@ -129,15 +133,12 @@ class BteqOperator(BaseOperator):
 
         if not self.remote_working_dir:
             self.remote_working_dir = "/tmp"
-
-        self.log.info("sshconec - %s", self._ssh_hook)
         # Handling execution on local:
         if not self._ssh_hook:
             if self.sql:
                 bteq_script = prepare_bteq_script_for_local_execution(
                     sql=self.sql,
                 )
-                self.log.info("BTEQ script: %s", bteq_script)
                 return self._hook.execute_bteq_script(
                     bteq_script,
                     self.remote_working_dir,
@@ -165,8 +166,6 @@ class BteqOperator(BaseOperator):
                 )
         # Execution on Remote machine
         elif self._ssh_hook:
-            self.log.info("Entered  - %s", self._ssh_hook)
-            self.log.info("sql  - %s", self.sql)
             # When sql statement is provided as input through sql parameter, Preparing the bteq script
             if self.sql:
                 bteq_script = prepare_bteq_script_for_remote_execution(
@@ -183,7 +182,6 @@ class BteqOperator(BaseOperator):
                     self.bteq_quit_rc,
                 )
             if self.file_path:
-                self.log.info("file_path  - %s", self.file_path)
                 with self._ssh_hook.get_conn() as ssh_client:
                     # When .sql or .bteq remote file path is provided as input through file_path parameter, executing on remote machine
                     if self.file_path and is_valid_remote_bteq_script_file(ssh_client, self.file_path):
@@ -216,7 +214,7 @@ class BteqOperator(BaseOperator):
                 finally:
                     sftp.close()
                 rendered_content = original_content
-                if self.contains_template(original_content):
+                if contains_template(original_content):
                     rendered_content = self.render_template(original_content, context)
                 bteq_script = prepare_bteq_script_for_remote_execution(
                     conn=self._hook.get_conn(),
@@ -241,21 +239,15 @@ class BteqOperator(BaseOperator):
         file_path: str,
         context: Context,
     ) -> int | None:
-        self.log.info("file_path: %s", file_path)
-        self.log.info("is_sql_file(file_path): %s", is_valid_file(file_path))
         if file_path and is_valid_file(file_path):
             file_content = read_file(file_path, encoding=str(self.bteq_script_encoding or "UTF-8"))
-
-            self.log.info("Reading SQL file: %s", file_content)
             # Manually render using operator's context
             rendered_content = file_content
-            if self.contains_template(file_content):
+            if contains_template(file_content):
                 rendered_content = self.render_template(file_content, context)
-            self.log.info("Reading SQL file after render: %s", rendered_content)
             bteq_script = prepare_bteq_script_for_local_execution(
                 sql=rendered_content,
             )
-            self.log.info("BTEQ script: %s", bteq_script)
             result = self._hook.execute_bteq_script(
                 bteq_script,
                 self.remote_working_dir,
@@ -267,10 +259,6 @@ class BteqOperator(BaseOperator):
             )
             return result
         return None
-
-    def contains_template(self, parameter_value):
-        # Check if the parameter contains Jinja templating syntax
-        return "{{" in parameter_value and "}}" in parameter_value
 
     def on_kill(self) -> None:
         """Handle task termination by invoking the on_kill method of BteqHook."""

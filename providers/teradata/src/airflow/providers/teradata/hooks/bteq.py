@@ -61,13 +61,13 @@ class BteqHook(TtuHook):
     .. seealso::
         - :ref:`hook API connection <howto/connection:teradata>`
 
-    :param teradata_conn_id: Reference to a specific Teradata connection.
-    :param ssh_conn_id: Optional SSH connection ID for remote execution.
-    :param bteq_input: The BTEQ script to be executed. (templated)
-    :param bteq_session_encoding: The encoding for the BTEQ session.
-    :param bteq_script_encoding: The encoding for the BTEQ script.
-    :param bteq_quit_rc: The return code for the BTEQ quit command.
-    :param timeout: The timeout for the BTEQ execution.
+    :param bteq_script: The BTEQ script to be executed. This can be a string containing the BTEQ commands.
+    :param remote_working_dir: Temporary directory location on the remote host (via SSH) where the BTEQ script will be transferred and executed. Defaults to `/tmp` if not specified. This is only applicable when `ssh_conn_id` is provided.
+    :param bteq_script_encoding: Character encoding for the BTEQ script file. Defaults to ASCII if not specified.
+    :param timeout: Timeout (in seconds) for executing the BTEQ command. Default is 600 seconds (10 minutes).
+    :param timeout_rc: Return code to use if the BTEQ execution fails due to a timeout. To allow DAG execution to continue after a timeout, include this value in `bteq_quit_rc`. If not specified, a timeout will raise an exception and stop the DAG.
+    :param bteq_session_encoding: Character encoding for the BTEQ session. Defaults to UTF-8 if not specified.
+    :param bteq_quit_rc: Accepts a single integer, list, or tuple of return codes. Specifies which BTEQ return codes should be treated as successful, allowing subsequent tasks to continue execution.
     """
 
     def __init__(self, ssh_conn_id: str | None, *args, **kwargs):
@@ -175,10 +175,8 @@ class BteqHook(TtuHook):
 
                     for line in stderr:
                         decoded_line = line.strip()
-                        self.log.debug("Process stderr: ", line.strip())
                         if "Failure" in decoded_line:
                             failure_message = decoded_line
-                    self.log.info("BTEQ command executed with exit status: %s", exit_status)
                     # Raising an exception if there is any failure in bteq and also user wants to fail the
                     # task otherwise just log the error message as warning to not fail the task.
                     if (
@@ -241,7 +239,6 @@ class BteqHook(TtuHook):
             bteq_session_encoding=bteq_session_encoding or "",
             timeout_rc=timeout_rc or -1,
         )
-        self.log.info("Executing BTEQ command after adding logon details: %s", bteq_command_str)
         process = subprocess.Popen(
             bteq_command_str,
             stdin=subprocess.PIPE,
@@ -261,19 +258,16 @@ class BteqHook(TtuHook):
         conn = self.get_conn()
         conn["sp"] = process  # For `on_kill` support
         failure_message = None
-        self.log.info("Bteq output is : %s", stdout_data)
         if stdout_data is None:
             raise AirflowException("Process stdout is None. Unable to read BTEQ output.")
         decoded_line = ""
         for line in stdout_data.splitlines():
             try:
                 decoded_line = line.decode(str(bteq_script_encoding or "UTF-8")).strip()
-                self.log.debug("Process output: %s", decoded_line)
             except UnicodeDecodeError:
                 self.log.warning("Failed to decode line: %s", line)
             if "Failure" in decoded_line:
                 failure_message = decoded_line
-        self.log.info("BTEQ command executed with exit status: %s", process.returncode)
         # Raising an exception if there is any failure in bteq and also user wants to fail the
         # task otherwise just log the error message as warning to not fail the task.
         if (
@@ -294,7 +288,6 @@ class BteqHook(TtuHook):
 
     def on_kill(self):
         """Terminate the subprocess if running."""
-        self.log.debug("Attempting to kill child process...")
         conn = self.get_conn()
         process = conn.get("sp")
         if process:
