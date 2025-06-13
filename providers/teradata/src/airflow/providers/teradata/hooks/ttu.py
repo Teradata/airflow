@@ -30,7 +30,7 @@ class TtuHook(BaseHook, ABC):
     Abstract base hook for integrating Teradata Tools and Utilities (TTU) in Airflow.
 
     This hook provides common connection handling, resource management, and lifecycle
-    support for TTU-based operations such as BTEQ, TLOAD, and TPT.
+    support for TTU based operations such as BTEQ, TLOAD, and TPT.
 
     It should not be used directly. Instead, it must be subclassed by concrete hooks
     like `BteqHook`, `TloadHook`, or `TddlHook` that implement the actual TTU command logic.
