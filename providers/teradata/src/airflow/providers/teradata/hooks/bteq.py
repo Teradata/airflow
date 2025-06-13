@@ -84,6 +84,7 @@ class BteqHook(TtuHook):
         timeout_rc: int | None,
         bteq_session_encoding: str | None,
         bteq_quit_rc: int | list[int] | tuple[int, ...] | None,
+        temp_file_read_encoding: str | None,
     ) -> int | None:
         """Execute the BTEQ script either in local machine or on remote host based on ssh_conn_id."""
         # Remote execution
@@ -98,9 +99,16 @@ class BteqHook(TtuHook):
                 timeout_rc,
                 bteq_session_encoding,
                 bteq_quit_rc,
+                temp_file_read_encoding,
             )
         return self.execute_bteq_script_at_local(
-            bteq_script, bteq_script_encoding, timeout, timeout_rc, bteq_quit_rc, bteq_session_encoding
+            bteq_script,
+            bteq_script_encoding,
+            timeout,
+            timeout_rc,
+            bteq_quit_rc,
+            bteq_session_encoding,
+            temp_file_read_encoding,
         )
 
     def execute_bteq_script_at_remote(
@@ -112,13 +120,14 @@ class BteqHook(TtuHook):
         timeout_rc: int | None,
         bteq_session_encoding: str | None,
         bteq_quit_rc: int | list[int] | tuple[int, ...] | None,
+        temp_file_read_encoding: str | None,
     ) -> int | None:
         with (
             self.preferred_temp_directory() as tmp_dir,
         ):
             # Preparing lo
             file_path = os.path.join(tmp_dir, "bteq_script.txt")
-            with open(file_path, "w", encoding=str(bteq_script_encoding or "UTF-8")) as f:
+            with open(file_path, "w", encoding=str(temp_file_read_encoding or "UTF-8")) as f:
                 f.write(bteq_script)
             return self._transfer_to_and_execute_bteq_on_remote(
                 file_path,
@@ -163,6 +172,7 @@ class BteqHook(TtuHook):
                         bteq_session_encoding=bteq_session_encoding or "",
                         timeout_rc=timeout_rc or -1,
                     )
+                    self.log.info("Executing BTEQ command: %s", bteq_command_str)
 
                     exit_status, stdout, stderr = decrypt_remote_file_to_string(
                         ssh_client,
@@ -172,11 +182,12 @@ class BteqHook(TtuHook):
                     )
 
                     failure_message = None
+                    self.log.info("stdout : %s", stdout)
+                    self.log.info("stderr : %s", stderr)
+                    self.log.info("exit_status : %s", exit_status)
 
-                    for line in stderr:
-                        decoded_line = line.strip()
-                        if "Failure" in decoded_line:
-                            failure_message = decoded_line
+                    if "Failure" in stderr or "Error" in stderr:
+                        failure_message = stderr
                     # Raising an exception if there is any failure in bteq and also user wants to fail the
                     # task otherwise just log the error message as warning to not fail the task.
                     if (
@@ -230,6 +241,7 @@ class BteqHook(TtuHook):
         timeout_rc: int | None,
         bteq_quit_rc: int | list[int] | tuple[int, ...] | None,
         bteq_session_encoding: str | None,
+        temp_file_read_encoding: str | None,
     ) -> int | None:
         verify_bteq_installed()
         bteq_command_str = prepare_bteq_command_for_local_execution(
@@ -239,6 +251,7 @@ class BteqHook(TtuHook):
             bteq_session_encoding=bteq_session_encoding or "",
             timeout_rc=timeout_rc or -1,
         )
+        self.log.info("Executing BTEQ command: %s", bteq_command_str)
         process = subprocess.Popen(
             bteq_command_str,
             stdin=subprocess.PIPE,
@@ -247,8 +260,10 @@ class BteqHook(TtuHook):
             shell=True,
             preexec_fn=os.setsid,
         )
-        encode_bteq_script = bteq_script.encode(str(bteq_script_encoding or "UTF-8"))
+        encode_bteq_script = bteq_script.encode(str(temp_file_read_encoding or "UTF-8"))
+        self.log.info("encode_bteq_script : %s", encode_bteq_script)
         stdout_data, _ = process.communicate(input=encode_bteq_script)
+        self.log.info("stdout_data : %s", stdout_data)
         try:
             # https://docs.python.org/3.10/library/subprocess.html#subprocess.Popen.wait  timeout is in seconds
             process.wait(timeout=timeout + 60)  # Adding 1 minute extra for BTEQ script timeout
@@ -263,10 +278,11 @@ class BteqHook(TtuHook):
         decoded_line = ""
         for line in stdout_data.splitlines():
             try:
-                decoded_line = line.decode(str(bteq_script_encoding or "UTF-8")).strip()
+                decoded_line = line.decode("UTF-8").strip()
+                self.log.info("decoded_line : %s", decoded_line)
             except UnicodeDecodeError:
                 self.log.warning("Failed to decode line: %s", line)
-            if "Failure" in decoded_line:
+            if "Failure" in decoded_line or "Error" in decoded_line:
                 failure_message = decoded_line
         # Raising an exception if there is any failure in bteq and also user wants to fail the
         # task otherwise just log the error message as warning to not fail the task.

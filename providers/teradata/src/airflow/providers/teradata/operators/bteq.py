@@ -109,6 +109,7 @@ class BteqOperator(BaseOperator):
         self.bteq_quit_rc = bteq_quit_rc
         self._hook: BteqHook = BteqHook(teradata_conn_id=self.teradata_conn_id, ssh_conn_id=self.ssh_conn_id)
         self._ssh_hook: SSHHook | None = SSHHook(ssh_conn_id=self.ssh_conn_id) if self.ssh_conn_id else None
+        self.temp_file_read_encoding = "UTF-8"
 
     def execute(self, context: Context) -> int | None:
         """Execute BTEQ code using the BteqHook."""
@@ -116,21 +117,38 @@ class BteqOperator(BaseOperator):
             raise ValueError(
                 "BteqOperator requires either the 'sql' or 'file_path' parameter. Both are missing."
             )
-        if (
-            not self.bteq_session_encoding or self.bteq_session_encoding == "ASCII"
-        ) and not self.bteq_script_encoding:
+        self.log.info("=========================================================")
+        self.log.info("self.bteq_script_encoding: %s", self.bteq_script_encoding)
+        self.log.info("self.bteq_session_encoding: %s", self.bteq_session_encoding)
+        self.log.info("self.temp_file_read_encoding: %s", self.temp_file_read_encoding)
+        self.log.info("=========================================================")
+
+        # Validate and set BTEQ session and script encoding
+        if not self.bteq_session_encoding or self.bteq_session_encoding == "ASCII":
             self.bteq_session_encoding = ""
+            if self.bteq_script_encoding == "UTF8":
+                self.temp_file_read_encoding = "UTF-8"
+            elif self.bteq_script_encoding == "UTF16":
+                self.temp_file_read_encoding = "UTF-16"
             self.bteq_script_encoding = ""
-        elif self.bteq_session_encoding == "UTF-8" and (
+        elif self.bteq_session_encoding == "UTF8" and (
             not self.bteq_script_encoding or self.bteq_script_encoding == "ASCII"
         ):
-            self.bteq_script_encoding = "UTF-8"
-        elif self.bteq_session_encoding == "UTF-16":
-            if not self.bteq_script_encoding:
-                self.bteq_script_encoding = "UTF-16"
-            elif self.bteq_script_encoding == "ASCII":
-                self.bteq_script_encoding = "UTF-8"
+            self.bteq_script_encoding = "UTF8"
+        elif self.bteq_session_encoding == "UTF16":
+            if not self.bteq_script_encoding or self.bteq_script_encoding == "ASCII":
+                self.bteq_script_encoding = "UTF8"
+        # for file reading in python. Mapping BTEQ encoding to Python encoding
+        if self.bteq_script_encoding == "UTF8":
+            self.temp_file_read_encoding = "UTF-8"
+        elif self.bteq_script_encoding == "UTF16":
+            self.temp_file_read_encoding = "UTF-16"
 
+        self.log.info("=========================================================")
+        self.log.info("self.bteq_script_encoding: %s", self.bteq_script_encoding)
+        self.log.info("self.bteq_session_encoding: %s", self.bteq_session_encoding)
+        self.log.info("self.temp_file_read_encoding: %s", self.temp_file_read_encoding)
+        self.log.info("=========================================================")
         if not self.remote_working_dir:
             self.remote_working_dir = "/tmp"
         # Handling execution on local:
@@ -139,6 +157,7 @@ class BteqOperator(BaseOperator):
                 bteq_script = prepare_bteq_script_for_local_execution(
                     sql=self.sql,
                 )
+                self.log.info("Executing BTEQ script with SQL content: %s", bteq_script)
                 return self._hook.execute_bteq_script(
                     bteq_script,
                     self.remote_working_dir,
@@ -147,6 +166,7 @@ class BteqOperator(BaseOperator):
                     self.timeout_rc,
                     self.bteq_session_encoding,
                     self.bteq_quit_rc,
+                    self.temp_file_read_encoding,
                 )
             if self.file_path:
                 if not is_valid_file(self.file_path):
@@ -154,7 +174,7 @@ class BteqOperator(BaseOperator):
                         f"The provided file path '{self.file_path}' is invalid or does not exist."
                     )
                 try:
-                    is_valid_encoding(self.file_path, self.bteq_script_encoding or "UTF-8")
+                    is_valid_encoding(self.file_path, self.temp_file_read_encoding or "UTF-8")
                 except UnicodeDecodeError as e:
                     errmsg = f"The provided file '{self.file_path}' encoding is different from BTEQ I/O encoding i.e.'UTF-8'."
                     if self.bteq_script_encoding:
@@ -172,6 +192,7 @@ class BteqOperator(BaseOperator):
                     conn=self._hook.get_conn(),
                     sql=self.sql,
                 )
+                self.log.info("Executing BTEQ script with SQL content: %s", bteq_script)
                 return self._hook.execute_bteq_script(
                     bteq_script,
                     self.remote_working_dir,
@@ -180,6 +201,7 @@ class BteqOperator(BaseOperator):
                     self.timeout_rc,
                     self.bteq_session_encoding,
                     self.bteq_quit_rc,
+                    self.temp_file_read_encoding,
                 )
             if self.file_path:
                 with self._ssh_hook.get_conn() as ssh_client:
@@ -210,7 +232,7 @@ class BteqOperator(BaseOperator):
                 sftp = ssh_client.open_sftp()
                 try:
                     with sftp.open(file_path, "r") as remote_file:
-                        original_content = remote_file.read().decode(self.bteq_script_encoding or "UTF-8")
+                        original_content = remote_file.read().decode(self.temp_file_read_encoding or "UTF-8")
                 finally:
                     sftp.close()
                 rendered_content = original_content
@@ -220,6 +242,7 @@ class BteqOperator(BaseOperator):
                     conn=self._hook.get_conn(),
                     sql=rendered_content,
                 )
+                self.log.info("Executing BTEQ script with SQL content: %s", bteq_script)
                 return self._hook.execute_bteq_script_at_remote(
                     bteq_script,
                     self.remote_working_dir,
@@ -228,6 +251,7 @@ class BteqOperator(BaseOperator):
                     self.timeout_rc,
                     self.bteq_session_encoding,
                     self.bteq_quit_rc,
+                    self.temp_file_read_encoding,
                 )
         else:
             raise ValueError(
@@ -240,7 +264,7 @@ class BteqOperator(BaseOperator):
         context: Context,
     ) -> int | None:
         if file_path and is_valid_file(file_path):
-            file_content = read_file(file_path, encoding=str(self.bteq_script_encoding or "UTF-8"))
+            file_content = read_file(file_path, encoding=str(self.temp_file_read_encoding or "UTF-8"))
             # Manually render using operator's context
             rendered_content = file_content
             if contains_template(file_content):
@@ -248,6 +272,7 @@ class BteqOperator(BaseOperator):
             bteq_script = prepare_bteq_script_for_local_execution(
                 sql=rendered_content,
             )
+            self.log.info("Executing BTEQ script with SQL content: %s", bteq_script)
             result = self._hook.execute_bteq_script(
                 bteq_script,
                 self.remote_working_dir,
@@ -256,6 +281,7 @@ class BteqOperator(BaseOperator):
                 self.timeout_rc,
                 self.bteq_session_encoding,
                 self.bteq_quit_rc,
+                self.temp_file_read_encoding,
             )
             return result
         return None

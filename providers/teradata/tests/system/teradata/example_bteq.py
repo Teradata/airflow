@@ -88,6 +88,7 @@ with DAG(
                 INSERT INTO {{params.DB_TABLE_NAME}} VALUES (2, 'Jane Smith', 'HR');
                 """,
         params=params,
+        bteq_session_encoding="UTF8",
         bteq_quit_rc=0,
     )
     # [END bteq_operator_howto_guide_populate_table]
@@ -100,6 +101,7 @@ with DAG(
                 SELECT * FROM {{params.DB_TABLE_NAME}};
                 .EXPORT RESET;
                 """,
+        bteq_session_encoding="UTF16",
     )
     # [END bteq_operator_howto_guide_export_data_to_a_file]
 
@@ -109,6 +111,7 @@ with DAG(
         sql=r"""
                 SELECT * FROM {{params.DB_TABLE_NAME}} WHERE dept = 'IT';
                 """,
+        bteq_session_encoding="ASCII",
     )
     # [END bteq_operator_howto_guide_get_it_employees]
 
@@ -122,6 +125,7 @@ with DAG(
 
                 .LABEL handle_error;
                 """,
+        bteq_script_encoding="UTF8",
     )
     # [END bteq_operator_howto_guide_conditional_logic]
 
@@ -140,6 +144,7 @@ with DAG(
                 .LOGOFF;
                 .QUIT 0;
                 """,
+        bteq_script_encoding="UTF16",
     )
     # [END bteq_operator_howto_guide_error_handling]
 
@@ -154,6 +159,7 @@ with DAG(
                 .LOGOFF;
                 .QUIT 0;
                 """,
+        bteq_script_encoding="ASCII",
     )
     # [END bteq_operator_howto_guide_drop_table]
     # [START bteq_operator_howto_guide_bteq_file_input]
@@ -168,7 +174,7 @@ with DAG(
         task_id="execute_bteq_utf8_file",
         file_path="providers/teradata/tests/system/teradata/script.bteq",
         params=params,
-        bteq_script_encoding="UTF-8",
+        bteq_script_encoding="UTF8",
     )
     # [END bteq_operator_howto_guide_bteq_file_utf8_input]
     # [START bteq_operator_howto_guide_bteq_file_utf8_session_ascii_input]
@@ -176,7 +182,7 @@ with DAG(
         task_id="execute_bteq_utf8_session_ascii_file",
         file_path="providers/teradata/tests/system/teradata/script.bteq",
         params=params,
-        bteq_script_encoding="UTF-8",
+        bteq_script_encoding="UTF8",
         bteq_session_encoding="ASCII",
     )
     # [END bteq_operator_howto_guide_bteq_file_utf8_session_ascii_input]
@@ -185,8 +191,8 @@ with DAG(
         task_id="execute_bteq_utf8_session_utf8_file",
         file_path="providers/teradata/tests/system/teradata/script.bteq",
         params=params,
-        bteq_script_encoding="UTF-8",
-        bteq_session_encoding="UTF-8",
+        bteq_script_encoding="UTF8",
+        bteq_session_encoding="UTF8",
     )
     # [END bteq_operator_howto_guide_bteq_file_utf8_session_utf8_input]
     # [START bteq_operator_howto_guide_bteq_file_utf8_session_utf16_input]
@@ -194,8 +200,8 @@ with DAG(
         task_id="execute_bteq_utf8_session_utf16_file",
         file_path="providers/teradata/tests/system/teradata/script.bteq",
         params=params,
-        bteq_script_encoding="UTF-8",
-        bteq_session_encoding="UTF-16",
+        bteq_script_encoding="UTF8",
+        bteq_session_encoding="UTF16",
     )
     # [END bteq_operator_howto_guide_bteq_file_utf8_session_utf16_input]
     # [START bteq_operator_howto_guide_bteq_file_utf16_input]
@@ -203,7 +209,7 @@ with DAG(
         task_id="execute_bteq_utf16_file",
         file_path="providers/teradata/tests/system/teradata/script_utf16.bteq",
         params=params,
-        bteq_script_encoding="UTF-16",
+        bteq_script_encoding="UTF16",
     )
     # [END bteq_operator_howto_guide_bteq_file_utf16_input]
     # [START bteq_operator_howto_guide_bteq_file_utf16_input]
@@ -211,7 +217,7 @@ with DAG(
         task_id="execute_bteq_utf16_session_ascii_file",
         file_path="providers/teradata/tests/system/teradata/script_utf16.bteq",
         params=params,
-        bteq_script_encoding="UTF-16",
+        bteq_script_encoding="UTF16",
         bteq_session_encoding="ASCII",
     )
     # [END bteq_operator_howto_guide_bteq_file_utf16_input]
@@ -220,8 +226,8 @@ with DAG(
         task_id="execute_bteq_utf16_session_utf8_file",
         file_path="providers/teradata/tests/system/teradata/script_utf16.bteq",
         params=params,
-        bteq_script_encoding="UTF-16",
-        bteq_session_encoding="UTF-8",
+        bteq_script_encoding="UTF16",
+        bteq_session_encoding="UTF8",
     )
     # [END bteq_operator_howto_guide_bteq_file_utf16_session_utf8_input]
     # [START bteq_operator_howto_guide_bteq_file_utf16_session_utf8_input]
@@ -229,8 +235,8 @@ with DAG(
         task_id="execute_bteq_utf16_session_utf16_file",
         file_path="providers/teradata/tests/system/teradata/script_utf16.bteq",
         params=params,
-        bteq_script_encoding="UTF-16",
-        bteq_session_encoding="UTF-16",
+        bteq_script_encoding="UTF16",
+        bteq_session_encoding="UTF16",
     )
     # [END bteq_operator_howto_guide_bteq_file_utf16_session_utf8_input]
     (
