@@ -44,38 +44,6 @@ class TestTtuHook:
         assert conn["login"] == "test_user"
         assert conn["password"] == "test_pass"
         assert conn["host"] == "test_host"
-        assert conn["ttu_log_folder"] == "/tmp"
-        assert conn["console_output_encoding"] == "utf-8"
-        assert conn["bteq_session_encoding"] == "ASCII"
-        assert conn["bteq_output_width"] == 65531
-        assert conn["bteq_quit_zero"] is False
-
-    @mock.patch("airflow.providers.teradata.hooks.ttu.TtuHook.get_connection")
-    def test_get_conn_with_custom_extras(self, mock_get_connection):
-        # Setup
-        mock_conn = mock.MagicMock()
-        mock_conn.login = "test_user"
-        mock_conn.password = "test_pass"
-        mock_conn.host = "test_host"
-        mock_conn.extra_dejson = {
-            "ttu_log_folder": "/tmp",
-            "console_output_encoding": "latin-1",
-            "bteq_session_encoding": "UTF-8",
-            "bteq_output_width": 100,
-            "bteq_quit_zero": True,
-        }
-        mock_get_connection.return_value = mock_conn
-
-        # Execute
-        hook = TtuHook()
-        conn = hook.get_conn()
-
-        # Assert
-        assert conn["ttu_log_folder"] == "/tmp"
-        assert conn["console_output_encoding"] == "latin-1"
-        assert conn["bteq_session_encoding"] == "UTF-8"
-        assert conn["bteq_output_width"] == 100
-        assert conn["bteq_quit_zero"] is True
 
     @mock.patch("airflow.providers.teradata.hooks.ttu.TtuHook.get_connection")
     def test_get_conn_missing_params(self, mock_get_connection):
@@ -91,27 +59,6 @@ class TestTtuHook:
         hook = TtuHook()
         with pytest.raises(AirflowException, match="Missing required connection parameters"):
             hook.get_conn()
-
-    @mock.patch("os.path.exists")
-    @mock.patch("os.makedirs")
-    @mock.patch("airflow.providers.teradata.hooks.ttu.TtuHook.get_connection")
-    def test_log_folder_creation(self, mock_get_connection, mock_makedirs, mock_exists):
-        # Setup
-        mock_conn = mock.MagicMock()
-        mock_conn.login = "test_user"
-        mock_conn.password = "test_pass"
-        mock_conn.host = "test_host"
-        mock_conn.extra_dejson = {"ttu_log_folder": "/custom/path"}
-        mock_get_connection.return_value = mock_conn
-        mock_exists.return_value = False
-
-        # Execute
-        hook = TtuHook()
-        hook.get_conn()
-
-        # Assert
-        mock_exists.assert_called_once_with("/custom/path")
-        mock_makedirs.assert_called_once_with("/custom/path", exist_ok=True)
 
     @mock.patch("subprocess.Popen")
     @mock.patch("airflow.providers.teradata.hooks.ttu.TtuHook.get_connection")

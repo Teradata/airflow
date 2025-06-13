@@ -70,8 +70,8 @@ class BteqHook(TtuHook):
     :param bteq_quit_rc: Accepts a single integer, list, or tuple of return codes. Specifies which BTEQ return codes should be treated as successful, allowing subsequent tasks to continue execution.
     """
 
-    def __init__(self, ssh_conn_id: str | None, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, teradata_conn_id: str, ssh_conn_id: str | None = None, *args, **kwargs):
+        super().__init__(teradata_conn_id, *args, **kwargs)
         self.ssh_conn_id = ssh_conn_id
         self.ssh_hook = SSHHook(ssh_conn_id=ssh_conn_id) if ssh_conn_id else None
 

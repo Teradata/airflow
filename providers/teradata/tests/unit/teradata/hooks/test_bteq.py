@@ -122,7 +122,7 @@ def test_execute_bteq_script_at_local_success(
     mock_get_conn,
     mock_popen,
 ):
-    hook = BteqHook(ssh_conn_id=None, teradata_conn_id="teradata_conn")
+    hook = BteqHook(teradata_conn_id="teradata_conn")
 
     mock_process = MagicMock()
     mock_process.communicate.return_value = (b"Output line 1\nOutput line 2\n", None)
