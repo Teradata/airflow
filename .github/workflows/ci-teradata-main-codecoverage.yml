@@ -52,11 +52,25 @@
             run: python -c "import sys; print(sys.version)"
           - name: Generate Airflow Teradata Provider Code Coverage Report
             run: |
+                  export AIRFLOW_HOME=~/airflow
+                  mkdir -p $AIRFLOW_HOME
                   curl -LsSf https://astral.sh/uv/install.sh | sh
                   uv venv
                   source .venv/bin/activate
-                  uv sync --extra devel --extra teradata --extra microsoft.azure --extra amazon
-                  python3 -m pytest --cov-report html --cov=providers/src/airflow/providers/teradata  providers/tests/teradata
+                  sudo apt update
+
+                  sudo apt-get install -y apt-transport-https apt-utils build-essential ca-certificates dirmngr \
+                  freetds-bin freetds-dev git graphviz graphviz-dev krb5-user ldap-utils libev4 libev-dev libffi-dev libgeos-dev  \
+                  libkrb5-dev libldap2-dev libleveldb1d libleveldb-dev libsasl2-2 libsasl2-dev libsasl2-modules \
+                  libssl-dev libxmlsec1 libxmlsec1-dev locales lsb-release openssh-client pkgconf sasl2-bin \
+                  software-properties-common sqlite3 sudo unixodbc unixodbc-dev zlib1g-dev python3-venv python3-pip pipx default-libmysqlclient-dev \
+                  default-libmysqlclient-dev libxml2-dev  libxmlsec1-dev libxmlsec1-openssl libtool  libkrb5-dev krb5-multidev gcc g++
+    
+                  sudo pip install pytest time-machine pytest-asyncio pytest-md-report cryptography pytest-html tailer pandas jinja2 sqlalchemy hatch
+                                
+                  uv sync --extra teradata --extra microsoft.azure --extra amazon --extra ssh   
+                  uv run pytest --cov-report html --cov=providers/src/airflow/providers/teradata  providers/tests/teradata
+                
           - name: Archive production artifacts
             uses: actions/upload-artifact@v4
             with:
