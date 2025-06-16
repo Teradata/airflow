@@ -52,6 +52,11 @@
             run: python -c "import sys; print(sys.version)"
           - name: Install docker
             run: |
+              export AIRFLOW_HOME=~/airflow
+              mkdir -p $AIRFLOW_HOME
+              curl -LsSf https://astral.sh/uv/install.sh | sh
+              uv venv
+              source .venv/bin/activate
               sudo apt-get update
               sudo apt-get install ca-certificates curl gnupg lsb-release
               sudo mkdir -p /etc/apt/keyrings
