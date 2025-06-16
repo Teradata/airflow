@@ -125,7 +125,7 @@ class BteqHook(TtuHook):
         with (
             self.preferred_temp_directory() as tmp_dir,
         ):
-            # Preparing lo
+            
             file_path = os.path.join(tmp_dir, "bteq_script.txt")
             with open(file_path, "w", encoding=str(temp_file_read_encoding or "UTF-8")) as f:
                 f.write(bteq_script)
