@@ -62,9 +62,9 @@
               sudo apt-get install docker-ce docker-ce-cli containerd.io docker-compose-plugin
               sudo chmod 666 /var/run/docker.sock
           - name: Install Breeze
-            run: pip install --editable ./dev/breeze/
+            run: uv tool install -e ./dev/breeze --force
           - name: Build Teradata provider documentation
             run: |
                 breeze --answer y ci-image build --upgrade-to-newer-dependencies
-                breeze --answer y build-docs --package-filter apache-airflow-providers-teradata
+                breeze --answer y build-docs --clean-build --package-filter apache-airflow-providers-teradata
 
