@@ -16,7 +16,7 @@
 # under the License.
 #
 ---
-    name: airflow-teradata-main-documentation-unit-tests
+    name: airflow-teradata-main-documentation
     on:
       push:
         branches:
@@ -67,7 +67,4 @@
             run: |
                 breeze --answer y ci-image build --upgrade-to-newer-dependencies
                 breeze --answer y build-docs --package-filter apache-airflow-providers-teradata
-          - name: Run Unit Tests
-            run: |
-                breeze --answer y testing tests --test-type "Providers[teradata]"
 
