@@ -38,12 +38,7 @@ from airflow.utils.state import DagRunState, State
 from airflow.utils.types import DagRunTriggeredByType, DagRunType
 
 from tests_common.test_utils.api_fastapi import _check_dag_run_note, _check_last_log
-from tests_common.test_utils.db import (
-    clear_db_dags,
-    clear_db_logs,
-    clear_db_runs,
-    clear_db_serialized_dags,
-)
+from tests_common.test_utils.db import clear_db_dags, clear_db_logs, clear_db_runs, clear_db_serialized_dags
 from tests_common.test_utils.format_datetime import from_datetime_to_zulu, from_datetime_to_zulu_without_ms
 
 if TYPE_CHECKING:
@@ -52,6 +47,7 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.db_test
 
 DAG1_ID = "test_dag1"
+DAG1_DISPLAY_NAME = "test_dag1"
 DAG2_ID = "test_dag2"
 DAG1_RUN1_ID = "dag_run_1"
 DAG1_RUN2_ID = "dag_run_2"
@@ -167,6 +163,8 @@ def get_dag_versions_dict(dag_versions: list[DagVersion]) -> list[dict]:
 
 def get_dag_run_dict(run: DagRun):
     return {
+        "bundle_version": None,
+        "dag_display_name": run.dag_model.dag_display_name,
         "dag_run_id": run.run_id,
         "dag_id": run.dag_id,
         "logical_date": from_datetime_to_zulu_without_ms(run.logical_date),
@@ -174,6 +172,7 @@ def get_dag_run_dict(run: DagRun):
         "run_after": from_datetime_to_zulu_without_ms(run.run_after),
         "start_date": from_datetime_to_zulu_without_ms(run.start_date),
         "end_date": from_datetime_to_zulu(run.end_date),
+        "duration": run.duration,
         "data_interval_start": from_datetime_to_zulu_without_ms(run.data_interval_start),
         "data_interval_end": from_datetime_to_zulu_without_ms(run.data_interval_end),
         "last_scheduling_decision": (
@@ -305,6 +304,7 @@ class TestGetDagRuns:
             pytest.param("end_date", [DAG1_RUN1_ID, DAG1_RUN2_ID], id="order_by_end_date"),
             pytest.param("updated_at", [DAG1_RUN1_ID, DAG1_RUN2_ID], id="order_by_updated_at"),
             pytest.param("conf", [DAG1_RUN1_ID, DAG1_RUN2_ID], id="order_by_conf"),
+            pytest.param("duration", [DAG1_RUN1_ID, DAG1_RUN2_ID], id="order_by_duration"),
         ],
     )
     @pytest.mark.usefixtures("configure_git_connection_for_dag_bundle")
@@ -1303,7 +1303,9 @@ class TestTriggerDagRun:
             session.query(DagRun).where(DagRun.dag_id == DAG1_ID, DagRun.run_id == expected_dag_run_id).one()
         )
         expected_response_json = {
+            "bundle_version": None,
             "conf": {},
+            "dag_display_name": DAG1_DISPLAY_NAME,
             "dag_id": DAG1_ID,
             "dag_run_id": expected_dag_run_id,
             "dag_versions": get_dag_versions_dict(run.dag_versions),
@@ -1311,6 +1313,7 @@ class TestTriggerDagRun:
             "logical_date": expected_logical_date,
             "run_after": fixed_now.replace("+00:00", "Z"),
             "start_date": None,
+            "duration": None,
             "state": "queued",
             "data_interval_end": expected_data_interval_end,
             "data_interval_start": expected_data_interval_start,
@@ -1492,6 +1495,8 @@ class TestTriggerDagRun:
 
         assert response_1.status_code == 200
         assert response_1.json() == {
+            "bundle_version": None,
+            "dag_display_name": DAG1_DISPLAY_NAME,
             "dag_run_id": RUN_ID_1,
             "dag_id": DAG1_ID,
             "dag_versions": mock.ANY,
@@ -1499,6 +1504,7 @@ class TestTriggerDagRun:
             "queued_at": now,
             "start_date": None,
             "end_date": None,
+            "duration": None,
             "run_after": now,
             "data_interval_start": now,
             "data_interval_end": now,
@@ -1566,7 +1572,7 @@ class TestTriggerDagRun:
         assert response.status_code == 409
         response_json = response.json()
         assert "detail" in response_json
-        assert list(response_json["detail"].keys()) == ["reason", "statement", "orig_error"]
+        assert list(response_json["detail"].keys()) == ["reason", "statement", "orig_error", "message"]
 
     @pytest.mark.usefixtures("configure_git_connection_for_dag_bundle")
     def test_should_respond_200_with_null_logical_date(self, test_client):
@@ -1576,6 +1582,8 @@ class TestTriggerDagRun:
         )
         assert response.status_code == 200
         assert response.json() == {
+            "bundle_version": None,
+            "dag_display_name": DAG1_DISPLAY_NAME,
             "dag_run_id": mock.ANY,
             "dag_id": DAG1_ID,
             "dag_versions": mock.ANY,
@@ -1584,6 +1592,7 @@ class TestTriggerDagRun:
             "run_after": mock.ANY,
             "start_date": None,
             "end_date": None,
+            "duration": None,
             "data_interval_start": mock.ANY,
             "data_interval_end": mock.ANY,
             "last_scheduling_decision": None,

@@ -53,8 +53,11 @@ import { Variables } from "src/pages/Variables";
 import { XCom } from "src/pages/XCom";
 
 import { Configs } from "./pages/Configs";
+import { GroupTaskInstance } from "./pages/GroupTaskInstance";
+import { AssetEvents as DagRunAssetEvents } from "./pages/Run/AssetEvents";
 import { Security } from "./pages/Security";
-import { queryClient } from "./queryClient";
+import { AssetEvents as TaskInstanceAssetEvents } from "./pages/TaskInstance/AssetEvents";
+import { client } from "./queryClient";
 
 const taskInstanceRoutes = [
   { element: <Logs />, index: true },
@@ -64,6 +67,7 @@ const taskInstanceRoutes = [
   { element: <TaskInstanceDetails />, path: "details" },
   { element: <RenderedTemplates />, path: "rendered_templates" },
   { element: <TaskInstances />, path: "task_instances" },
+  { element: <TaskInstanceAssetEvents />, path: "asset_events" },
 ];
 
 export const routerConfig = [
@@ -156,6 +160,7 @@ export const routerConfig = [
           { element: <Events />, path: "events" },
           { element: <Code />, path: "code" },
           { element: <DagRunDetails />, path: "details" },
+          { element: <DagRunAssetEvents />, path: "asset_events" },
         ],
         element: <Run />,
         path: "dags/:dagId/runs/:runId",
@@ -169,6 +174,19 @@ export const routerConfig = [
         children: [{ element: <TaskInstances />, index: true }],
         element: <MappedTaskInstance />,
         path: "dags/:dagId/runs/:runId/tasks/:taskId/mapped",
+      },
+      {
+        children: [{ element: <TaskInstances />, index: true }],
+        element: <GroupTaskInstance />,
+        path: "dags/:dagId/runs/:runId/tasks/group/:groupId",
+      },
+      {
+        children: [
+          { element: <TaskOverview />, index: true },
+          { element: <TaskInstances />, path: "task_instances" },
+        ],
+        element: <Task />,
+        path: "dags/:dagId/tasks/group/:groupId",
       },
       {
         children: taskInstanceRoutes,
@@ -193,7 +211,7 @@ export const routerConfig = [
     ),
     // Use react router loader to ensure we have the config before any other requests are made
     loader: async () => {
-      const data = await queryClient.ensureQueryData(
+      const data = await client.ensureQueryData(
         queryOptions({
           queryFn: ConfigService.getConfigs,
           queryKey: UseConfigServiceGetConfigsKeyFn(),

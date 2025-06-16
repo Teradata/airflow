@@ -21,7 +21,6 @@ import os
 import signal
 import subprocess
 import sys
-import time
 from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -76,6 +75,7 @@ from airflow_breeze.commands.common_options import (
     option_use_uv,
     option_uv_http_timeout,
     option_verbose,
+    option_version_suffix,
 )
 from airflow_breeze.commands.common_package_installation_options import (
     option_airflow_constraints_location,
@@ -188,19 +188,6 @@ def prepare_for_building_ci_image(params: BuildCiParams):
     make_sure_builder_configured(params=params)
 
 
-def build_timout_handler(build_process_group_id: int, signum, frame):
-    # Kill the forked process group - it will kill the build even if it is running in parallel
-    # with multiple processes and docker build sessions
-    os.killpg(build_process_group_id, signal.SIGTERM)
-    os.waitpid(build_process_group_id, 0)
-    # give the output a little time to flush so that the helpful error message is not hidden
-    time.sleep(5)
-    if os.environ.get("GITHUB_ACTIONS", "false") != "true":
-        get_console().print("::endgroup::")
-    get_console().print()
-    sys.exit(1)
-
-
 def kill_process_group(build_process_group_id: int):
     with contextlib.suppress(OSError):
         os.killpg(build_process_group_id, signal.SIGTERM)
@@ -235,14 +222,6 @@ option_upgrade_on_failure = click.option(
     envvar="UPGRADE_ON_FAILURE",
     show_default=True,
     default=not os.environ.get("CI", "") if not generating_command_images() else True,
-)
-
-option_version_suffix_for_pypi_ci = click.option(
-    "--version-suffix-for-pypi",
-    help="Version suffix used for PyPI packages (alpha, beta, rc1, etc.).",
-    default="dev0",
-    show_default=True,
-    envvar="VERSION_SUFFIX_FOR_PYPI",
 )
 
 option_ci_image_file_to_save = click.option(
@@ -305,7 +284,7 @@ option_ci_image_file_to_load = click.option(
 @option_use_uv
 @option_uv_http_timeout
 @option_verbose
-@option_version_suffix_for_pypi_ci
+@option_version_suffix
 def build(
     additional_airflow_extras: str | None,
     additional_dev_apt_command: str | None,
@@ -343,7 +322,7 @@ def build(
     upgrade_to_newer_dependencies: bool,
     use_uv: bool,
     uv_http_timeout: int,
-    version_suffix_for_pypi: str,
+    version_suffix: str,
 ):
     """Build CI image. Include building multiple images for all python versions."""
 
@@ -390,7 +369,7 @@ def build(
         upgrade_to_newer_dependencies=upgrade_to_newer_dependencies,
         use_uv=use_uv,
         uv_http_timeout=uv_http_timeout,
-        version_suffix_for_pypi=version_suffix_for_pypi,
+        version_suffix=version_suffix,
     )
     if platform:
         base_build_params.platform = platform
