@@ -25,6 +25,14 @@
 Changelog
 ---------
 
+3.2.0
+.....
+
+Features
+~~~~~~~~
+
+* ``Add BteqOperator for Executing Teradata BTEQ Scripts in Airflow (#51807)``
+
 3.1.0
 .....
 
