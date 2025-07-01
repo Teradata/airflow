@@ -22,13 +22,12 @@ import functools
 import logging
 import re
 from collections import defaultdict
-from collections.abc import Collection, Generator, Iterable, Sequence
+from collections.abc import Callable, Collection, Generator, Iterable, Sequence
 from datetime import datetime, timedelta
 from functools import cache
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     TypeVar,
     Union,
     cast,
@@ -122,14 +121,9 @@ AssetT = TypeVar("AssetT", bound=BaseAsset)
 TAG_MAX_LEN = 100
 
 DagStateChangeCallback = Callable[[Context], None]
-ScheduleInterval = Union[None, str, timedelta, relativedelta]
+ScheduleInterval = None | str | timedelta | relativedelta
 
-ScheduleArg = Union[
-    ScheduleInterval,
-    Timetable,
-    BaseAsset,
-    Collection[Union["Asset", "AssetAlias"]],
-]
+ScheduleArg = ScheduleInterval | Timetable | BaseAsset | Collection[Union["Asset", "AssetAlias"]]
 
 
 class InconsistentDataInterval(AirflowException):
