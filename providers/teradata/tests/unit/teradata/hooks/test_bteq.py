@@ -248,6 +248,7 @@ def test_execute_bteq_script_at_remote_success(
     mock_ssh_client.exec_command.return_value = (mock_stdin, mock_stdout, mock_stderr)
 
     # Instantiate BteqHook
+
     hook = BteqHook(ssh_conn_id="ssh_conn_id", teradata_conn_id="teradata_conn")
 
     # Call method under test
@@ -382,5 +383,5 @@ def test_remote_execution_cleanup_on_exception(
             tmp_dir=temp_dir,
         )
 
-    # Verify local encrypted file is deleted
+    # After exception, encrypted file should be deleted
     assert not os.path.exists(encrypted_file_path)

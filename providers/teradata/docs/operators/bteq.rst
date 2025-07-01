@@ -47,12 +47,14 @@ Make sure your Teradata Airflow connection is defined with the required fields:
 
 You can define a remote host with a separate SSH connection using the ``ssh_conn_id``.
 
+
 Ensure that the Teradata BTEQ utility is installed on the machine where the SQL statements or scripts will be executed. This could be:
 
 - The **local machine** where Airflow runs the task, for local execution.
 - The **remote host** accessed via SSH, for remote execution.
 
 If executing remotely, also ensure that an SSH server (e.g., ``sshd``) is running and accessible on the remote machine.
+
 
 .. note::
 
@@ -64,7 +66,6 @@ If executing remotely, also ensure that an SSH server (e.g., ``sshd``) is runnin
 
    See the Airflow SSH Connection documentation for details on configuring SSH keys:
    https://airflow.apache.org/docs/apache-airflow/stable/howto/connection/ssh.html
-
 
 
 
