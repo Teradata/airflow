@@ -28,7 +28,6 @@ from airflow.providers.teradata.utils.bteq_util import (
     read_file,
 )
 from airflow.providers.teradata.utils.constants import Constants
-
 if TYPE_CHECKING:
     from paramiko import SSHClient
 
@@ -36,11 +35,10 @@ if TYPE_CHECKING:
         from airflow.sdk.definitions.context import Context
     except ImportError:
         from airflow.utils.context import Context
-
-from airflow.models import BaseOperator
 from airflow.providers.ssh.hooks.ssh import SSHHook
 from airflow.providers.teradata.hooks.bteq import BteqHook
 from airflow.providers.teradata.hooks.teradata import TeradataHook
+from airflow.providers.teradata.version_compat import BaseOperator
 
 
 def contains_template(parameter_value):
@@ -238,7 +236,6 @@ class BteqOperator(BaseOperator):
                     )
             return None
         raise ValueError(Constants.BTEQ_MISSED_PARAMS)
-
     def _handle_local_bteq_file(
         self,
         file_path: str,

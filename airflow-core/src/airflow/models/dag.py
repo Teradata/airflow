@@ -22,13 +22,12 @@ import functools
 import logging
 import re
 from collections import defaultdict
-from collections.abc import Collection, Generator, Iterable, Sequence
+from collections.abc import Callable, Collection, Generator, Iterable, Sequence
 from datetime import datetime, timedelta
 from functools import cache
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     TypeVar,
     Union,
     cast,
@@ -122,14 +121,9 @@ AssetT = TypeVar("AssetT", bound=BaseAsset)
 TAG_MAX_LEN = 100
 
 DagStateChangeCallback = Callable[[Context], None]
-ScheduleInterval = Union[None, str, timedelta, relativedelta]
+ScheduleInterval = None | str | timedelta | relativedelta
 
-ScheduleArg = Union[
-    ScheduleInterval,
-    Timetable,
-    BaseAsset,
-    Collection[Union["Asset", "AssetAlias"]],
-]
+ScheduleArg = ScheduleInterval | Timetable | BaseAsset | Collection[Union["Asset", "AssetAlias"]]
 
 
 class InconsistentDataInterval(AirflowException):
@@ -225,13 +219,6 @@ def get_asset_triggered_next_run_info(
             .where(DagScheduleAssetReference.dag_id.in_(dag_ids))
         ).all()
     }
-
-
-def _triggerer_is_healthy(session: Session):
-    from airflow.jobs.triggerer_job_runner import TriggererJobRunner
-
-    job = TriggererJobRunner.most_recent_job(session=session)
-    return job and job.is_alive()
 
 
 @provide_session
@@ -714,15 +701,6 @@ class DAG(TaskSDKDag, LoggingMixin):
     def get_last_dagrun(self, session=NEW_SESSION, include_manually_triggered=False):
         return get_last_dagrun(
             self.dag_id, session=session, include_manually_triggered=include_manually_triggered
-        )
-
-    @provide_session
-    def has_dag_runs(self, session=NEW_SESSION, include_manually_triggered=True) -> bool:
-        return (
-            get_last_dagrun(
-                self.dag_id, session=session, include_manually_triggered=include_manually_triggered
-            )
-            is not None
         )
 
     @property
@@ -1589,9 +1567,6 @@ class DAG(TaskSDKDag, LoggingMixin):
 
         # todo: AIP-78 add verification that if run type is backfill then we have a backfill id
 
-        if TYPE_CHECKING:
-            # TODO: Task-SDK: remove this assert
-            assert self.params
         # create a copy of params before validating
         copied_params = copy.deepcopy(self.params)
         if conf:
