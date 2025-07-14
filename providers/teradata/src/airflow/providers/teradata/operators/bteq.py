@@ -28,6 +28,7 @@ from airflow.providers.teradata.utils.bteq_util import (
     read_file,
 )
 from airflow.providers.teradata.utils.constants import Constants
+
 if TYPE_CHECKING:
     from paramiko import SSHClient
 
@@ -236,6 +237,7 @@ class BteqOperator(BaseOperator):
                     )
             return None
         raise ValueError(Constants.BTEQ_MISSED_PARAMS)
+
     def _handle_local_bteq_file(
         self,
         file_path: str,
