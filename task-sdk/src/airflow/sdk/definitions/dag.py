@@ -25,15 +25,13 @@ import os
 import sys
 import weakref
 from collections import abc
-from collections.abc import Collection, Iterable, MutableSet
+from collections.abc import Callable, Collection, Iterable, MutableSet
 from datetime import datetime, timedelta
 from inspect import signature
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     ClassVar,
-    Union,
     cast,
     overload,
 )
@@ -74,12 +72,11 @@ if TYPE_CHECKING:
 
     from pendulum.tz.timezone import FixedTimezone, Timezone
 
-    from airflow.sdk.definitions._internal.abstractoperator import Operator
+    from airflow.sdk.definitions.abstractoperator import Operator
     from airflow.sdk.definitions.decorators import TaskDecoratorCollection
+    from airflow.sdk.definitions.edges import EdgeInfoType
     from airflow.sdk.definitions.taskgroup import TaskGroup
     from airflow.typing_compat import Self
-    from airflow.utils.types import EdgeInfoType
-
 
 log = logging.getLogger(__name__)
 
@@ -92,9 +89,9 @@ __all__ = [
 
 
 DagStateChangeCallback = Callable[[Context], None]
-ScheduleInterval = Union[None, str, timedelta, relativedelta]
+ScheduleInterval = None | str | timedelta | relativedelta
 
-ScheduleArg = Union[ScheduleInterval, Timetable, BaseAsset, Collection[BaseAsset]]
+ScheduleArg = ScheduleInterval | Timetable | BaseAsset | Collection[BaseAsset]
 
 
 _DAG_HASH_ATTRS = frozenset(
@@ -1285,12 +1282,7 @@ def _run_inline_trigger(trigger):
     import asyncio
 
     async def _run_inline_trigger_main():
-        # We can replace it with `return await anext(trigger.run(), default=None)`
-        # when we drop support for Python 3.9
-        try:
-            return await trigger.run().__anext__()
-        except StopAsyncIteration:
-            return None
+        return await anext(trigger.run(), None)
 
     return asyncio.run(_run_inline_trigger_main())
 
