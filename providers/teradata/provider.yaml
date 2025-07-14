@@ -57,26 +57,26 @@ operators:
     python-modules:
       - airflow.providers.teradata.operators.teradata
       - airflow.providers.teradata.operators.teradata_compute_cluster
-  - integration-name: Tpt
-    python-modules:
-      - airflow.providers.teradata.operators.tpt
   - integration-name: Bteq
     python-modules:
       - airflow.providers.teradata.operators.bteq
+  - integration-name: Tpt
+    python-modules:
+      - airflow.providers.teradata.operators.tpt
 
 hooks:
   - integration-name: Teradata
     python-modules:
       - airflow.providers.teradata.hooks.teradata
-  - integration-name: Tpt
-    python-modules:
-      - airflow.providers.teradata.hooks.tpt
   - integration-name: Ttu
     python-modules:
       - airflow.providers.teradata.hooks.ttu
   - integration-name: Bteq
     python-modules:
       - airflow.providers.teradata.hooks.bteq
+  - integration-name: Tpt
+    python-modules:
+      - airflow.providers.teradata.hooks.tpt
 
 transfers:
   - source-integration-name: Teradata

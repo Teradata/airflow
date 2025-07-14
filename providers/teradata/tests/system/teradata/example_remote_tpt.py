@@ -41,12 +41,12 @@ except ImportError:
 
 
 ENV_ID = os.environ.get("SYSTEM_TESTS_ENV_ID")
-DAG_ID = "example_tpt"
+DAG_ID = "example_remote_tpt"
 CONN_ID = "teradata_default"
 SSH_CONN_ID = "ssh_default"
 
 # Define file paths and table names for the test
-SYSTEM_TESTS_DIR = os.path.abspath(os.path.dirname(__file__))
+SYSTEM_TESTS_DIR = "/home/satya/airflow"
 SOURCE_FILE = os.path.join(SYSTEM_TESTS_DIR, "tdload_src_file.txt")
 TARGET_FILE = os.path.join(SYSTEM_TESTS_DIR, "tdload_target_file.txt")
 
@@ -63,7 +63,7 @@ with DAG(
     start_date=datetime.datetime(2020, 2, 2),
     schedule="@once",
     catchup=False,
-    default_args={"teradata_conn_id": CONN_ID, "params": params},
+    default_args={"teradata_conn_id": CONN_ID, "params": params, "ssh_conn_id": SSH_CONN_ID},
 ) as dag:
     # [START ddl_operator_howto_guide_drop_table]
     # Drop tables if they exist

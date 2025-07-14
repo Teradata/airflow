@@ -1,4 +1,3 @@
-#
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -17,10 +16,7 @@
 # under the License.
 from __future__ import annotations
 
-import os
-import shutil
-import tempfile
-from unittest import mock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -28,953 +24,492 @@ from airflow.exceptions import AirflowException
 from airflow.providers.teradata.hooks.tpt import TptHook
 
 
-# Fixtures
-@pytest.fixture
-def source_conn_dict():
-    return {
-        "host": "localhost",
-        "login": "user",
-        "password": "pass",
-        "ttu_log_folder": tempfile.gettempdir(),
-        "console_output_encoding": "utf-8",
-    }
-
-
-@pytest.fixture
-def target_conn_dict():
-    return {
-        "host": "remotehost",
-        "login": "target_user",
-        "password": "target_pass",
-    }
-
-
-@pytest.fixture
-def ddl_sql():
-    return "CREATE TABLE foo (id INT);"
-
-
-@pytest.fixture
-def error_list():
-    return "[3807]"
-
-
-@pytest.fixture
-def context():
-    return {}
-
-
-@pytest.fixture
-def tdload_cmd():
-    return ["tdload", "-j", "jobfile"]
-
-
-@pytest.fixture
-def job_variable_file(tmp_path):
-    file = tmp_path / "jobvars.txt"
-    file.write_text("dummy content")
-    return str(file)
-
-
-@pytest.fixture
-def ssh_conn_id():
-    return "ssh_conn_id"
-
-
-# Helper for SSH mocks
-def make_ssh_client_mock(stdout_data=b"output\n", stderr_data=b"", exit_status=0):
-    ssh_client = mock.Mock()
-    sftp_client = mock.Mock()
-    ssh_client.open_sftp.return_value = sftp_client
-    sftp_client.put = mock.Mock()
-    sftp_client.remove = mock.Mock()
-    sftp_client.close = mock.Mock()
-    stdout = mock.Mock()
-    stdout.read.return_value = stdout_data
-    stdout.channel.recv_exit_status.return_value = exit_status
-    stderr = mock.Mock()
-    stderr.read.return_value = stderr_data
-    ssh_client.exec_command.return_value = (mock.Mock(), stdout, stderr)
-    return ssh_client, sftp_client
-
-
-def make_ssh_client_mock_tbuild(stdout_data=b"output\n", stderr_data=b"", exit_status=0):
-    ssh_client = mock.Mock()
-    sftp_client = mock.Mock()
-    ssh_client.open_sftp.return_value = sftp_client
-    sftp_client.put = mock.Mock()
-    sftp_client.remove = mock.Mock()
-    sftp_client.close = mock.Mock()
-    stdout = mock.Mock()
-    stdout.read.return_value = stdout_data
-    stdout.channel.recv_exit_status.return_value = exit_status
-    stderr = mock.Mock()
-    stderr.read.return_value = stderr_data
-    ssh_client.exec_command.return_value = (mock.Mock(), stdout, stderr)
-    return ssh_client, sftp_client
-
-
-# --------------------------
-# Tests for _execute_tbuild_locally
-# --------------------------
-@mock.patch("airflow.providers.teradata.hooks.tpt.subprocess")
-def test__execute_tbuild_locally_success(mock_subprocess, ddl_sql, error_list, source_conn_dict):
-    hook = TptHook()
-    process_mock = mock.Mock()
-    process_mock.stdout.readline.side_effect = [b"DDL output\n", b""]
-    process_mock.wait.return_value = 0
-    process_mock.returncode = 0
-    mock_subprocess.Popen.return_value = process_mock
-
-    result = hook._execute_tbuild_locally(
-        tbuild_cmd=["tbuild", "-f", "script.sql"],
-        conn=source_conn_dict,
-        xcom_push_flag=True,
-    )
-    assert "DDL output" in result
-
-
-@mock.patch("airflow.providers.teradata.hooks.tpt.subprocess")
-def test__execute_tbuild_locally_error(mock_subprocess, source_conn_dict):
-    hook = TptHook()
-    process_mock = mock.Mock()
-    process_mock.stdout.readline.side_effect = [b"Error output\n", b""]
-    process_mock.wait.return_value = 1
-    process_mock.returncode = 1
-    mock_subprocess.Popen.return_value = process_mock
-
-    with pytest.raises(AirflowException, match="TPT command exited with return code 1 due to: Error output"):
-        hook._execute_tbuild_locally(
-            tbuild_cmd=["tbuild", "-f", "script.sql"],
-            conn=source_conn_dict,
-            xcom_push_flag=False,
-        )
-
-
-# --------------------------
-# Tests for _execute_tbuild_via_ssh
-# --------------------------
-@mock.patch("airflow.providers.teradata.hooks.tpt.SSHHook")
-def test__execute_tbuild_via_ssh_success_xcom_push(mock_ssh_hook, tmp_path):
-    hook = TptHook()
-    tbuild_cmd = ["tbuild", "-f", "script.sql"]
-    script_file = str(tmp_path / "script.sql")
-    with open(script_file, "w") as f:
-        f.write("TPT SCRIPT")
-    ssh_conn_id = "ssh_conn_id"
-    ssh_client, sftp_client = make_ssh_client_mock_tbuild(
-        stdout_data=b"line1\nline2\n", stderr_data=b"", exit_status=0
-    )
-    mock_ssh_hook.return_value.get_conn.return_value.__enter__.return_value = ssh_client
-
-    result = hook._execute_tbuild_via_ssh(
-        tbuild_cmd=tbuild_cmd.copy(),
-        script_file=script_file,
-        ssh_conn_id=ssh_conn_id,
-        xcom_push_flag=True,
-    )
-    assert result == "line2"
-    sftp_client.put.assert_called_once()
-    sftp_client.remove.assert_called_once()
-    sftp_client.close.assert_called()
-    ssh_client.exec_command.assert_called_once()
-    remote_script_file = f"/tmp/airflow_tpt_{os.path.basename(script_file)}"
-    called_args = ssh_client.exec_command.call_args[0][0].split()
-    assert remote_script_file in called_args
-
-
-@mock.patch("airflow.providers.teradata.hooks.tpt.SSHHook")
-def test__execute_tbuild_via_ssh_success_no_xcom_push(mock_ssh_hook, tmp_path):
-    hook = TptHook()
-    tbuild_cmd = ["tbuild", "-f", "script.sql"]
-    script_file = str(tmp_path / "script.sql")
-    with open(script_file, "w") as f:
-        f.write("TPT SCRIPT")
-    ssh_conn_id = "ssh_conn_id"
-    ssh_client, sftp_client = make_ssh_client_mock_tbuild(
-        stdout_data=b"output\n", stderr_data=b"", exit_status=0
-    )
-    mock_ssh_hook.return_value.get_conn.return_value.__enter__.return_value = ssh_client
-
-    result = hook._execute_tbuild_via_ssh(
-        tbuild_cmd=tbuild_cmd.copy(),
-        script_file=script_file,
-        ssh_conn_id=ssh_conn_id,
-        xcom_push_flag=False,
-    )
-    assert result is None
-    sftp_client.put.assert_called_once()
-    sftp_client.remove.assert_called_once()
-    sftp_client.close.assert_called()
-    ssh_client.exec_command.assert_called_once()
-
-
-@mock.patch("airflow.providers.teradata.hooks.tpt.SSHHook")
-def test__execute_tbuild_via_ssh_nonzero_exit_status(mock_ssh_hook, tmp_path):
-    hook = TptHook()
-    tbuild_cmd = ["tbuild", "-f", "script.sql"]
-    script_file = str(tmp_path / "script.sql")
-    with open(script_file, "w") as f:
-        f.write("TPT SCRIPT")
-    ssh_conn_id = "ssh_conn_id"
-    ssh_client, sftp_client = make_ssh_client_mock_tbuild(
-        stdout_data=b"output\n", stderr_data=b"err\n", exit_status=2
-    )
-    mock_ssh_hook.return_value.get_conn.return_value.__enter__.return_value = ssh_client
-
-    with pytest.raises(AirflowException, match="tbuild command failed with exit code 2: err"):
-        hook._execute_tbuild_via_ssh(
-            tbuild_cmd=tbuild_cmd.copy(),
-            script_file=script_file,
-            ssh_conn_id=ssh_conn_id,
-            xcom_push_flag=True,
-        )
-    sftp_client.put.assert_called_once()
-    sftp_client.remove.assert_called_once()
-    sftp_client.close.assert_called()
-    ssh_client.exec_command.assert_called_once()
-
-
-@mock.patch("airflow.providers.teradata.hooks.tpt.SSHHook")
-def test__execute_tbuild_via_ssh_cleanup_error_warning(mock_ssh_hook, tmp_path):
-    hook = TptHook()
-    tbuild_cmd = ["tbuild", "-f", "script.sql"]
-    script_file = str(tmp_path / "script.sql")
-    with open(script_file, "w") as f:
-        f.write("TPT SCRIPT")
-    ssh_conn_id = "ssh_conn_id"
-    ssh_client, sftp_client = make_ssh_client_mock_tbuild(
-        stdout_data=b"output\n", stderr_data=b"", exit_status=0
-    )
-    # Simulate error on remove
-    sftp_client.remove.side_effect = Exception("remove failed")
-    mock_ssh_hook.return_value.get_conn.return_value.__enter__.return_value = ssh_client
-
-    # Should not raise, but log a warning
-    result = hook._execute_tbuild_via_ssh(
-        tbuild_cmd=tbuild_cmd.copy(),
-        script_file=script_file,
-        ssh_conn_id=ssh_conn_id,
-        xcom_push_flag=True,
-    )
-    assert result == "output"
-    sftp_client.put.assert_called_once()
-    sftp_client.remove.assert_called_once()
-    sftp_client.close.assert_called()
-    ssh_client.exec_command.assert_called_once()
-
-
-# --------------------------
-# Tests for _execute_tdload_locally
-# --------------------------
-@mock.patch("airflow.providers.teradata.hooks.tpt.subprocess")
-def test_execute_tdload_locally_success(mock_subprocess, source_conn_dict):
-    hook = TptHook()
-    process_mock = mock.Mock()
-    process_mock.stdout.readline.side_effect = [b"Line1\n", b"Line2\n", b""]
-    process_mock.wait.return_value = 0
-    process_mock.returncode = 0
-    mock_subprocess.Popen.return_value = process_mock
-
-    result = hook._execute_tdload_locally(["tdload", "-j", "jobfile"], source_conn_dict, xcom_push_flag=True)
-    assert result == "Line2"
-
-
-# --------------------------
-# Tests for _execute_tdload_via_ssh
-# --------------------------
-@mock.patch("airflow.providers.teradata.hooks.tpt.SSHHook")
-def test_execute_tdload_via_ssh_success_xcom_push(mock_ssh_hook, tdload_cmd, job_variable_file, ssh_conn_id):
-    hook = TptHook()
-    ssh_client, sftp_client = make_ssh_client_mock(
-        stdout_data=b"line1\nline2\n", stderr_data=b"", exit_status=0
-    )
-    mock_ssh_hook.return_value.get_conn.return_value.__enter__.return_value = ssh_client
-
-    result = hook._execute_tdload_via_ssh(
-        tdload_cmd=tdload_cmd.copy(),
-        job_variable_file=job_variable_file,
-        ssh_conn_id=ssh_conn_id,
-        xcom_push_flag=True,
-    )
-    assert result == "line2"
-    sftp_client.put.assert_called_once()
-    sftp_client.remove.assert_called_once()
-    sftp_client.close.assert_called()
-    ssh_client.exec_command.assert_called_once()
-    remote_job_file = f"/tmp/airflow_tdload_{os.path.basename(job_variable_file)}"
-    called_args = ssh_client.exec_command.call_args[0][0].split()
-    assert remote_job_file in called_args
-
-
-@mock.patch("airflow.providers.teradata.hooks.tpt.SSHHook")
-def test_execute_tdload_via_ssh_success_no_xcom_push(
-    mock_ssh_hook, tdload_cmd, job_variable_file, ssh_conn_id
-):
-    hook = TptHook()
-    ssh_client, sftp_client = make_ssh_client_mock(stdout_data=b"output\n", stderr_data=b"", exit_status=0)
-    mock_ssh_hook.return_value.get_conn.return_value.__enter__.return_value = ssh_client
-
-    result = hook._execute_tdload_via_ssh(
-        tdload_cmd=tdload_cmd.copy(),
-        job_variable_file=job_variable_file,
-        ssh_conn_id=ssh_conn_id,
-        xcom_push_flag=False,
-    )
-    assert result is None
-    sftp_client.put.assert_called_once()
-    sftp_client.remove.assert_called_once()
-    sftp_client.close.assert_called()
-    ssh_client.exec_command.assert_called_once()
-
-
-@mock.patch("airflow.providers.teradata.hooks.tpt.SSHHook")
-def test_execute_tdload_via_ssh_nonzero_exit_status(
-    mock_ssh_hook, tdload_cmd, job_variable_file, ssh_conn_id
-):
-    hook = TptHook()
-    ssh_client, sftp_client = make_ssh_client_mock(
-        stdout_data=b"output\n", stderr_data=b"err\n", exit_status=2
-    )
-    mock_ssh_hook.return_value.get_conn.return_value.__enter__.return_value = ssh_client
-
-    with pytest.raises(AirflowException, match="tdload command failed with exit code 2: err"):
-        hook._execute_tdload_via_ssh(
-            tdload_cmd=tdload_cmd.copy(),
-            job_variable_file=job_variable_file,
-            ssh_conn_id=ssh_conn_id,
-            xcom_push_flag=True,
-        )
-    sftp_client.put.assert_called_once()
-    sftp_client.remove.assert_called_once()
-    sftp_client.close.assert_called()
-    ssh_client.exec_command.assert_called_once()
-
-
-# --------------------------
-# Tests for _prepare_tdload_script
-# --------------------------
-def test_prepare_tdload_script_file_to_table(tmp_path, source_conn_dict):
-    hook = TptHook()
-    file_path = hook._prepare_tdload_script(
-        mode="file_to_table",
-        source_table=None,
-        select_stmt=None,
-        target_table="my_table",
-        source_file_name="data.csv",
-        target_file_name=None,
-        source_format="delimited",
-        target_format="delimited",
-        source_text_delimiter=",",
-        target_text_delimiter=",",
-        staging_table=None,
-        tdload_options=None,
-        source_conn=source_conn_dict,
-        target_conn=None,
-    )
-    with open(file_path) as f:
-        content = f.read()
-    assert "TargetTable='my_table'" in content
-    assert "SourceFileName='data.csv'" in content
-    os.remove(file_path)
-
-
-def test_prepare_tdload_script_table_to_file(tmp_path, source_conn_dict):
-    hook = TptHook()
-    file_path = hook._prepare_tdload_script(
-        mode="table_to_file",
-        source_table="src_table",
-        select_stmt=None,
-        target_table=None,
-        source_file_name=None,
-        target_file_name="out.csv",
-        source_format="delimited",
-        target_format="delimited",
-        source_text_delimiter=",",
-        target_text_delimiter="|",
-        staging_table=None,
-        tdload_options=None,
-        source_conn=source_conn_dict,
-        target_conn=None,
-    )
-    with open(file_path) as f:
-        content = f.read()
-    assert "SourceTable='src_table'" in content
-    assert "TargetFileName='out.csv'" in content
-    assert "TargetTextDelimiter='|'" in content
-    os.remove(file_path)
-
-
-def test_prepare_tdload_script_table_to_table(tmp_path, source_conn_dict, target_conn_dict):
-    hook = TptHook()
-    file_path = hook._prepare_tdload_script(
-        mode="table_to_table",
-        source_table="src_table",
-        select_stmt=None,
-        target_table="dest_table",
-        source_file_name=None,
-        target_file_name=None,
-        source_format="delimited",
-        target_format="delimited",
-        source_text_delimiter=",",
-        target_text_delimiter=",",
-        staging_table="stage_table",
-        tdload_options={"CustomOpt": "val"},
-        source_conn=source_conn_dict,
-        target_conn=target_conn_dict,
-    )
-    with open(file_path) as f:
-        content = f.read()
-    assert "SourceTable='src_table'" in content
-    assert "TargetTable='dest_table'" in content
-    assert "StagingTable='stage_table'" in content
-    assert "CustomOpt='val'" in content
-    os.remove(file_path)
-
-
-def test_prepare_tdload_script_table_to_table_missing_target_conn(source_conn_dict):
-    hook = TptHook()
-    with pytest.raises(ValueError, match="Target connection details required for table_to_table mode"):
-        hook._prepare_tdload_script(
-            mode="table_to_table",
-            source_table="src_table",
-            select_stmt=None,
-            target_table="dest_table",
-            source_file_name=None,
-            target_file_name=None,
-            source_format="delimited",
-            target_format="delimited",
-            source_text_delimiter=",",
-            target_text_delimiter=",",
-            staging_table=None,
-            tdload_options=None,
-            source_conn=source_conn_dict,
-            target_conn=None,
-        )
-
-
-def test_prepare_tdload_script_select_stmt_file_to_table(tmp_path, source_conn_dict):
-    hook = TptHook()
-    file_path = hook._prepare_tdload_script(
-        mode="file_to_table",
-        source_table=None,
-        select_stmt="SELECT * FROM src",
-        target_table="my_table",
-        source_file_name="data.csv",
-        target_file_name=None,
-        source_format="delimited",
-        target_format="delimited",
-        source_text_delimiter=";",
-        target_text_delimiter=";",
-        staging_table=None,
-        tdload_options=None,
-        source_conn=source_conn_dict,
-        target_conn=None,
-    )
-    with open(file_path) as f:
-        content = f.read()
-    assert "TargetTable='my_table'" in content
-    assert "SourceFileName='data.csv'" in content
-    assert "SELECT * FROM src" not in content
-    os.remove(file_path)
-
-
-def test_prepare_tdload_script_with_tdload_options(tmp_path, source_conn_dict):
-    hook = TptHook()
-    tdload_options = {"ErrorLimit": "100", "LogLevel": "DEBUG"}
-    file_path = hook._prepare_tdload_script(
-        mode="file_to_table",
-        source_table=None,
-        select_stmt=None,
-        target_table="my_table",
-        source_file_name="data.csv",
-        target_file_name=None,
-        source_format="delimited",
-        target_format="delimited",
-        source_text_delimiter=",",
-        target_text_delimiter=",",
-        staging_table=None,
-        tdload_options=tdload_options,
-        source_conn=source_conn_dict,
-        target_conn=None,
-    )
-    with open(file_path) as f:
-        content = f.read()
-    assert "ErrorLimit='100'" in content
-    assert "LogLevel='DEBUG'" in content
-    os.remove(file_path)
-
-
-def test_prepare_tdload_script_file_to_table_with_nondefault_format_and_delimiter(tmp_path, source_conn_dict):
-    hook = TptHook()
-    file_path = hook._prepare_tdload_script(
-        mode="file_to_table",
-        source_table=None,
-        select_stmt=None,
-        target_table="my_table",
-        source_file_name="data.csv",
-        target_file_name=None,
-        source_format="CSV",
-        target_format="delimited",
-        source_text_delimiter="|",
-        target_text_delimiter=",",
-        staging_table=None,
-        tdload_options=None,
-        source_conn=source_conn_dict,
-        target_conn=None,
-    )
-    with open(file_path) as f:
-        content = f.read()
-    assert "SourceFormat='CSV'" in content
-    assert "SourceTextDelimiter='|'" in content
-    os.remove(file_path)
-
-
-def test_prepare_tdload_script_table_to_file_with_select_stmt_and_nondefault_target_format(
-    tmp_path, source_conn_dict
-):
-    hook = TptHook()
-    file_path = hook._prepare_tdload_script(
-        mode="table_to_file",
-        source_table=None,
-        select_stmt="SELECT * FROM foo",
-        target_table=None,
-        source_file_name=None,
-        target_file_name="output.txt",
-        source_format="delimited",
-        target_format="TEXT",
-        source_text_delimiter=",",
-        target_text_delimiter=";",
-        staging_table=None,
-        tdload_options=None,
-        source_conn=source_conn_dict,
-        target_conn=None,
-    )
-    with open(file_path) as f:
-        content = f.read()
-    assert "SourceSelectStmt='SELECT * FROM foo'" in content
-    assert "TargetFileName='output.txt'" in content
-    assert "TargetFormat='TEXT'" in content
-    assert "TargetTextDelimiter=';'" in content
-    os.remove(file_path)
-
-
-def test_prepare_tdload_script_table_to_table_with_select_stmt_and_custom_options(
-    tmp_path, source_conn_dict, target_conn_dict
-):
-    hook = TptHook()
-    tdload_options = {"CustomOpt1": "val1", "CustomOpt2": "val2"}
-    file_path = hook._prepare_tdload_script(
-        mode="table_to_table",
-        source_table=None,
-        select_stmt="SELECT * FROM bar",
-        target_table="dest_table",
-        source_file_name=None,
-        target_file_name=None,
-        source_format="delimited",
-        target_format="delimited",
-        source_text_delimiter=",",
-        target_text_delimiter=",",
-        staging_table=None,
-        tdload_options=tdload_options,
-        source_conn=source_conn_dict,
-        target_conn=target_conn_dict,
-    )
-    with open(file_path) as f:
-        content = f.read()
-    assert "SourceSelectStmt='SELECT * FROM bar'" in content
-    assert "TargetTable='dest_table'" in content
-    assert "CustomOpt1='val1'" in content
-    assert "CustomOpt2='val2'" in content
-    os.remove(file_path)
-
-
-def test_prepare_tdload_script_with_staging_table(tmp_path, source_conn_dict, target_conn_dict):
-    hook = TptHook()
-    file_path = hook._prepare_tdload_script(
-        mode="table_to_table",
-        source_table="src_table",
-        select_stmt=None,
-        target_table="dest_table",
-        source_file_name=None,
-        target_file_name=None,
-        source_format="delimited",
-        target_format="delimited",
-        source_text_delimiter=",",
-        target_text_delimiter=",",
-        staging_table="stage_table",
-        tdload_options=None,
-        source_conn=source_conn_dict,
-        target_conn=target_conn_dict,
-    )
-    with open(file_path) as f:
-        content = f.read()
-    assert "StagingTable='stage_table'" in content
-    os.remove(file_path)
-
-
-def test_prepare_tdload_script_tdload_options_overrides(tmp_path, source_conn_dict):
-    hook = TptHook()
-    tdload_options = {"TargetTable": "should_not_override"}
-    file_path = hook._prepare_tdload_script(
-        mode="file_to_table",
-        source_table=None,
-        select_stmt=None,
-        target_table="real_table",
-        source_file_name="file.csv",
-        target_file_name=None,
-        source_format="delimited",
-        target_format="delimited",
-        source_text_delimiter=",",
-        target_text_delimiter=",",
-        staging_table=None,
-        tdload_options=tdload_options,
-        source_conn=source_conn_dict,
-        target_conn=None,
-    )
-    with open(file_path) as f:
-        content = f.read()
-    assert "TargetTable='real_table'" in content
-    assert "TargetTable='should_not_override'" not in content
-    os.remove(file_path)
-
-
-# Test for _prepare_tdload_script  mode == "table_to_table" and select_stmt
-def test_prepare_tdload_script_table_to_table_with_select_stmt(tmp_path, source_conn_dict, target_conn_dict):
-    hook = TptHook()
-    file_path = hook._prepare_tdload_script(
-        mode="table_to_table",
-        source_table=None,
-        select_stmt="SELECT * FROM src_table",
-        target_table="dest_table",
-        source_file_name=None,
-        target_file_name=None,
-        source_format="delimited",
-        target_format="delimited",
-        source_text_delimiter=",",
-        target_text_delimiter=",",
-        staging_table=None,
-        tdload_options=None,
-        source_conn=source_conn_dict,
-        target_conn=target_conn_dict,
-    )
-    with open(file_path) as f:
-        content = f.read()
-    assert "SourceSelectStmt='SELECT * FROM src_table'" in content
-    assert "TargetTable='dest_table'" in content
-    os.remove(file_path)
-
-
-# --------------------------
-# Tests for _prepare_tpt_ddl_script
-# --------------------------
-def test_prepare_tpt_ddl_script(ddl_sql, source_conn_dict):
-    hook = TptHook()
-    script_content = hook._prepare_tpt_ddl_script(
-        sql=ddl_sql,
-        error_list="[3807]",
-        host=source_conn_dict["host"],
-        login=source_conn_dict["login"],
-        password=source_conn_dict["password"],
-    )
-    assert "CREATE TABLE foo (id INT);" in script_content
-    assert "ErrorList = ['[3807]']" in script_content
-
-
-# --------------------------
-# Tests for execute_ddl
-# --------------------------
-@mock.patch("airflow.providers.teradata.hooks.tpt.TptHook.get_conn")
-@mock.patch("airflow.providers.teradata.hooks.tpt.TptHook._execute_tbuild_locally")
-def test_execute_ddl_success_local(mock_tbuild, mock_get_conn, ddl_sql, error_list):
-    hook = TptHook()
-    mock_tbuild.return_value = "DDL OK"
-    result = hook.execute_ddl(
-        sql=ddl_sql,
-        error_list=error_list,
-        xcom_push_flag=True,
-        ssh_conn_id=None,
-    )
-    assert result == "DDL OK"
-    mock_tbuild.assert_called_once()
-    mock_get_conn.assert_called_once()
-
-
-@mock.patch("airflow.providers.teradata.hooks.tpt.TptHook.get_conn")
-@mock.patch("airflow.providers.teradata.hooks.tpt.TptHook._execute_tbuild_via_ssh")
-def test_execute_ddl_success_ssh(mock_tbuild_ssh, mock_get_conn, ddl_sql, error_list):
-    hook = TptHook()
-    mock_tbuild_ssh.return_value = "DDL SSH OK"
-    result = hook.execute_ddl(
-        sql=ddl_sql,
-        error_list=error_list,
-        xcom_push_flag=False,
-        ssh_conn_id="ssh_conn_id",
-    )
-    assert result == "DDL SSH OK"
-    mock_tbuild_ssh.assert_called_once()
-    mock_get_conn.assert_called_once()
-
-
-# add one more test for execute_ddl with empty sql
-def test_execute_ddl_empty_sql(source_conn_dict):
-    hook = TptHook()
-    with pytest.raises(ValueError, match="SQL statement cannot be empty"):
-        hook.execute_ddl(
-            sql="",
-            error_list="",
-            xcom_push_flag=False,
-            ssh_conn_id=None,
-        )
-
-
-# --------------------------
-# Tests for execute_tdload
-# --------------------------
-def test_execute_tdload_invalid_mode(source_conn_dict):
-    hook = TptHook()
-    with pytest.raises(ValueError, match="Invalid mode: invalid_mode"):
-        hook.execute_tdload(
-            mode="invalid_mode",
-            ssh_conn_id=None,
-            source_table=None,
-            select_stmt=None,
-            target_table=None,
-            source_file_name=None,
-            target_file_name=None,
-            source_format="delimited",
-            target_format="delimited",
-            source_text_delimiter=",",
-            target_text_delimiter=",",
-            staging_table=None,
-            tdload_options=None,
-            target_teradata_conn_id=None,
-            xcom_push_flag=False,
-        )
-
-
-def test_execute_tdload_file_to_table_missing_params(source_conn_dict):
-    hook = TptHook()
-    with pytest.raises(ValueError, match="file_to_table mode requires source_file_name and target_table"):
-        hook.execute_tdload(
-            mode="file_to_table",
-            ssh_conn_id=None,
-            source_table=None,
-            select_stmt=None,
-            target_table=None,
-            source_file_name=None,
-            target_file_name=None,
-            source_format="delimited",
-            target_format="delimited",
-            source_text_delimiter=",",
-            target_text_delimiter=",",
-            staging_table=None,
-            tdload_options=None,
-            target_teradata_conn_id=None,
-            xcom_push_flag=False,
-        )
-
-
-def test_execute_tdload_table_to_file_missing_params(source_conn_dict):
-    hook = TptHook()
-    with pytest.raises(
-        ValueError,
-        match="table_to_file mode requires target_file_name and either source_table or select_stmt",
+class TestTptHook:
+    @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
+    def test_init_with_ssh(self, mock_ssh_hook):
+        hook = TptHook(ssh_conn_id="ssh_default")
+        assert hook.ssh_conn_id == "ssh_default"
+        assert hook.ssh_hook is not None
+
+    def test_init_without_ssh(self):
+        hook = TptHook()
+        assert hook.ssh_conn_id is None
+        assert hook.ssh_hook is None
+
+    @patch("airflow.providers.teradata.hooks.tpt.TptHook._execute_tbuild_via_ssh")
+    @patch("airflow.providers.teradata.hooks.tpt.TptHook._execute_tbuild_locally")
+    def test_execute_ddl_dispatch(self, mock_local, mock_ssh):
+        # Local execution
+        hook = TptHook()
+        mock_local.return_value = 0
+        assert hook.execute_ddl("SOME DDL", "/tmp") == 0
+        mock_local.assert_called_once()
+
+        # SSH execution
+        hook = TptHook(ssh_conn_id="ssh_default")
+        hook.ssh_hook = MagicMock()
+        mock_ssh.return_value = 0
+        assert hook.execute_ddl("SOME DDL", "/tmp") == 0
+        mock_ssh.assert_called_once()
+
+    def test_execute_ddl_empty_script(self):
+        hook = TptHook()
+        with pytest.raises(ValueError, match="TPT script must not be empty"):
+            hook.execute_ddl("", "/tmp")
+
+    def test_execute_ddl_empty_script_content(self):
+        hook = TptHook()
+        with pytest.raises(ValueError, match="TPT script content must not be empty after processing"):
+            hook.execute_ddl("   ", "/tmp")  # Only whitespace
+
+    @patch("airflow.providers.teradata.hooks.tpt.terminate_subprocess")
+    @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.set_local_file_permissions")
+    @patch("airflow.providers.teradata.hooks.tpt.subprocess.Popen")
+    @patch("airflow.providers.teradata.hooks.tpt.shutil.which", return_value="/usr/bin/tbuild")
+    def test_execute_tbuild_locally_success(
+        self, mock_which, mock_popen, mock_set_permissions, mock_secure_delete, mock_terminate
     ):
-        hook.execute_tdload(
-            mode="table_to_file",
-            ssh_conn_id=None,
-            source_table=None,
-            select_stmt=None,
-            target_table=None,
-            source_file_name=None,
-            target_file_name=None,
-            source_format="delimited",
-            target_format="delimited",
-            source_text_delimiter=",",
-            target_text_delimiter=",",
-            staging_table=None,
-            tdload_options=None,
-            target_teradata_conn_id=None,
-            xcom_push_flag=False,
-        )
+        hook = TptHook()
+        process = MagicMock()
+        process.stdout.readline.side_effect = [b"All good\n", b""]
+        process.wait.return_value = None
+        process.returncode = 0
+        mock_popen.return_value = process
 
+        result = hook._execute_tbuild_locally("CREATE TABLE test (id INT);")
+        assert result == 0
+        mock_set_permissions.assert_called_once()
 
-def test_execute_tdload_table_to_table_missing_params(source_conn_dict):
-    hook = TptHook()
-    with pytest.raises(
-        ValueError, match="table_to_table mode requires target_table and either source_table or select_stmt"
+    @patch("airflow.providers.teradata.hooks.tpt.terminate_subprocess")
+    @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.set_local_file_permissions")
+    @patch("airflow.providers.teradata.hooks.tpt.subprocess.Popen")
+    @patch("airflow.providers.teradata.hooks.tpt.shutil.which", return_value="/usr/bin/tbuild")
+    def test_execute_tbuild_locally_failure(
+        self, mock_which, mock_popen, mock_set_permissions, mock_secure_delete, mock_terminate
     ):
-        hook.execute_tdload(
-            mode="table_to_table",
-            ssh_conn_id=None,
-            source_table=None,
-            select_stmt=None,
-            target_table=None,
-            source_file_name=None,
-            target_file_name=None,
-            source_format="delimited",
-            target_format="delimited",
-            source_text_delimiter=",",
-            target_text_delimiter=",",
-            staging_table=None,
-            tdload_options=None,
-            target_teradata_conn_id="target_conn_id",
-            xcom_push_flag=False,
-        )
+        hook = TptHook()
+        process = MagicMock()
+        process.stdout.readline.side_effect = [b"error: failed\n", b""]
+        process.wait.return_value = None
+        process.returncode = 1
+        mock_popen.return_value = process
 
+        with pytest.raises(AirflowException):
+            hook._execute_tbuild_locally("CREATE TABLE test (id INT);")
+        mock_set_permissions.assert_called_once()
 
-def test_execute_tdload_table_to_table_missing_target_conn_id(source_conn_dict):
-    hook = TptHook()
-    with pytest.raises(ValueError, match="table_to_table mode requires target_teradata_conn_id"):
-        hook.execute_tdload(
-            mode="table_to_table",
-            ssh_conn_id=None,
-            source_table="src_table",
-            select_stmt=None,
-            target_table="dest_table",
-            source_file_name=None,
-            target_file_name=None,
-            source_format="delimited",
-            target_format="delimited",
-            source_text_delimiter=",",
-            target_text_delimiter=",",
-            staging_table=None,
-            tdload_options=None,
-            target_teradata_conn_id=None,
-            xcom_push_flag=False,
-        )
+    @patch("airflow.providers.teradata.hooks.tpt.TptHook._execute_tdload_via_ssh")
+    @patch("airflow.providers.teradata.hooks.tpt.TptHook._execute_tdload_locally")
+    def test_execute_tdload_dispatch(self, mock_local, mock_ssh):
+        # Local execution
+        hook = TptHook()
+        mock_local.return_value = 0
+        assert hook.execute_tdload("/tmp", "jobvar") == 0
+        mock_local.assert_called_once()
 
+        # SSH execution
+        hook = TptHook(ssh_conn_id="ssh_default")
+        hook.ssh_hook = MagicMock()
+        mock_ssh.return_value = 0
+        assert hook.execute_tdload("/tmp", "jobvar") == 0
+        mock_ssh.assert_called_once()
 
-def test_execute_tdload_with_target_teradata_conn_id_and_tdload_options():
-    hook = TptHook()
-    tdload_options = {"ErrorLimit": "10"}
-    # Provide an invalid target_teradata_conn_id to trigger the ValueError
-    with pytest.raises(ValueError, match="table_to_table mode requires target_teradata_conn_id"):
-        hook.execute_tdload(
-            mode="table_to_table",
-            ssh_conn_id=None,
-            source_table="src_table",
-            select_stmt=None,
-            target_table="dest_table",
-            source_file_name=None,
-            target_file_name=None,
-            source_format="delimited",
-            target_format="delimited",
-            source_text_delimiter=",",
-            target_text_delimiter=",",
-            staging_table=None,
-            tdload_options=tdload_options,
-            target_teradata_conn_id=None,
-            xcom_push_flag=False,
-        )
+    @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.subprocess.Popen")
+    @patch("airflow.providers.teradata.hooks.tpt.shutil.which", return_value="/usr/bin/tdload")
+    def test_execute_tdload_locally_success(self, mock_which, mock_popen, mock_secure_delete):
+        hook = TptHook()
+        process = MagicMock()
+        process.stdout.readline.side_effect = [b"Loaded\n", b""]
+        process.wait.return_value = None
+        process.returncode = 0
+        mock_popen.return_value = process
 
+        result = hook._execute_tdload_locally("jobvar", "-v", "jobname")
+        assert result == 0
 
-def test_execute_tdload_table_to_file_with_select_stmt(source_conn_dict):
-    hook = TptHook()
-    with pytest.raises(
-        ValueError,
-        match="table_to_file mode requires target_file_name and either source_table or select_stmt",
+    @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.subprocess.Popen")
+    @patch("airflow.providers.teradata.hooks.tpt.shutil.which", return_value="/usr/bin/tdload")
+    def test_execute_tdload_locally_failure(self, mock_which, mock_popen, mock_secure_delete):
+        hook = TptHook()
+        process = MagicMock()
+        process.stdout.readline.side_effect = [b"error: failed\n", b""]
+        process.wait.return_value = None
+        process.returncode = 1
+        mock_popen.return_value = process
+
+        with pytest.raises(AirflowException):
+            hook._execute_tdload_locally("jobvar", "-v", "jobname")
+
+    @patch("airflow.providers.teradata.hooks.tpt.execute_remote_command")
+    @patch("airflow.providers.teradata.hooks.tpt.remote_secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.set_remote_file_permissions")
+    @patch("airflow.providers.teradata.hooks.tpt.decrypt_remote_file")
+    @patch("airflow.providers.teradata.hooks.tpt.transfer_file_sftp")
+    @patch("airflow.providers.teradata.hooks.tpt.generate_encrypted_file_with_openssl")
+    @patch("airflow.providers.teradata.hooks.tpt.generate_random_password")
+    @patch("airflow.providers.teradata.hooks.tpt.verify_tpt_utility_on_remote_host")
+    @patch("airflow.providers.teradata.hooks.tpt.write_file")
+    def test_execute_tbuild_via_ssh_success(
+        self,
+        mock_write_file,
+        mock_verify_tpt,
+        mock_gen_password,
+        mock_encrypt_file,
+        mock_transfer_file,
+        mock_decrypt_file,
+        mock_set_permissions,
+        mock_secure_delete,
+        mock_remote_secure_delete,
+        mock_execute_remote_command,
     ):
-        hook.execute_tdload(
-            mode="table_to_file",
-            ssh_conn_id=None,
-            source_table=None,
-            select_stmt="SELECT * FROM foo",
-            target_table=None,
-            source_file_name=None,
-            target_file_name=None,
-            source_format="delimited",
-            target_format="delimited",
-            source_text_delimiter=",",
-            target_text_delimiter=",",
-            staging_table=None,
-            tdload_options=None,
-            target_teradata_conn_id=None,
-            xcom_push_flag=False,
-        )
+        """Test successful execution of tbuild via SSH"""
+        # Setup hook with SSH
+        hook = TptHook(ssh_conn_id="ssh_default")
+        hook.ssh_hook = MagicMock()
 
+        # Mock SSH client
+        mock_ssh_client = MagicMock()
+        hook.ssh_hook.get_conn.return_value.__enter__.return_value = mock_ssh_client
 
-def test_execute_tdload_table_to_table_with_select_stmt(source_conn_dict):
-    hook = TptHook()
-    with pytest.raises(
-        ValueError, match="table_to_table mode requires target_table and either source_table or select_stmt"
+        # Mock execute_remote_command
+        mock_execute_remote_command.return_value = (0, "DDL executed successfully", "")
+
+        # Mock password generation
+        mock_gen_password.return_value = "test_password"
+
+        # Execute the method
+        result = hook._execute_tbuild_via_ssh("CREATE TABLE test (id INT);", "/tmp")
+
+        # Assertions
+        assert result == 0
+        mock_verify_tpt.assert_called_once_with(mock_ssh_client, "tbuild", hook.log)
+        mock_write_file.assert_called_once()
+        mock_gen_password.assert_called_once()
+        mock_encrypt_file.assert_called_once()
+        mock_transfer_file.assert_called_once()
+        mock_decrypt_file.assert_called_once()
+        mock_set_permissions.assert_called_once()
+        mock_execute_remote_command.assert_called_once()
+        mock_remote_secure_delete.assert_called_once()
+        mock_secure_delete.assert_called()
+
+    @patch("airflow.providers.teradata.hooks.tpt.execute_remote_command")
+    @patch("airflow.providers.teradata.hooks.tpt.remote_secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.set_remote_file_permissions")
+    @patch("airflow.providers.teradata.hooks.tpt.decrypt_remote_file")
+    @patch("airflow.providers.teradata.hooks.tpt.transfer_file_sftp")
+    @patch("airflow.providers.teradata.hooks.tpt.generate_encrypted_file_with_openssl")
+    @patch("airflow.providers.teradata.hooks.tpt.generate_random_password")
+    @patch("airflow.providers.teradata.hooks.tpt.verify_tpt_utility_on_remote_host")
+    @patch("airflow.providers.teradata.hooks.tpt.write_file")
+    def test_execute_tbuild_via_ssh_failure(
+        self,
+        mock_write_file,
+        mock_verify_tpt,
+        mock_gen_password,
+        mock_encrypt_file,
+        mock_transfer_file,
+        mock_decrypt_file,
+        mock_set_permissions,
+        mock_secure_delete,
+        mock_remote_secure_delete,
+        mock_execute_remote_command,
     ):
-        hook.execute_tdload(
-            mode="table_to_table",
-            ssh_conn_id=None,
-            source_table=None,
-            select_stmt="SELECT * FROM foo",
-            target_table=None,
-            source_file_name=None,
-            target_file_name=None,
-            source_format="delimited",
-            target_format="delimited",
-            source_text_delimiter=",",
-            target_text_delimiter=",",
-            staging_table=None,
-            tdload_options=None,
-            target_teradata_conn_id="target_conn_id",
-            xcom_push_flag=False,
+        """Test failed execution of tbuild via SSH"""
+        # Setup hook with SSH
+        hook = TptHook(ssh_conn_id="ssh_default")
+        hook.ssh_hook = MagicMock()
+
+        # Mock SSH client
+        mock_ssh_client = MagicMock()
+        hook.ssh_hook.get_conn.return_value.__enter__.return_value = mock_ssh_client
+
+        # Mock execute_remote_command with failure
+        mock_execute_remote_command.return_value = (1, "DDL failed", "Syntax error")
+
+        # Mock password generation
+        mock_gen_password.return_value = "test_password"
+
+        # Execute the method and expect failure
+        with pytest.raises(AirflowException, match="tbuild command failed with exit code 1"):
+            hook._execute_tbuild_via_ssh("CREATE TABLE test (id INT);", "/tmp")
+
+        # Verify cleanup was called even on failure
+        mock_remote_secure_delete.assert_called_once()
+        mock_secure_delete.assert_called()
+
+    def test_execute_tbuild_via_ssh_no_ssh_hook(self):
+        """Test tbuild via SSH when SSH hook is not initialized"""
+        hook = TptHook(ssh_conn_id="ssh_default")
+        hook.ssh_hook = None  # Simulate uninitialized SSH hook
+
+        with pytest.raises(AirflowException, match="SSH connection is not established"):
+            hook._execute_tbuild_via_ssh("CREATE TABLE test (id INT);", "/tmp")
+
+    @patch("airflow.providers.teradata.hooks.tpt.execute_remote_command")
+    @patch("airflow.providers.teradata.hooks.tpt.remote_secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.set_remote_file_permissions")
+    @patch("airflow.providers.teradata.hooks.tpt.decrypt_remote_file")
+    @patch("airflow.providers.teradata.hooks.tpt.transfer_file_sftp")
+    @patch("airflow.providers.teradata.hooks.tpt.generate_encrypted_file_with_openssl")
+    @patch("airflow.providers.teradata.hooks.tpt.generate_random_password")
+    @patch("airflow.providers.teradata.hooks.tpt.verify_tpt_utility_on_remote_host")
+    def test_transfer_to_and_execute_tdload_on_remote_success(
+        self,
+        mock_verify_tpt,
+        mock_gen_password,
+        mock_encrypt_file,
+        mock_transfer_file,
+        mock_decrypt_file,
+        mock_set_permissions,
+        mock_secure_delete,
+        mock_remote_secure_delete,
+        mock_execute_remote_command,
+    ):
+        """Test successful transfer and execution of tdload on remote host"""
+        # Setup hook with SSH
+        hook = TptHook(ssh_conn_id="ssh_default")
+        hook.ssh_hook = MagicMock()
+
+        # Mock SSH client
+        mock_ssh_client = MagicMock()
+        hook.ssh_hook.get_conn.return_value.__enter__.return_value = mock_ssh_client
+
+        # Mock execute_remote_command
+        mock_execute_remote_command.return_value = (0, "Job executed successfully\n100 rows loaded", "")
+
+        # Mock password generation
+        mock_gen_password.return_value = "test_password"
+
+        # Execute the method
+        result = hook._transfer_to_and_execute_tdload_on_remote(
+            "/tmp/job_var_file.txt", "/remote/tmp", "-v -u", "test_job"
         )
 
+        # Assertions
+        assert result == 0
+        mock_verify_tpt.assert_called_once_with(mock_ssh_client, "tdload", hook.log)
+        mock_gen_password.assert_called_once()
+        mock_encrypt_file.assert_called_once()
+        mock_transfer_file.assert_called_once()
+        mock_decrypt_file.assert_called_once()
+        mock_set_permissions.assert_called_once()
+        mock_execute_remote_command.assert_called_once()
+        mock_remote_secure_delete.assert_called_once()
+        mock_secure_delete.assert_called()
 
-@mock.patch("airflow.providers.teradata.hooks.tpt.TptHook.get_conn")
-@mock.patch("airflow.providers.teradata.hooks.tpt.TptHook._prepare_tdload_script")
-@mock.patch("airflow.providers.teradata.hooks.tpt.TptHook._execute_tdload_locally")
-def test_execute_tdload_runs_code_after_try_block(
-    mock_execute_tdload_locally, mock_prepare_tdload_script, mock_get_conn, tmp_path, source_conn_dict
-):
-    """
-    Test that code after the try block in execute_tdload is executed,
-    including log directory creation, job name generation, and command construction.
-    """
-    hook = TptHook()
-    # Setup mocks
-    mock_get_conn.return_value = dict(source_conn_dict, ttu_log_folder=str(tmp_path))
-    tdload_job_variable_file = str(tmp_path / "jobvars.txt")
-    mock_prepare_tdload_script.return_value = tdload_job_variable_file
-    mock_execute_tdload_locally.return_value = "TDLOAD OK"
+        # Verify the command was constructed correctly
+        call_args = mock_execute_remote_command.call_args[0][1]
+        assert "tdload" in call_args
+        assert "-j" in call_args
+        assert "-v" in call_args
+        assert "-u" in call_args
+        assert "test_job" in call_args
 
-    # Remove logs dir if exists to check creation
-    logs_dir = os.path.join(str(tmp_path), "tdload", "logs")
-    if os.path.exists(logs_dir):
-        shutil.rmtree(os.path.join(str(tmp_path), "tdload"))
+    @patch("airflow.providers.teradata.hooks.tpt.execute_remote_command")
+    @patch("airflow.providers.teradata.hooks.tpt.remote_secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.set_remote_file_permissions")
+    @patch("airflow.providers.teradata.hooks.tpt.decrypt_remote_file")
+    @patch("airflow.providers.teradata.hooks.tpt.transfer_file_sftp")
+    @patch("airflow.providers.teradata.hooks.tpt.generate_encrypted_file_with_openssl")
+    @patch("airflow.providers.teradata.hooks.tpt.generate_random_password")
+    @patch("airflow.providers.teradata.hooks.tpt.verify_tpt_utility_on_remote_host")
+    def test_transfer_to_and_execute_tdload_on_remote_failure(
+        self,
+        mock_verify_tpt,
+        mock_gen_password,
+        mock_encrypt_file,
+        mock_transfer_file,
+        mock_decrypt_file,
+        mock_set_permissions,
+        mock_secure_delete,
+        mock_remote_secure_delete,
+        mock_execute_remote_command,
+    ):
+        """Test failed transfer and execution of tdload on remote host"""
+        # Setup hook with SSH
+        hook = TptHook(ssh_conn_id="ssh_default")
+        hook.ssh_hook = MagicMock()
 
-    tdload_options = {"ErrorLimit": "100", "LogLevel": "DEBUG"}
+        # Mock SSH client
+        mock_ssh_client = MagicMock()
+        hook.ssh_hook.get_conn.return_value.__enter__.return_value = mock_ssh_client
 
-    result = hook.execute_tdload(
-        mode="file_to_table",
-        ssh_conn_id=None,
-        source_table=None,
-        select_stmt=None,
-        target_table="my_table",
-        source_file_name="file.csv",
-        target_file_name=None,
-        source_format="delimited",
-        target_format="delimited",
-        source_text_delimiter=",",
-        target_text_delimiter=",",
-        staging_table=None,
-        tdload_options=tdload_options,
-        target_teradata_conn_id=None,
-        xcom_push_flag=True,
+        # Mock execute_remote_command with failure
+        mock_execute_remote_command.return_value = (1, "Job failed", "Connection error")
+
+        # Mock password generation
+        mock_gen_password.return_value = "test_password"
+
+        # Execute the method and expect failure
+        with pytest.raises(AirflowException, match="tdload command failed with exit code 1"):
+            hook._transfer_to_and_execute_tdload_on_remote(
+                "/tmp/job_var_file.txt", "/remote/tmp", "-v", "test_job"
+            )
+
+        # Verify cleanup was called even on failure
+        mock_remote_secure_delete.assert_called_once()
+        mock_secure_delete.assert_called()
+
+    @patch("airflow.providers.teradata.hooks.tpt.execute_remote_command")
+    @patch("airflow.providers.teradata.hooks.tpt.remote_secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.set_remote_file_permissions")
+    @patch("airflow.providers.teradata.hooks.tpt.decrypt_remote_file")
+    @patch("airflow.providers.teradata.hooks.tpt.transfer_file_sftp")
+    @patch("airflow.providers.teradata.hooks.tpt.generate_encrypted_file_with_openssl")
+    @patch("airflow.providers.teradata.hooks.tpt.generate_random_password")
+    @patch("airflow.providers.teradata.hooks.tpt.verify_tpt_utility_on_remote_host")
+    def test_transfer_to_and_execute_tdload_on_remote_no_options(
+        self,
+        mock_verify_tpt,
+        mock_gen_password,
+        mock_encrypt_file,
+        mock_transfer_file,
+        mock_decrypt_file,
+        mock_set_permissions,
+        mock_secure_delete,
+        mock_remote_secure_delete,
+        mock_execute_remote_command,
+    ):
+        """Test transfer and execution of tdload on remote host with no options"""
+        # Setup hook with SSH
+        hook = TptHook(ssh_conn_id="ssh_default")
+        hook.ssh_hook = MagicMock()
+
+        # Mock SSH client
+        mock_ssh_client = MagicMock()
+        hook.ssh_hook.get_conn.return_value.__enter__.return_value = mock_ssh_client
+
+        # Mock execute_remote_command
+        mock_execute_remote_command.return_value = (0, "Job executed successfully", "")
+
+        # Mock password generation
+        mock_gen_password.return_value = "test_password"
+
+        # Execute the method with valid remote directory but no options
+        result = hook._transfer_to_and_execute_tdload_on_remote(
+            "/tmp/job_var_file.txt", "/remote/tmp", None, None
+        )
+
+        # Assertions
+        assert result == 0
+
+        # Verify the command was constructed correctly without options
+        call_args = mock_execute_remote_command.call_args[0][1]
+        assert "tdload" in call_args
+        assert "-j" in call_args
+        # Should not contain extra options
+        assert "-v" not in call_args
+        assert "-u" not in call_args
+
+    def test_transfer_to_and_execute_tdload_on_remote_no_ssh_hook(self):
+        """Test transfer and execution when SSH hook is not initialized"""
+        hook = TptHook(ssh_conn_id="ssh_default")
+        hook.ssh_hook = None  # Simulate uninitialized SSH hook
+
+        with pytest.raises(AirflowException, match="SSH connection is not established"):
+            hook._transfer_to_and_execute_tdload_on_remote(
+                "/tmp/job_var_file.txt", "/remote/tmp", "-v", "test_job"
+            )
+
+    @patch("airflow.providers.teradata.hooks.tpt.remote_secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
+    @patch("airflow.providers.teradata.hooks.tpt.set_remote_file_permissions")
+    @patch("airflow.providers.teradata.hooks.tpt.decrypt_remote_file")
+    @patch("airflow.providers.teradata.hooks.tpt.transfer_file_sftp")
+    @patch("airflow.providers.teradata.hooks.tpt.generate_encrypted_file_with_openssl")
+    @patch("airflow.providers.teradata.hooks.tpt.generate_random_password")
+    @patch(
+        "airflow.providers.teradata.hooks.tpt.verify_tpt_utility_on_remote_host",
+        side_effect=Exception("TPT utility not found"),
     )
+    def test_transfer_to_and_execute_tdload_on_remote_utility_check_fail(
+        self,
+        mock_verify_tpt,
+        mock_gen_password,
+        mock_encrypt_file,
+        mock_transfer_file,
+        mock_decrypt_file,
+        mock_set_permissions,
+        mock_secure_delete,
+        mock_remote_secure_delete,
+    ):
+        """Test transfer and execution when TPT utility verification fails"""
+        # Setup hook with SSH
+        hook = TptHook(ssh_conn_id="ssh_default")
+        hook.ssh_hook = MagicMock()
 
-    # Assert that the logs directory was created
-    assert os.path.isdir(logs_dir)
-    # Assert that the tdload command was constructed and executed
-    mock_execute_tdload_locally.assert_called_once()
-    tdload_cmd = mock_execute_tdload_locally.call_args[0][0]
-    # The command should include the job variable file and a job name starting with 'airflow_tdload_'
-    assert tdload_job_variable_file in tdload_cmd
-    assert any(arg.startswith("airflow_tdload_") for arg in tdload_cmd)
-    # The command should include the tdload_options as command-line args
-    assert "-ErrorLimit" in tdload_cmd, "ErrorLimit option not found in tdload command"
-    assert "100" in tdload_cmd, "ErrorLimit value '100' not found in tdload command"
-    # Check that LogLevel option is included in the command
-    assert "-LogLevel" in tdload_cmd, "LogLevel option not found in tdload command"
-    # Check that the DEBUG value is included in the command
-    assert "DEBUG" in tdload_cmd, "LogLevel value 'DEBUG' not found in tdload command"
-    # The result should be returned
-    assert result == "TDLOAD OK"
+        # Mock SSH client
+        mock_ssh_client = MagicMock()
+        hook.ssh_hook.get_conn.return_value.__enter__.return_value = mock_ssh_client
+
+        # Execute the method and expect failure
+        with pytest.raises(
+            AirflowException,
+            match="An unexpected error occurred while executing TDLoad script on remote machine",
+        ):
+            hook._transfer_to_and_execute_tdload_on_remote(
+                "/tmp/job_var_file.txt", "/remote/tmp", "-v", "test_job"
+            )
+
+        # Verify cleanup was called even on utility check failure
+        mock_secure_delete.assert_called()
+
+    def test_build_tdload_command_basic(self):
+        """Test building tdload command with basic parameters"""
+        hook = TptHook()
+        cmd = hook._build_tdload_command("/tmp/job.txt", None, "test_job")
+
+        assert cmd == ["tdload", "-j", "/tmp/job.txt", "test_job"]
+
+    def test_build_tdload_command_with_options(self):
+        """Test building tdload command with options"""
+        hook = TptHook()
+        cmd = hook._build_tdload_command("/tmp/job.txt", "-v -u", "test_job")
+
+        assert cmd == ["tdload", "-j", "/tmp/job.txt", "-v", "-u", "test_job"]
+
+    def test_build_tdload_command_with_quoted_options(self):
+        """Test building tdload command with quoted options"""
+        hook = TptHook()
+        cmd = hook._build_tdload_command("/tmp/job.txt", "-v --option 'value with spaces'", "test_job")
+
+        assert cmd == ["tdload", "-j", "/tmp/job.txt", "-v", "--option", "value with spaces", "test_job"]
+
+    def test_build_tdload_command_no_job_name(self):
+        """Test building tdload command without job name"""
+        hook = TptHook()
+        cmd = hook._build_tdload_command("/tmp/job.txt", "-v", None)
+
+        assert cmd == ["tdload", "-j", "/tmp/job.txt", "-v"]
+
+    def test_build_tdload_command_empty_job_name(self):
+        """Test building tdload command with empty job name"""
+        hook = TptHook()
+        cmd = hook._build_tdload_command("/tmp/job.txt", "-v", "")
+
+        assert cmd == ["tdload", "-j", "/tmp/job.txt", "-v"]
+
+    @patch("shlex.split", side_effect=ValueError("Invalid quote"))
+    def test_build_tdload_command_invalid_options(self, mock_shlex_split):
+        """Test building tdload command with invalid quoted options"""
+        hook = TptHook()
+        cmd = hook._build_tdload_command("/tmp/job.txt", "-v --option 'unclosed quote", "test_job")
+
+        # Should fallback to simple split
+        assert cmd == ["tdload", "-j", "/tmp/job.txt", "-v", "--option", "'unclosed", "quote", "test_job"]
+
+    def test_on_kill(self):
+        """Test on_kill method"""
+        hook = TptHook()
+        # Should not raise any exception
+        hook.on_kill()

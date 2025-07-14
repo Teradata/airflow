@@ -28,10 +28,10 @@ if TYPE_CHECKING:
 from airflow.exceptions import AirflowException
 
 
-
 def identify_os(ssh_client: SSHClient) -> str:
     stdin, stdout, stderr = ssh_client.exec_command("uname || ver")
     return stdout.read().decode().lower()
+
 
 def verify_bteq_installed():
     """Verify if BTEQ is installed and available in the system's PATH."""
@@ -86,7 +86,8 @@ def get_remote_tmp_dir(ssh_client):
     else:
         tmp_dir = "/tmp"
     return tmp_dir
-  
+
+
 # We can not pass host details with bteq command when executing on remote machine. Instead, we will prepare .logon in bteq script itself to avoid risk of
 # exposing sensitive information
 def prepare_bteq_script_for_remote_execution(conn: dict[str, Any], sql: str) -> str:

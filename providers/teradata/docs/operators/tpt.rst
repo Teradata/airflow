@@ -25,6 +25,13 @@ The ``TdLoadOperator`` is an Airflow operator that interfaces with Teradata PT E
 **What is Teradata PT Easy Loader?**
 A command-line interface extension for TPT that automatically determines appropriate load/unload operators based on user-provided parameters and the requested operation type.
 
+.. note::
+
+    The ``TdLoadOperator`` requires the ``Teradata Parallel Transporter (TPT)`` package from Teradata Tools and Utilities (TTU)
+    to be installed on the machine where the ``tdload`` command will run (either local or remote).
+    Ensure that the ``tdload`` executable is available in the system's ``PATH``.
+    Refer to the official Teradata documentation for installation and configuration details.
+
 **Key Capabilities:**
 
 - **Data Loading:** Import data from flat files into Teradata tables
@@ -37,8 +44,38 @@ The operator simplifies complex Teradata data operations while providing the rob
 
 This operator enables the execution of tdload commands on either the local host machine or a remote machine where TPT is installed.
 
+Ensure that the ``Teradata Parallel Transporter (TPT)`` package is installed on the machine where TdLoadOperator will execute commands. This can be:
+
+- The **local machine** where Airflow runs the task, for local execution.
+- A **remote host** accessed via SSH, for remote execution.
+
+If executing remotely, ensure that an SSH server (e.g., ``sshd``) is running and accessible on the remote machine, and that the ``tdload`` executable is available in the system's ``PATH``.
+
+.. note::
+
+    For improved security, it is **highly recommended** to use
+    **private key-based SSH authentication** (SSH key pairs) instead of username/password
+    for the SSH connection.
+
+    This avoids password exposure, enables seamless automated execution, and enhances security.
+
+    See the Airflow SSH Connection documentation for details on configuring SSH keys:
+    https://airflow.apache.org/docs/apache-airflow/stable/howto/connection/ssh.html
+
+
 To execute data loading, exporting, or transferring operations in a Teradata database, use the
 :class:`~airflow.providers.teradata.operators.tpt.TdLoadOperator`.
+
+Prerequisite
+------------
+
+Make sure your Teradata Airflow connection is defined with the required fields:
+
+- ``host``
+- ``login``
+- ``password``
+
+You can define a remote host with a separate SSH connection using the ``ssh_conn_id``.
 
 Key Operation Examples with TdLoadOperator
 ------------------------------------------
@@ -50,18 +87,18 @@ You can use the TdLoadOperator to load data from a file into a Teradata database
 .. exampleinclude:: /../../teradata/tests/system/teradata/example_tpt.py
     :language: python
     :dedent: 4
-    :start-after: [START tdload_operator_howto_guide_load_data_from_txt_file_to_table]
-    :end-before: [END tdload_operator_howto_guide_load_data_from_txt_file_to_table]
+    :start-after: [START tdload_operator_howto_guide_load_from_file]
+    :end-before: [END tdload_operator_howto_guide_load_from_file]
 
 Exporting data from a Teradata table to a file
 ----------------------------------------------
-You can export data from a Teradata table to a file using the TdLoadOperator. The following example shows how to export data from a Teradata table to a CSV file:
+You can export data from a Teradata table to a file using the TdLoadOperator. The following example shows how to export data from a Teradata table to a delimited file:
 
 .. exampleinclude:: /../../teradata/tests/system/teradata/example_tpt.py
     :language: python
     :dedent: 4
-    :start-after: [START tdload_operator_howto_guide_export_data_to_a_file]
-    :end-before: [END tdload_operator_howto_guide_export_data_to_a_file]
+    :start-after: [START tdload_operator_howto_guide_export_data]
+    :end-before: [END tdload_operator_howto_guide_export_data]
 
 Transferring data between Teradata tables
 -----------------------------------------
@@ -70,42 +107,29 @@ The TdLoadOperator can also be used to transfer data between two Teradata tables
 .. exampleinclude:: /../../teradata/tests/system/teradata/example_tpt.py
     :language: python
     :dedent: 4
-    :start-after: [START tdload_operator_howto_guide_load_data_from_table_to_table]
-    :end-before: [END tdload_operator_howto_guide_load_data_from_table_to_table]
+    :start-after: [START tdload_operator_howto_guide_transfer_data]
+    :end-before: [END tdload_operator_howto_guide_transfer_data]
 
-Remote operations using SSH
----------------------------
-The TdLoadOperator support remote execution via SSH, enabling you to run TPT operations on servers where Teradata Parallel Transporter is installed. This capability is particularly valuable when:
-
-- TPT is only available on specific servers in your infrastructure
-- You need to leverage the processing power of dedicated data processing nodes
-- Security policies require operations to occur on specific machines
-
-To use remote execution, simply provide SSH connection details in your task configuration. The following examples demonstrate how to perform common operations remotely:
-
-Loading data from a file to a Teradata table:
+Transferring data using a SELECT statement as source
+----------------------------------------------------
+You can use a SELECT statement as the data source for TdLoadOperator, allowing for flexible data movement and transformation:
 
 .. exampleinclude:: /../../teradata/tests/system/teradata/example_tpt.py
     :language: python
     :dedent: 4
-    :start-after: [START tdload_operator_howto_guide_load_data_from_txt_file_to_table_remote]
-    :end-before: [END tdload_operator_howto_guide_load_data_from_txt_file_to_table_remote]
+    :start-after: [START tdload_operator_howto_guide_transfer_data_select_stmt]
+    :end-before: [END tdload_operator_howto_guide_transfer_data_select_stmt]
 
-Exporting data from a remote Teradata table to a file:
-
-.. exampleinclude:: /../../teradata/tests/system/teradata/example_tpt.py
-    :language: python
-    :dedent: 4
-    :start-after: [START tdload_operator_howto_guide_export_data_to_a_file_remote]
-    :end-before: [END tdload_operator_howto_guide_export_data_to_a_file_remote]
-
-Transferring data between remote Teradata tables:
+Transferring data using an INSERT statement as target
+-----------------------------------------------------
+You can use an INSERT statement as the target for TdLoadOperator, enabling custom insert logic:
 
 .. exampleinclude:: /../../teradata/tests/system/teradata/example_tpt.py
     :language: python
     :dedent: 4
-    :start-after: [START tdload_operator_howto_guide_load_data_from_table_to_table_remote]
-    :end-before: [END tdload_operator_howto_guide_load_data_from_table_to_table_remote]
+    :start-after: [START tdload_operator_howto_guide_transfer_data_insert_stmt]
+    :end-before: [END tdload_operator_howto_guide_transfer_data_insert_stmt]
+
 
 
 The complete Teradata Operator DAG
@@ -118,14 +142,19 @@ When we put everything together, our DAG should look like this:
     :start-after: [START tdload_operator_howto_guide]
     :end-before: [END tdload_operator_howto_guide]
 
-
-
 .. _howto/operator:DdlOperator:
 
 DdlOperator
 ===========
 
 The ``DdlOperator`` is an Airflow operator designed to execute Data Definition Language (DDL) statements on Teradata databases. It provides a robust way to create, alter, or drop database objects as part of your data pipelines.
+
+.. note::
+
+    The ``DdlOperator`` requires the ``Teradata Parallel Transporter (TPT)`` package from Teradata Tools and Utilities (TTU)
+    to be installed on the machine where the ``tbuild`` command will run (either local or remote).
+    Ensure that the ``tbuild`` executable is available in the system's ``PATH``.
+    Refer to the official Teradata documentation for installation, configuration, and security best practices.
 
 **Key Features:**
 
@@ -137,8 +166,72 @@ The ``DdlOperator`` is an Airflow operator designed to execute Data Definition L
 
 When you need to manage database schema changes, create temporary tables, or clean up data structures as part of your workflow, the ``DdlOperator`` offers a streamlined approach that integrates seamlessly with your Airflow DAGs.
 
+Prerequisite
+------------
+
+Make sure your Teradata Airflow connection is defined with the required fields:
+
+- ``host``
+- ``login``
+- ``password``
+
+You can define a remote host with a separate SSH connection using the ``ssh_conn_id``.
+
+Ensure that the ``Teradata Parallel Transporter (TPT)`` package is installed on the machine where TdLoadOperator will execute commands. This can be:
+
+- The **local machine** where Airflow runs the task, for local execution.
+- A **remote host** accessed via SSH, for remote execution.
+
+If executing remotely, ensure that an SSH server (e.g., ``sshd``) is running and accessible on the remote machine, and that the ``tbuild`` executable is available in the system's ``PATH``.
+
+.. note::
+
+    For improved security, it is **highly recommended** to use
+    **private key-based SSH authentication** (SSH key pairs) instead of username/password
+    for the SSH connection.
+
+    This avoids password exposure, enables seamless automated execution, and enhances security.
+
+    See the Airflow SSH Connection documentation for details on configuring SSH keys:
+    https://airflow.apache.org/docs/apache-airflow/stable/howto/connection/ssh.html
+
+
 To execute DDL operations in a Teradata database, use the
 :class:`~airflow.providers.teradata.operators.ddl.DdlOperator`.
+
+Handling Escape Sequences for Embedded Quotes
+----------------------------------------------
+
+When working with DDL statements that contain embedded quotes, it's important to understand how escape sequences are handled differently between the DAG definition and the SQL execution:
+
+**In DAG Definition (Python):**
+- Use backslash escape sequences: ``\"`` for double quotes, ``\'`` for single quotes
+- Python string literals require backslash escaping
+
+**In SQL Execution (Teradata):**
+- SQL standard requires doubling quotes when enclosed within the same quote type
+- Single quotes in single-quoted strings: ``'Don''t'``
+- Double quotes in double-quoted identifiers: ``"My""Table"``
+
+**Example:**
+
+.. code-block:: python
+
+    # In your DAG - use Python escape sequences
+    ddl_with_quotes = DdlOperator(
+        task_id="create_table_with_quotes",
+        ddl=[
+            "CREATE TABLE test_table (col1 VARCHAR(50) DEFAULT '\"quoted_value\"')",
+            "INSERT INTO test_table VALUES ('It''s a test')",  # Note the doubled single quotes
+        ],
+        teradata_conn_id="teradata_default",
+    )
+
+**Key Points:**
+- When defining DDL statements in Python strings, use standard Python escape sequences
+- The operator automatically handles the conversion for TPT script generation
+- For SQL string literals containing quotes, follow SQL standards (double the quotes)
+- Test your DDL statements carefully when they contain complex quoting
 
 Key Operation Examples with DdlOperator
 ---------------------------------------
@@ -163,29 +256,45 @@ You can use the DdlOperator to create tables in Teradata. The following example 
     :start-after: [START ddl_operator_howto_guide_create_table]
     :end-before: [END ddl_operator_howto_guide_create_table]
 
-Remote operations using SSH
----------------------------
-The DdlOperator support remote execution via SSH, enabling you to run TPT operations on servers where Teradata Parallel Transporter is installed. To use remote execution, simply provide SSH connection details in your task configuration.
-
-The following examples demonstrate how to perform common operations remotely:
-
-Dropping tables in Teradata:
-You can use the DdlOperator to drop tables in Teradata. The following example demonstrates how to drop multiple tables:
+Creating an index on a Teradata table
+-------------------------------------
+You can use the DdlOperator to create an index on a Teradata table. The following example demonstrates how to create an index:
 
 .. exampleinclude:: /../../teradata/tests/system/teradata/example_tpt.py
     :language: python
     :dedent: 4
-    :start-after: [START ddl_operator_howto_guide_drop_table_remote]
-    :end-before: [END ddl_operator_howto_guide_drop_table_remote]
+    :start-after: [START ddl_operator_howto_guide_create_index]
+    :end-before: [END ddl_operator_howto_guide_create_index]
 
-Creating tables in Teradata:
-You can use the DdlOperator to create tables in Teradata. The following example demonstrates how to create multiple tables:
+Renaming a table in Teradata
+----------------------------
+You can use the DdlOperator to rename a table in Teradata. The following example demonstrates how to rename a table:
 
 .. exampleinclude:: /../../teradata/tests/system/teradata/example_tpt.py
     :language: python
     :dedent: 4
-    :start-after: [START ddl_operator_howto_guide_create_table_remote]
-    :end-before: [END ddl_operator_howto_guide_create_table_remote]
+    :start-after: [START ddl_operator_howto_guide_rename_table]
+    :end-before: [END ddl_operator_howto_guide_rename_table]
+
+Dropping an index in Teradata
+-----------------------------
+You can use the DdlOperator to drop an index in Teradata. The following example demonstrates how to drop an index:
+
+.. exampleinclude:: /../../teradata/tests/system/teradata/example_tpt.py
+    :language: python
+    :dedent: 4
+    :start-after: [START ddl_operator_howto_guide_drop_index]
+    :end-before: [END ddl_operator_howto_guide_drop_index]
+
+Altering a table in Teradata
+----------------------------
+You can use the DdlOperator to alter a table in Teradata. The following example demonstrates how to add a column:
+
+.. exampleinclude:: /../../teradata/tests/system/teradata/example_tpt.py
+    :language: python
+    :dedent: 4
+    :start-after: [START ddl_operator_howto_guide_alter_table]
+    :end-before: [END ddl_operator_howto_guide_alter_table]
 
 
 The complete Teradata Operator DAG
