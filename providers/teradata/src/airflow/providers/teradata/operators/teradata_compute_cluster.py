@@ -271,7 +271,6 @@ class TeradataComputeClusterProvisionOperator(_TeradataComputeClusterOperator):
         Lake, effectively creates the compute cluster.
         Airflow runs this method on the worker and defers using the trigger.
         """
-        super().execute(context)
         return self._compute_cluster_execute()
 
     def _compute_cluster_execute(self, operation: str | None = None):
@@ -360,7 +359,6 @@ class TeradataComputeClusterDecommissionOperator(_TeradataComputeClusterOperator
         Lake, effectively drops the compute cluster.
         Airflow runs this method on the worker and defers using the trigger.
         """
-        super().execute(context)
         return self._compute_cluster_execute()
 
     def _compute_cluster_execute(self, operation: str | None = None):
@@ -422,7 +420,6 @@ class TeradataComputeClusterResumeOperator(_TeradataComputeClusterOperator):
         Lake, effectively resumes the compute cluster.
         Airflow runs this method on the worker and defers using the trigger.
         """
-        super().execute(context)
         return self._compute_cluster_execute()
 
     def _compute_cluster_execute(self, operation: str | None = None):
@@ -494,7 +491,6 @@ class TeradataComputeClusterSuspendOperator(_TeradataComputeClusterOperator):
         Lake, effectively suspends the compute cluster.
         Airflow runs this method on the worker and defers using the trigger.
         """
-        super().execute(context)
         return self._compute_cluster_execute()
 
     def _compute_cluster_execute(self, operation: str | None = None):
