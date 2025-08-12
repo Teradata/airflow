@@ -57,13 +57,8 @@ def test_operation_success_message():
     assert expected_msg == Constants.CC_OPR_SUCCESS_STATUS_MSG
 
 
-def test_operation_failure_message():
-    expected_msg = "Compute Cluster %s  %s operation has failed."
-    assert expected_msg == Constants.CC_OPR_FAILURE_STATUS_MSG
-
-
 def test_empty_profile_error_message():
-    expected_msg = "Please provide a valid name for the compute cluster profile."
+    expected_msg = "Failed to %s the Vantage Cloud Lake Compute Cluster Instance due to an invalid compute cluster profile name."
     assert expected_msg == Constants.CC_OPR_EMPTY_PROFILE_ERROR_MSG
 
 
@@ -73,7 +68,7 @@ def test_non_exists_message():
 
 
 def test_lake_support_only_message():
-    expected_msg = "Compute Groups is supported only on Vantage Cloud Lake."
+    expected_msg = "Failed to %s the Vantage Cloud Lake Compute Cluster Instance  because the Compute Cluster feature is supported only on the Vantage Cloud Lake system."
     assert expected_msg == Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG
 
 

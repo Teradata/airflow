@@ -186,7 +186,10 @@ def test_execute_bteq_script_at_local_failure_raises(
     mock_popen.return_value = mock_process
     mock_prepare_cmd.return_value = "bteq_command"
 
-    with pytest.raises(AirflowException, match="BTEQ task failed with error: Failure: some error occurred"):
+    with pytest.raises(
+        AirflowException,
+        match="Failure while executing BTEQ script due to unexpected error.: Failure: some error occurred",
+    ):
         hook.execute_bteq_script_at_local(
             bteq_script="SELECT * FROM test;",
             bteq_script_encoding="utf-8",
@@ -323,7 +326,10 @@ def test_transfer_to_and_execute_bteq_on_remote_ssh_failure(mock_verify, hook_wi
                 bteq_session_encoding="utf-8",
                 tmp_dir="/tmp",
             )
-        assert "SSH connection is not established" in str(excinfo.value)
+        assert (
+            "Failed to establish a SSH connection to the remote machine for executing the BTEQ script."
+            in str(excinfo.value)
+        )
 
 
 @patch("airflow.providers.teradata.hooks.bteq.verify_bteq_installed_remote")
