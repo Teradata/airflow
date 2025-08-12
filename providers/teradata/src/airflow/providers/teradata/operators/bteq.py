@@ -28,6 +28,7 @@ from airflow.providers.teradata.utils.bteq_util import (
     read_file,
 )
 from airflow.providers.teradata.utils.constants import Constants
+
 if TYPE_CHECKING:
     from paramiko import SSHClient
 
@@ -158,7 +159,7 @@ class BteqOperator(BaseOperator):
                 )
             if self.file_path:
                 if not is_valid_file(self.file_path):
-                    raise ValueError(Constants.BTEQ_INVALID_PATH, self.file_path)
+                    raise ValueError(Constants.BTEQ_INVALID_PATH % self.file_path)
                 try:
                     is_valid_encoding(self.file_path, self.temp_file_read_encoding or "UTF-8")
                 except UnicodeDecodeError as e:
@@ -236,6 +237,7 @@ class BteqOperator(BaseOperator):
                     )
             return None
         raise ValueError(Constants.BTEQ_MISSED_PARAMS)
+
     def _handle_local_bteq_file(
         self,
         file_path: str,

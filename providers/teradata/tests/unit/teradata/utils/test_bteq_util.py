@@ -95,7 +95,6 @@ class TestBteqUtils:
         ssh_client.exec_command.assert_called_once_with("uname || ver")
         assert os_info == ""
 
-
     @patch("shutil.which")
     def test_verify_bteq_installed_success(self, mock_which):
         mock_which.return_value = "/usr/bin/bteq"
@@ -249,7 +248,6 @@ class TestBteqUtils:
             verify_bteq_installed_remote(ssh_client)
         ssh_client.exec_command.assert_called_once_with("which bteq")
 
-
     @patch("paramiko.SSHClient.exec_command")
     def test_verify_bteq_installed_remote_success(self, mock_exec):
         mock_stdin = MagicMock()
@@ -266,9 +264,8 @@ class TestBteqUtils:
         # Should not raise
         verify_bteq_installed_remote(ssh_client)
 
-
     @patch("paramiko.SSHClient.exec_command")
-    def test_verify_bteq_installed_remote_fail(self, mock_exec):
+    def test_verify_bteq_installed_remote_fail_exec(self, mock_exec):
         mock_stdin = MagicMock()
         mock_stdout = MagicMock()
         mock_stderr = MagicMock()
@@ -282,7 +279,6 @@ class TestBteqUtils:
 
         with pytest.raises(AirflowException):
             verify_bteq_installed_remote(ssh_client)
-
 
     @patch("paramiko.SSHClient.open_sftp")
     def test_transfer_file_sftp(self, mock_open_sftp):
