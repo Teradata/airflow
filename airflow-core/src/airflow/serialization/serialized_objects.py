@@ -25,6 +25,7 @@ import datetime
 import enum
 import itertools
 import logging
+import math
 import weakref
 from collections.abc import Collection, Generator, Iterable, Iterator, Mapping, Sequence
 from functools import cache, cached_property
@@ -720,6 +721,9 @@ class BaseSerialization:
             # enum.IntEnum is an int instance, it causes json dumps error so we use its value.
             if isinstance(var, enum.Enum):
                 return var.value
+            # These are not allowed in JSON. https://datatracker.ietf.org/doc/html/rfc8259#section-6
+            if isinstance(var, float) and (math.isnan(var) or math.isinf(var)):
+                return str(var)
             return var
         elif isinstance(var, dict):
             return cls._encode(
@@ -754,7 +758,7 @@ class BaseSerialization:
             return var.to_dict()
         elif isinstance(var, MappedOperator):
             return cls._encode(SerializedBaseOperator.serialize_mapped_operator(var), type_=DAT.OP)
-        elif isinstance(var, (BaseOperator, SerializedBaseOperator)):
+        elif isinstance(var, BaseOperator):
             var._needs_expansion = var.get_needs_expansion()
             return cls._encode(SerializedBaseOperator.serialize_operator(var), type_=DAT.OP)
         elif isinstance(var, cls._datetime_types):
@@ -1293,7 +1297,7 @@ class SerializedBaseOperator(DAGNode, BaseSerialization):
         link = self.operator_extra_link_dict.get(name) or self.global_operator_extra_link_dict.get(name)
         if not link:
             return None
-        return link.get_link(self.unmap(None), ti_key=ti.key)
+        return link.get_link(self.unmap(None), ti_key=ti.key)  # type: ignore[arg-type] # TODO: GH-52141 - BaseOperatorLink.get_link expects BaseOperator but receives SerializedBaseOperator
 
     @property
     def task_type(self) -> str:
@@ -1332,6 +1336,15 @@ class SerializedBaseOperator(DAGNode, BaseSerialization):
     def expand_start_trigger_args(self, *, context: Context) -> StartTriggerArgs | None:
         return self.start_trigger_args
 
+    def __getattr__(self, name):
+        # Handle missing attributes with task_type instead of SerializedBaseOperator
+        # Don't intercept special methods that Python internals might check
+        if name.startswith("__") and name.endswith("__"):
+            # For special methods, raise the original error
+            raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+        # For regular attributes, use task_type in the error message
+        raise AttributeError(f"'{self.task_type}' object has no attribute '{name}'")
+
     @classmethod
     def serialize_mapped_operator(cls, op: MappedOperator) -> dict[str, Any]:
         serialized_op = cls._serialize_node(op)
@@ -1359,11 +1372,11 @@ class SerializedBaseOperator(DAGNode, BaseSerialization):
         return serialized_op
 
     @classmethod
-    def serialize_operator(cls, op: BaseOperator | MappedOperator | SerializedBaseOperator) -> dict[str, Any]:
+    def serialize_operator(cls, op: BaseOperator | MappedOperator) -> dict[str, Any]:
         return cls._serialize_node(op)
 
     @classmethod
-    def _serialize_node(cls, op: BaseOperator | MappedOperator | SerializedBaseOperator) -> dict[str, Any]:
+    def _serialize_node(cls, op: BaseOperator | MappedOperator) -> dict[str, Any]:
         """Serialize operator into a JSON object."""
         serialize_op = cls.serialize_to_json(op, cls._decorated_fields)
 

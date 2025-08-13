@@ -132,12 +132,15 @@ class _TeradataComputeClusterOperator(BaseOperator):
             or self.compute_profile_name == "None"
             or self.compute_profile_name == ""
         ):
-            raise AirflowException(Constants.CC_OPR_EMPTY_PROFILE_ERROR_MSG, operation)
-        # Verifies if the provided Teradata instance belongs to Vantage Cloud Lake.
-        lake_support_find_sql = "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'"
-        lake_support_result = self.hook.run(lake_support_find_sql, handler=_single_result_row_handler)
-        if lake_support_result is None:
-            raise AirflowException(Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG, operation)
+            raise AirflowException(Constants.CC_OPR_EMPTY_PROFILE_ERROR_MSG % operation)
+        try:
+            # Verifies if the provided Teradata instance belongs to Vantage Cloud Lake.
+            lake_support_find_sql = "SELECT count(1) from DBC.StorageV WHERE StorageName='TD_OFSSTORAGE'"
+            lake_support_result = self.hook.run(lake_support_find_sql, handler=_single_result_row_handler)
+            if lake_support_result is None:
+                raise AirflowException(Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG % operation)
+        except Exception:
+            raise AirflowException(Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG % operation)
         # Getting teradata db version. Considering teradata instance is Lake when db version is 20 or above
         db_version_get_sql = "SELECT  InfoData AS Version FROM DBC.DBCInfoV WHERE InfoKey = 'VERSION'"
         try:
@@ -151,7 +154,7 @@ class _TeradataComputeClusterOperator(BaseOperator):
                     version_str = str(db_version_result)  # fallback, should be rare
                 db_version = version_str.split(".")[0]
                 if db_version is not None and int(db_version) < 20:
-                    raise AirflowException(Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG, operation)
+                    raise AirflowException(Constants.CC_GRP_LAKE_SUPPORT_ONLY_MSG % operation)
             else:
                 raise AirflowException(Constants.CC_ERR_VERSION_GET)
         except Exception:
@@ -437,7 +440,7 @@ class TeradataComputeClusterResumeOperator(_TeradataComputeClusterOperator):
         # Generates an error message if the compute cluster does not exist for the specified
         # compute profile and compute group.
         else:
-            raise AirflowException(Constants.CC_GRP_PRP_NON_EXISTS_MSG, operation)
+            raise AirflowException(Constants.CC_GRP_PRP_NON_EXISTS_MSG % operation)
         if cp_status_result != Constants.CC_RESUME_DB_STATUS:
             cp_resume_query = f"RESUME COMPUTE FOR COMPUTE PROFILE {self.compute_profile_name}"
             if self.compute_group_name:
@@ -508,7 +511,7 @@ class TeradataComputeClusterSuspendOperator(_TeradataComputeClusterOperator):
         # Generates an error message if the compute cluster does not exist for the specified
         # compute profile and compute group.
         else:
-            raise AirflowException(Constants.CC_GRP_PRP_NON_EXISTS_MSG, operation)
+            raise AirflowException(Constants.CC_GRP_PRP_NON_EXISTS_MSG % operation)
         if result != Constants.CC_SUSPEND_DB_STATUS:
             sql = f"SUSPEND COMPUTE FOR COMPUTE PROFILE {self.compute_profile_name}"
             if self.compute_group_name:
