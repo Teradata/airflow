@@ -25,7 +25,6 @@ import pytest
 
 from airflow.providers.teradata.hooks.bteq import BteqHook
 from airflow.providers.teradata.operators.bteq import BteqOperator
-from airflow.providers.teradata.utils.constants import Constants
 
 log = logging.getLogger(__name__)
 
@@ -164,8 +163,7 @@ class TestBteqOperator:
             file_path="/invalid/path.sql",
             teradata_conn_id="td_conn",
         )
-        err_msg = Constants.BTEQ_INVALID_PATH % "/invalid/path.sql"
-        with pytest.raises(ValueError, match=err_msg):
+        with pytest.raises(ValueError, match="Failed to execute BTEQ script due to invalid file path"):
             op.execute({})
 
     @mock.patch("airflow.providers.teradata.operators.bteq.is_valid_file", return_value=True)
@@ -180,7 +178,10 @@ class TestBteqOperator:
             bteq_script_encoding="UTF-8",
             teradata_conn_id="td_conn",
         )
-        with pytest.raises(ValueError, match=Constants.BTEQ_INVALID_CHARSET % ("/tmp/test.sql", "UTF-8")):
+        with pytest.raises(
+            ValueError,
+            match="Failed to execute BTEQ script because the provided file.*encoding differs from the specified BTEQ I/O encoding",
+        ):
             op.execute({})
 
     @mock.patch("airflow.providers.teradata.operators.bteq.BteqHook.execute_bteq_script")
