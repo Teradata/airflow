@@ -24,34 +24,25 @@ from airflow.exceptions import AirflowException
 from airflow.providers.teradata.hooks.tpt import TptHook
 
 
-# Patch Airflow DB and SSHHook to avoid ImportError and DB access in all tests
-def pytest_configure():
-    patcher1 = patch("airflow.models.Connection")
-    patcher2 = patch("airflow.providers.ssh.hooks.ssh.SSHHook")
-    patcher1.start()
-    patcher2.start()
-    # Register finalizers to stop patches after tests
-    import atexit
-
-    atexit.register(patcher1.stop)
-    atexit.register(patcher2.stop)
-
-
 class TestTptHook:
+    @patch("airflow.models.Connection")
     @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
-    def test_init_with_ssh(self, mock_ssh_hook):
+    def test_init_with_ssh(self, mock_ssh_hook, mock_conn):
         hook = TptHook(ssh_conn_id="ssh_default")
         assert hook.ssh_conn_id == "ssh_default"
         assert hook.ssh_hook is not None
 
-    def test_init_without_ssh(self):
+    @patch("airflow.models.Connection")
+    def test_init_without_ssh(self, mock_conn):
         hook = TptHook()
         assert hook.ssh_conn_id is None
         assert hook.ssh_hook is None
 
+    @patch("airflow.models.Connection")
+    @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
     @patch("airflow.providers.teradata.hooks.tpt.TptHook._execute_tbuild_via_ssh")
     @patch("airflow.providers.teradata.hooks.tpt.TptHook._execute_tbuild_locally")
-    def test_execute_ddl_dispatch(self, mock_local, mock_ssh):
+    def test_execute_ddl_dispatch(self, mock_local, mock_ssh, mock_ssh_hook, mock_conn):
         # Local execution
         hook = TptHook()
         mock_local.return_value = 0
