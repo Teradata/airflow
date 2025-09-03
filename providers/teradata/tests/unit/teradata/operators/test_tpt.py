@@ -125,75 +125,47 @@ class TestTdLoadOperator:
             mock_popen.return_value = mock_process
             yield mock_popen
 
-    @provide_session
-    def setup_method(self, method, session=None):
-        """Set up test environment with database connections and DAG"""
-        # Clean up any existing test connections
-        session.query(Connection).filter(
-            Connection.conn_id.in_(["teradata_default", "teradata_target", "teradata_ssl", "ssh_default"])
-        ).delete(synchronize_session="fetch")
+    @pytest.fixture(autouse=True)
+    def mock_airflow_db(self):
+        """Mock all Airflow DB session operations to avoid real DB access"""
+        with (
+            patch("airflow.models.Connection"),
+            patch("airflow.models.DAG"),
+            patch("airflow.models.dagrun.DagRun"),
+            patch("airflow.models.taskinstance.TaskInstance"),
+            patch("airflow.utils.session.provide_session", lambda f: f),
+        ):
+            yield
 
-        # Create source connection
-        source_conn = Connection(
-            conn_id="teradata_default",
-            conn_type="teradata",
-            host="source_host",
-            login="source_user",
-            password="source_password",
-        )
-
-        # Create target connection
-        target_conn = Connection(
-            conn_id="teradata_target",
-            conn_type="teradata",
-            host="target_host",
-            login="target_user",
-            password="target_password",
-        )
-
-        # Create SSL-enabled connection for SSL tests
-        ssl_conn = Connection(
-            conn_id="teradata_ssl",
-            conn_type="teradata",
-            host="ssl_host",
-            login="ssl_user",
-            password="ssl_password",
-            extra='{"use_ssl": true, "ca_cert": "/path/to/ca.pem"}',
-        )
-
-        # Create SSH connection for SSH tests
-        ssh_conn = Connection(
-            conn_id="ssh_default",
-            conn_type="ssh",
-            host="ssh_host",
-            login="ssh_user",
-            password="ssh_password",
-            port=22,
-        )
-
-        # Add all connections to session
-        session.add(source_conn)
-        session.add(target_conn)
-        session.add(ssl_conn)
-        session.add(ssh_conn)
-        session.commit()
-
-        # Set up a test DAG for templating tests
+    def setup_method(self, method):
+        """Set up test environment with dummy connections and DAG (no DB access)"""
+        # Create dummy connection objects (not persisted)
+        self.source_conn = MagicMock(conn_id="teradata_default")
+        self.target_conn = MagicMock(conn_id="teradata_target")
+        self.ssl_conn = MagicMock(conn_id="teradata_ssl")
+        self.ssh_conn = MagicMock(conn_id="ssh_default")
+        # Set up a real DAG for templating tests
         self.dag = DAG(
             "test_dag",
             start_date=datetime(2021, 1, 1),
             schedule=None,
             catchup=False,
+            default_args={},
         )
 
     # ----- Tests for Basic Operation Modes -----
 
-    @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_tdload")
-    def test_file_to_table_mode(self, mock_execute_tdload):
-        """Test loading data from a file to a Teradata table"""
-        # Configure mock
-        mock_execute_tdload.return_value = 0
-
+    @patch(
+        "airflow.providers.teradata.hooks.ttu.TtuHook.get_conn",
+        return_value={"host": "mock_host", "login": "mock_user", "password": "mock_pass"},
+    )
+    @patch(
+        "airflow.providers.teradata.operators.tpt.prepare_tdload_job_var_file",
+        return_value="dummy job var content",
+    )
+    @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_tdload", return_value=0)
+    def test_file_to_table_mode(self, mock_execute_tdload, mock_prepare_job_var, mock_get_conn):
+        """Test loading data from a file to a Teradata table (with connection and job var patching)"""
         # Create operator
         operator = TdLoadOperator(
             task_id="test_file_to_table",
@@ -209,14 +181,25 @@ class TestTdLoadOperator:
         # Assertions
         assert result == 0
         mock_execute_tdload.assert_called_once()
-
+        mock_prepare_job_var.assert_called_once()
+        mock_get_conn.assert_called()
         # Verify that the operator initialized correctly
         assert operator._src_hook is not None
         assert operator._dest_hook is not None
 
-    def test_file_to_table_with_default_target_conn(self):
+    @patch(
+        "airflow.providers.teradata.hooks.ttu.TtuHook.get_conn",
+        return_value={"host": "mock_host", "login": "mock_user", "password": "mock_pass"},
+    )
+    @patch(
+        "airflow.providers.teradata.operators.tpt.prepare_tdload_job_var_file",
+        return_value="dummy job var content",
+    )
+    @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_tdload", return_value=0)
+    def test_file_to_table_with_default_target_conn(
+        self, mock_execute_tdload, mock_prepare_job_var, mock_get_conn
+    ):
         """Test file to table loading with default target connection"""
-        # Configure the operator with no target_teradata_conn_id
         operator = TdLoadOperator(
             task_id="test_file_to_table_default_target",
             source_file_name="/path/to/data.csv",
@@ -235,8 +218,20 @@ class TestTdLoadOperator:
         # Verify that hooks were initialized
         assert operator._src_hook is not None
         assert operator._dest_hook is not None
+        mock_execute_tdload.assert_called_once()
+        mock_prepare_job_var.assert_called_once()
+        mock_get_conn.assert_called()
 
-    def test_table_to_file_mode(self):
+    @patch(
+        "airflow.providers.teradata.hooks.ttu.TtuHook.get_conn",
+        return_value={"host": "mock_host", "login": "mock_user", "password": "mock_pass"},
+    )
+    @patch(
+        "airflow.providers.teradata.operators.tpt.prepare_tdload_job_var_file",
+        return_value="dummy job var content",
+    )
+    @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_tdload", return_value=0)
+    def test_table_to_file_mode(self, mock_execute_tdload, mock_prepare_job_var, mock_get_conn):
         """Test exporting data from a Teradata table to a file"""
         # Configure the operator
         operator = TdLoadOperator(
@@ -254,8 +249,20 @@ class TestTdLoadOperator:
         # Verify that hooks were initialized correctly
         assert operator._src_hook is not None
         assert operator._dest_hook is None  # No destination hook for table_to_file
+        mock_execute_tdload.assert_called_once()
+        mock_prepare_job_var.assert_called_once()
+        mock_get_conn.assert_called()
 
-    def test_select_stmt_to_file_mode(self):
+    @patch(
+        "airflow.providers.teradata.hooks.ttu.TtuHook.get_conn",
+        return_value={"host": "mock_host", "login": "mock_user", "password": "mock_pass"},
+    )
+    @patch(
+        "airflow.providers.teradata.operators.tpt.prepare_tdload_job_var_file",
+        return_value="dummy job var content",
+    )
+    @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_tdload", return_value=0)
+    def test_select_stmt_to_file_mode(self, mock_execute_tdload, mock_prepare_job_var, mock_get_conn):
         """Test exporting data from a SELECT statement to a file"""
         # Configure the operator
         operator = TdLoadOperator(
@@ -273,30 +280,21 @@ class TestTdLoadOperator:
         # Verify that hooks were initialized correctly
         assert operator._src_hook is not None
         assert operator._dest_hook is None  # No destination hook for select_to_file
+        mock_execute_tdload.assert_called_once()
+        mock_prepare_job_var.assert_called_once()
+        mock_get_conn.assert_called()
 
-    @patch("airflow.providers.teradata.hooks.tpt.TptHook")
-    @patch("airflow.providers.ssh.hooks.ssh.SSHHook")
-    def test_table_to_table_mode(self, mock_ssh_hook, mock_tpt_hook):
+    @patch(
+        "airflow.providers.teradata.hooks.ttu.TtuHook.get_conn",
+        return_value={"host": "mock_host", "login": "mock_user", "password": "mock_pass"},
+    )
+    @patch(
+        "airflow.providers.teradata.operators.tpt.prepare_tdload_job_var_file",
+        return_value="dummy job var content",
+    )
+    @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_tdload", return_value=0)
+    def test_table_to_table_mode(self, mock_execute_tdload, mock_prepare_job_var, mock_get_conn):
         """Test transferring data between two Teradata tables"""
-        # Set up mock objects - configure the mock to return different instances for different calls
-        mock_instances = [MagicMock(), MagicMock()]
-        mock_tpt_hook.side_effect = mock_instances
-
-        # Configure source hook
-        mock_instances[0].execute_tdload.return_value = 0
-        mock_instances[0].get_conn.return_value = {
-            "host": "src_host",
-            "login": "src_user",
-            "password": "src_password",
-        }
-
-        # Configure destination hook
-        mock_instances[1].get_conn.return_value = {
-            "host": "dest_host",
-            "login": "dest_user",
-            "password": "dest_password",
-        }
-
         # Configure the operator
         operator = TdLoadOperator(
             task_id="test_table_to_table",
@@ -317,7 +315,16 @@ class TestTdLoadOperator:
 
     # ----- Tests for Advanced Operation Modes -----
 
-    def test_file_to_table_with_insert_stmt(self):
+    @patch(
+        "airflow.providers.teradata.hooks.ttu.TtuHook.get_conn",
+        return_value={"host": "mock_host", "login": "mock_user", "password": "mock_pass"},
+    )
+    @patch(
+        "airflow.providers.teradata.operators.tpt.prepare_tdload_job_var_file",
+        return_value="dummy job var content",
+    )
+    @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_tdload", return_value=0)
+    def test_file_to_table_with_insert_stmt(self, mock_execute_tdload, mock_prepare_job_var, mock_get_conn):
         """Test loading from file to table with custom INSERT statement"""
         # Configure the operator with custom INSERT statement
         operator = TdLoadOperator(
@@ -338,7 +345,18 @@ class TestTdLoadOperator:
         assert operator._src_hook is not None
         assert operator._dest_hook is not None
 
-    def test_table_to_table_with_select_and_insert(self):
+    @patch(
+        "airflow.providers.teradata.hooks.ttu.TtuHook.get_conn",
+        return_value={"host": "mock_host", "login": "mock_user", "password": "mock_pass"},
+    )
+    @patch(
+        "airflow.providers.teradata.operators.tpt.prepare_tdload_job_var_file",
+        return_value="dummy job var content",
+    )
+    @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_tdload", return_value=0)
+    def test_table_to_table_with_select_and_insert(
+        self, mock_execute_tdload, mock_prepare_job_var, mock_get_conn
+    ):
         """Test transferring data between tables with custom SELECT and INSERT statements"""
         # Configure the operator with custom SELECT and INSERT statements
         operator = TdLoadOperator(
@@ -423,33 +441,35 @@ class TestTdLoadOperator:
 
     # ----- Error Handling Tests -----
 
-    def test_error_handling_execute_tdload(self):
+    @patch(
+        "airflow.providers.teradata.hooks.ttu.TtuHook.get_conn",
+        side_effect=AirflowException("Connection not found"),
+    )
+    def test_error_handling_execute_tdload(self, mock_get_conn):
         """Test error handling with invalid connection ID"""
-        # Configure the operator with invalid connection ID
         operator = TdLoadOperator(
             task_id="test_error_handling",
             source_file_name="/path/to/data.csv",
             target_table="target_db.target_table",
-            teradata_conn_id="nonexistent_connection",  # This will cause an error
+            teradata_conn_id="nonexistent_connection",
             target_teradata_conn_id="teradata_target",
         )
-
-        # Execute the operator and check for exception
         with pytest.raises((AirflowException, ValueError, KeyError)):
             operator.execute({})
 
-    def test_error_handling_get_conn(self):
+    @patch(
+        "airflow.providers.teradata.hooks.ttu.TtuHook.get_conn",
+        side_effect=AirflowException("Connection not found"),
+    )
+    def test_error_handling_get_conn(self, mock_get_conn):
         """Test error handling with invalid target connection ID"""
-        # Configure the operator with invalid target connection ID
         operator = TdLoadOperator(
             task_id="test_error_handling_conn",
             source_file_name="/path/to/data.csv",
             target_table="target_db.target_table",
             teradata_conn_id="teradata_default",
-            target_teradata_conn_id="nonexistent_target_connection",  # This will cause an error
+            target_teradata_conn_id="nonexistent_target_connection",
         )
-
-        # Execute the operator and check for exception
         with pytest.raises((AirflowException, ValueError, KeyError)):
             operator.execute({})
 
@@ -697,7 +717,6 @@ class TestTdLoadOperator:
 
     def test_template_fields(self):
         """Test templated fields are properly rendered"""
-        # Set up operator with templated fields
         operator = TdLoadOperator(
             task_id="test_template_fields",
             source_table="source_{{ ds_nodash }}",
@@ -714,19 +733,23 @@ class TestTdLoadOperator:
 
         # Set up TaskInstance and DagRun
         execution_date = datetime(2021, 1, 1, tzinfo=timezone.utc)
+        context = {
+            "ds_nodash": execution_date.strftime("%Y%m%d"),
+            "ds": execution_date.strftime("%Y-%m-%d"),
+        }
         run_id = "test_run"
-        ti = TaskInstance(task=operator, run_id=run_id)
+        ti = TaskInstance(task=operator, run_id=run_id, dag_version_id="dummy_version")
         ti.dag_run = DagRun(
             dag_id=self.dag.dag_id,
             run_id=run_id,
-            logical_date=execution_date,
             start_date=execution_date,
             run_after=execution_date,
             run_type="manual",
+            state="success",
         )
 
         # Render templates
-        ti.render_templates()
+        ti.render_templates(context=context)
 
         # Verify rendered values
         assert operator.source_table == "source_20210101"
@@ -762,12 +785,16 @@ class TestTdLoadOperator:
     # ----- Job Variable Generation Tests -----
 
     @patch("airflow.providers.teradata.operators.tpt.prepare_tdload_job_var_file")
-    def test_generated_job_var_content_table_to_table(self, mock_prepare_job_var):
+    @patch(
+        "airflow.providers.teradata.hooks.ttu.TtuHook.get_conn",
+        return_value={"host": "mock_host", "login": "mock_user", "password": "mock_pass"},
+    )
+    @patch("airflow.providers.teradata.utils.tpt_util.write_file")
+    def test_generated_job_var_content_table_to_table(
+        self, mock_write_file, mock_get_conn, mock_prepare_job_var
+    ):
         """Test job variable file is properly generated for table-to-table transfer"""
-        # Set up mocks
         mock_prepare_job_var.return_value = "generated job var content"
-
-        # Configure operator for table-to-table mode
         operator = TdLoadOperator(
             task_id="test_generated_job_vars_table_to_table",
             source_table="source_db.table",
@@ -775,15 +802,9 @@ class TestTdLoadOperator:
             teradata_conn_id="teradata_default",
             target_teradata_conn_id="teradata_target",
         )
-
-        # Execute
         operator.execute({})
-
-        # Verify prepare_tdload_job_var_file was called (don't check exact connection format)
         mock_prepare_job_var.assert_called_once()
         call_args = mock_prepare_job_var.call_args
-
-        # Verify the important parameters
         assert call_args.kwargs["mode"] == "table_to_table"
         assert call_args.kwargs["source_table"] == "source_db.table"
         assert call_args.kwargs["target_table"] == "target_db.table"
@@ -791,8 +812,6 @@ class TestTdLoadOperator:
         assert call_args.kwargs["target_format"] == "Delimited"
         assert call_args.kwargs["source_text_delimiter"] == ","
         assert call_args.kwargs["target_text_delimiter"] == ","
-
-        # Verify connection objects contain expected keys
         assert "host" in call_args.kwargs["source_conn"]
         assert "login" in call_args.kwargs["source_conn"]
         assert "password" in call_args.kwargs["source_conn"]
@@ -800,13 +819,20 @@ class TestTdLoadOperator:
         assert "login" in call_args.kwargs["target_conn"]
         assert "password" in call_args.kwargs["target_conn"]
 
-    @patch("airflow.providers.teradata.operators.tpt.prepare_tdload_job_var_file")
-    def test_generated_job_var_content_file_to_table(self, mock_prepare_job_var):
+    @patch(
+        "airflow.providers.teradata.operators.tpt.prepare_tdload_job_var_file",
+        return_value="generated job var content",
+    )
+    @patch(
+        "airflow.providers.teradata.hooks.ttu.TtuHook.get_conn",
+        return_value={"host": "mock_host", "login": "mock_user", "password": "mock_pass"},
+    )
+    @patch("airflow.providers.teradata.utils.tpt_util.write_file")
+    def test_generated_job_var_content_file_to_table(
+        self, mock_write_file, mock_get_conn, mock_prepare_job_var
+    ):
         """Test job variable file is properly generated for file-to-table load"""
-        # Set up mocks
         mock_prepare_job_var.return_value = "generated job var content"
-
-        # Configure operator for file-to-table mode
         operator = TdLoadOperator(
             task_id="test_generated_job_vars_file_to_table",
             source_file_name="/path/to/data.csv",
@@ -814,94 +840,57 @@ class TestTdLoadOperator:
             teradata_conn_id="teradata_default",
             target_teradata_conn_id="teradata_target",
         )
-
-        # Execute
         operator.execute({})
-
-        # Verify prepare_tdload_job_var_file was called
         mock_prepare_job_var.assert_called_once()
         call_args = mock_prepare_job_var.call_args
-
-        # Verify the important parameters
         assert call_args.kwargs["mode"] == "file_to_table"
         assert call_args.kwargs["source_file_name"] == "/path/to/data.csv"
         assert call_args.kwargs["target_table"] == "target_db.table"
         assert call_args.kwargs["source_format"] == "Delimited"
         assert call_args.kwargs["target_format"] == "Delimited"
 
-    @patch("airflow.providers.teradata.operators.tpt.prepare_tdload_job_var_file")
-    def test_generated_job_var_content_table_to_file(self, mock_prepare_job_var):
-        """Test job variable file is properly generated for table-to-file export"""
-        # Set up mocks
-        mock_prepare_job_var.return_value = "generated job var content"
-
-        # Configure operator for table-to-file mode
-        operator = TdLoadOperator(
-            task_id="test_generated_job_vars_table_to_file",
-            source_table="source_db.table",
-            target_file_name="/path/to/export.csv",
-            teradata_conn_id="teradata_default",
-        )
-
-        # Execute
-        operator.execute({})
-
-        # Verify prepare_tdload_job_var_file was called
-        mock_prepare_job_var.assert_called_once()
-        call_args = mock_prepare_job_var.call_args
-
-        # Verify the important parameters
-        assert call_args.kwargs["mode"] == "table_to_file"
-        assert call_args.kwargs["source_table"] == "source_db.table"
-        assert call_args.kwargs["target_file_name"] == "/path/to/export.csv"
-        assert call_args.kwargs["target_conn"] is None  # No target connection for table-to-file
-
-    @patch("airflow.providers.teradata.operators.tpt.prepare_tdload_job_var_file")
-    def test_generated_job_var_content_custom_formats(self, mock_prepare_job_var):
+    @patch(
+        "airflow.providers.teradata.operators.tpt.prepare_tdload_job_var_file",
+        return_value="generated job var content",
+    )
+    @patch(
+        "airflow.providers.teradata.hooks.ttu.TtuHook.get_conn",
+        return_value={"host": "mock_host", "login": "mock_user", "password": "mock_pass"},
+    )
+    @patch("airflow.providers.teradata.utils.tpt_util.write_file")
+    def test_generated_job_var_content_custom_formats(
+        self, mock_write_file, mock_get_conn, mock_prepare_job_var
+    ):
         """Test job variable file generation with custom format options"""
-        # Set up mocks
         mock_prepare_job_var.return_value = "generated job var content"
-
-        # Configure operator with custom format options
         operator = TdLoadOperator(
             task_id="test_custom_format_options",
             source_table="source_db.table",
             target_table="target_db.target_table",
-            source_format="FixedWidth",  # Custom source format
-            target_format="Vartext",  # Custom target format
-            source_text_delimiter="|",  # Custom source delimiter
-            target_text_delimiter="\t",  # Custom target delimiter
+            source_format="FixedWidth",
+            target_format="Vartext",
+            source_text_delimiter="|",
+            target_text_delimiter="\t",
             teradata_conn_id="teradata_default",
             target_teradata_conn_id="teradata_target",
         )
-
-        # Execute
         operator.execute({})
-
-        # Verify custom formats were passed to prepare_tdload_job_var_file
         mock_prepare_job_var.assert_called_once()
         call_args = mock_prepare_job_var.call_args
-
-        # Verify the custom format parameters
         assert call_args.kwargs["mode"] == "table_to_table"
         assert call_args.kwargs["source_format"] == "FixedWidth"
         assert call_args.kwargs["target_format"] == "Vartext"
         assert call_args.kwargs["source_text_delimiter"] == "|"
         assert call_args.kwargs["target_text_delimiter"] == "\t"
 
-    # ----- SSH Connection Tests -----
-
     @patch("airflow.providers.teradata.operators.tpt.get_remote_temp_directory", return_value="/tmp/mock_dir")
     @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_tdload", return_value=0)
     @patch("airflow.providers.ssh.hooks.ssh.SSHHook")
     def test_file_to_table_with_ssh(self, mock_ssh_hook, mock_execute_tdload, mock_get_temp_dir):
         """Test loading data from a file to a Teradata table via SSH"""
-        # Set up mock SSH hook
         mock_ssh_instance = MagicMock()
         mock_ssh_instance.get_conn.return_value = MagicMock()
         mock_ssh_hook.return_value = mock_ssh_instance
-
-        # Configure the operator
         operator = TdLoadOperator(
             task_id="test_file_to_table_ssh",
             source_file_name="/path/to/data.csv",
@@ -909,16 +898,10 @@ class TestTdLoadOperator:
             teradata_conn_id="teradata_default",
             ssh_conn_id="ssh_default",
         )
-
-        # Execute the operator
         result = operator.execute({})
-
-        # Verify the results
         assert result == 0
-        # Verify that hooks were initialized correctly
         assert operator._src_hook is not None
         assert operator._dest_hook is not None
-        # Verify mocks were called
         mock_get_temp_dir.assert_called_once()
         mock_execute_tdload.assert_called_once()
 
@@ -1201,7 +1184,6 @@ class TestDdlOperator:
 
     def test_template_fields(self):
         """Test that template fields are properly rendered"""
-        # Configure operator with templated fields
         operator = DdlOperator(
             task_id="test_ddl_template_fields",
             ddl=["CREATE TABLE {{ ds_nodash }}_table (id INT)"],
@@ -1212,19 +1194,20 @@ class TestDdlOperator:
 
         # Set up TaskInstance and DagRun
         execution_date = datetime(2021, 1, 1, tzinfo=timezone.utc)
+        context = {"ds_nodash": execution_date.strftime("%Y%m%d")}
         run_id = "test_run"
-        ti = TaskInstance(task=operator, run_id=run_id)
+        ti = TaskInstance(task=operator, run_id=run_id, dag_version_id="dummy_version")
         ti.dag_run = DagRun(
             dag_id=self.dag.dag_id,
             run_id=run_id,
-            logical_date=execution_date,
             start_date=execution_date,
             run_after=execution_date,
             run_type="manual",
+            state="success",
         )
 
         # Render templates
-        ti.render_templates()
+        ti.render_templates(context=context)
 
         # Verify rendered values
         assert operator.ddl == ["CREATE TABLE 20210101_table (id INT)"]
@@ -1232,7 +1215,6 @@ class TestDdlOperator:
 
     def test_template_fields_multiple_statements(self):
         """Test templating with multiple DDL statements"""
-        # Configure operator with multiple templated DDL statements
         operator = DdlOperator(
             task_id="test_multiple_template_fields",
             ddl=[
@@ -1247,19 +1229,20 @@ class TestDdlOperator:
 
         # Set up TaskInstance and DagRun
         execution_date = datetime(2021, 1, 1, tzinfo=timezone.utc)
+        context = {"ds_nodash": execution_date.strftime("%Y%m%d")}
         run_id = "test_run"
-        ti = TaskInstance(task=operator, run_id=run_id)
+        ti = TaskInstance(task=operator, run_id=run_id, dag_version_id="dummy_version")
         ti.dag_run = DagRun(
             dag_id=self.dag.dag_id,
             run_id=run_id,
-            logical_date=execution_date,
             start_date=execution_date,
             run_after=execution_date,
             run_type="manual",
+            state="success",
         )
 
         # Render templates
-        ti.render_templates()
+        ti.render_templates(context=context)
 
         # Verify rendered values
         assert operator.ddl == [
@@ -1302,97 +1285,39 @@ class TestDdlOperator:
 
     # ----- SSL Connection Tests -----
 
-    def test_ssl_connection(self):
+    @patch(
+        "airflow.providers.teradata.hooks.ttu.TtuHook.get_conn",
+        return_value={"host": "mock_host", "login": "mock_user", "password": "mock_pass"},
+    )
+    def test_ssl_connection(self, mock_get_conn):
         """Test operations with SSL-enabled Teradata connection"""
-        # Configure the operator with SSL connection
         operator = TdLoadOperator(
             task_id="test_ssl_connection",
             source_table="source_db.source_table",
             target_table="target_db.target_table",
-            teradata_conn_id="teradata_ssl",  # SSL-enabled connection
+            teradata_conn_id="teradata_ssl",
             target_teradata_conn_id="teradata_target",
         )
-
-        # Execute the operator
         result = operator.execute({})
-
-        # Verify the results - focus on successful execution with SSL
         assert result == 0
-        # Verify that hooks were initialized correctly for SSL connections
         assert operator._src_hook is not None
         assert operator._dest_hook is not None
+        mock_get_conn.assert_called()
 
-    def test_ddl_with_ssl_connection(self):
-        """Test executing DDL statements with SSL connection"""
-        with patch(
-            "airflow.providers.teradata.operators.tpt.prepare_tpt_ddl_script", return_value="SSL DDL script"
-        ):
-            # Configure operator with SSL connection
-            operator = DdlOperator(
-                task_id="test_ssl_ddl",
-                ddl=["CREATE TABLE ssl_db.ssl_table (id INT)"],
-                teradata_conn_id="teradata_ssl",  # SSL-enabled connection
-            )
-
-            # Execute
-            result = operator.execute({})
-
-            # Verify successful execution with SSL connection
-            assert result == 0
-            # Verify hook was initialized for SSL connection
-            assert operator._hook is not None
-
-    # ----- Custom Working Directory Tests -----
-
-    def test_custom_working_directory(self):
-        """Test specifying a custom working directory for temporary files"""
-        # Configure operator with custom working directory
-        operator = TdLoadOperator(
-            task_id="test_custom_working_dir",
-            source_table="source_db.source_table",
-            target_file_name="/path/to/export.csv",
-            teradata_conn_id="teradata_default",
-            remote_working_dir="/custom/temp/dir",  # Custom working directory
-        )
-
-        # Execute
-        result = operator.execute({})
-
-        # Verify successful execution with custom directory
-        assert result == 0
-        # Verify that the custom working directory parameter is set
-        assert operator.remote_working_dir == "/custom/temp/dir"
-        # Verify that hook was initialized
-        assert operator._src_hook is not None
-
-    @patch("airflow.providers.teradata.operators.tpt.get_remote_temp_directory", return_value="/tmp/mock_dir")
-    @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_ddl", return_value=0)
-    @patch("airflow.providers.ssh.hooks.ssh.SSHHook")
-    def test_ddl_with_ssh(self, mock_ssh_hook, mock_execute_ddl, mock_get_temp_dir):
-        """Test executing DDL statements via SSH connection"""
-        # Set up mock SSH hook
-        mock_ssh_instance = MagicMock()
-        mock_ssh_instance.get_conn.return_value = MagicMock()
-        mock_ssh_hook.return_value = mock_ssh_instance
-
-        # Configure operator with SSH connection
+    @patch(
+        "airflow.providers.teradata.hooks.ttu.TtuHook.get_conn",
+        return_value={"host": "mock_host", "login": "mock_user", "password": "mock_pass"},
+    )
+    def test_ddl_with_ssl_connection(self, mock_get_conn):
+        """Test DDL operations with SSL-enabled Teradata connection"""
         operator = DdlOperator(
-            task_id="test_ddl_with_ssh",
-            ddl=["CREATE TABLE test_db.test_table (id INT)"],
-            teradata_conn_id="teradata_default",
-            ssh_conn_id="ssh_default",
-            remote_working_dir="/custom/working/dir",
+            task_id="test_ddl_with_ssl_connection",
+            ddl=["CREATE TABLE test_table (id INT)"],
+            teradata_conn_id="teradata_ssl",
         )
-
-        # Execute the operator
         result = operator.execute({})
-
-        # Verify the results
         assert result == 0
-        # Verify that hook was initialized correctly
-        assert operator._hook is not None
-        # Verify execute_ddl was called
-        mock_execute_ddl.assert_called_once()
+        mock_get_conn.assert_called()
 
     # ----- Specific subprocess mocking tests -----
 

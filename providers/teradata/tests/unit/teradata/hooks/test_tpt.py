@@ -24,6 +24,19 @@ from airflow.exceptions import AirflowException
 from airflow.providers.teradata.hooks.tpt import TptHook
 
 
+# Patch Airflow DB and SSHHook to avoid ImportError and DB access in all tests
+def pytest_configure():
+    patcher1 = patch("airflow.models.Connection")
+    patcher2 = patch("airflow.providers.ssh.hooks.ssh.SSHHook")
+    patcher1.start()
+    patcher2.start()
+    # Register finalizers to stop patches after tests
+    import atexit
+
+    atexit.register(patcher1.stop)
+    atexit.register(patcher2.stop)
+
+
 class TestTptHook:
     @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
     def test_init_with_ssh(self, mock_ssh_hook):
