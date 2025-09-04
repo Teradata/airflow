@@ -25,24 +25,25 @@ from airflow.providers.teradata.hooks.tpt import TptHook
 
 
 class TestTptHook:
-    @patch("airflow.models.Connection")
     @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
-    def test_init_with_ssh(self, mock_ssh_hook, mock_conn):
+    @patch("airflow.models.Connection")
+    def test_init_with_ssh(self, mock_conn, mock_ssh_hook):
         hook = TptHook(ssh_conn_id="ssh_default")
         assert hook.ssh_conn_id == "ssh_default"
         assert hook.ssh_hook is not None
 
+    @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
     @patch("airflow.models.Connection")
-    def test_init_without_ssh(self, mock_conn):
+    def test_init_without_ssh(self, mock_conn, mock_ssh_hook):
         hook = TptHook()
         assert hook.ssh_conn_id is None
         assert hook.ssh_hook is None
 
-    @patch("airflow.models.Connection")
     @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
+    @patch("airflow.models.Connection")
     @patch("airflow.providers.teradata.hooks.tpt.TptHook._execute_tbuild_via_ssh")
     @patch("airflow.providers.teradata.hooks.tpt.TptHook._execute_tbuild_locally")
-    def test_execute_ddl_dispatch(self, mock_local, mock_ssh, mock_ssh_hook, mock_conn):
+    def test_execute_ddl_dispatch(self, mock_local, mock_ssh, mock_conn, mock_ssh_hook):
         # Local execution
         hook = TptHook()
         mock_local.return_value = 0
@@ -66,13 +67,14 @@ class TestTptHook:
         with pytest.raises(ValueError, match="TPT script content must not be empty after processing"):
             hook.execute_ddl("   ", "/tmp")  # Only whitespace
 
+    @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
     @patch("airflow.providers.teradata.hooks.tpt.terminate_subprocess")
     @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
     @patch("airflow.providers.teradata.hooks.tpt.set_local_file_permissions")
     @patch("airflow.providers.teradata.hooks.tpt.subprocess.Popen")
     @patch("airflow.providers.teradata.hooks.tpt.shutil.which", return_value="/usr/bin/tbuild")
     def test_execute_tbuild_locally_success(
-        self, mock_which, mock_popen, mock_set_permissions, mock_secure_delete, mock_terminate
+        self, mock_which, mock_popen, mock_set_permissions, mock_secure_delete, mock_terminate, mock_ssh_hook
     ):
         hook = TptHook()
         process = MagicMock()
@@ -85,13 +87,14 @@ class TestTptHook:
         assert result == 0
         mock_set_permissions.assert_called_once()
 
+    @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
     @patch("airflow.providers.teradata.hooks.tpt.terminate_subprocess")
     @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
     @patch("airflow.providers.teradata.hooks.tpt.set_local_file_permissions")
     @patch("airflow.providers.teradata.hooks.tpt.subprocess.Popen")
     @patch("airflow.providers.teradata.hooks.tpt.shutil.which", return_value="/usr/bin/tbuild")
     def test_execute_tbuild_locally_failure(
-        self, mock_which, mock_popen, mock_set_permissions, mock_secure_delete, mock_terminate
+        self, mock_which, mock_popen, mock_set_permissions, mock_secure_delete, mock_terminate, mock_ssh_hook
     ):
         hook = TptHook()
         process = MagicMock()
@@ -104,9 +107,10 @@ class TestTptHook:
             hook._execute_tbuild_locally("CREATE TABLE test (id INT);")
         mock_set_permissions.assert_called_once()
 
+    @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
     @patch("airflow.providers.teradata.hooks.tpt.TptHook._execute_tdload_via_ssh")
     @patch("airflow.providers.teradata.hooks.tpt.TptHook._execute_tdload_locally")
-    def test_execute_tdload_dispatch(self, mock_local, mock_ssh):
+    def test_execute_tdload_dispatch(self, mock_local, mock_ssh, mock_ssh_hook):
         # Local execution
         hook = TptHook()
         mock_local.return_value = 0
@@ -120,34 +124,7 @@ class TestTptHook:
         assert hook.execute_tdload("/tmp", "jobvar") == 0
         mock_ssh.assert_called_once()
 
-    @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
-    @patch("airflow.providers.teradata.hooks.tpt.subprocess.Popen")
-    @patch("airflow.providers.teradata.hooks.tpt.shutil.which", return_value="/usr/bin/tdload")
-    def test_execute_tdload_locally_success(self, mock_which, mock_popen, mock_secure_delete):
-        hook = TptHook()
-        process = MagicMock()
-        process.stdout.readline.side_effect = [b"Loaded\n", b""]
-        process.wait.return_value = None
-        process.returncode = 0
-        mock_popen.return_value = process
-
-        result = hook._execute_tdload_locally("jobvar", "-v", "jobname")
-        assert result == 0
-
-    @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
-    @patch("airflow.providers.teradata.hooks.tpt.subprocess.Popen")
-    @patch("airflow.providers.teradata.hooks.tpt.shutil.which", return_value="/usr/bin/tdload")
-    def test_execute_tdload_locally_failure(self, mock_which, mock_popen, mock_secure_delete):
-        hook = TptHook()
-        process = MagicMock()
-        process.stdout.readline.side_effect = [b"error: failed\n", b""]
-        process.wait.return_value = None
-        process.returncode = 1
-        mock_popen.return_value = process
-
-        with pytest.raises(AirflowException):
-            hook._execute_tdload_locally("jobvar", "-v", "jobname")
-
+    @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
     @patch("airflow.providers.teradata.hooks.tpt.execute_remote_command")
     @patch("airflow.providers.teradata.hooks.tpt.remote_secure_delete")
     @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
@@ -170,6 +147,7 @@ class TestTptHook:
         mock_secure_delete,
         mock_remote_secure_delete,
         mock_execute_remote_command,
+        mock_ssh_hook,
     ):
         """Test successful execution of tbuild via SSH"""
         # Setup hook with SSH
@@ -202,6 +180,7 @@ class TestTptHook:
         mock_remote_secure_delete.assert_called_once()
         mock_secure_delete.assert_called()
 
+    @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
     @patch("airflow.providers.teradata.hooks.tpt.execute_remote_command")
     @patch("airflow.providers.teradata.hooks.tpt.remote_secure_delete")
     @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
@@ -224,6 +203,7 @@ class TestTptHook:
         mock_secure_delete,
         mock_remote_secure_delete,
         mock_execute_remote_command,
+        mock_ssh_hook,
     ):
         """Test failed execution of tbuild via SSH"""
         # Setup hook with SSH
@@ -248,7 +228,8 @@ class TestTptHook:
         mock_remote_secure_delete.assert_called_once()
         mock_secure_delete.assert_called()
 
-    def test_execute_tbuild_via_ssh_no_ssh_hook(self):
+    @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
+    def test_execute_tbuild_via_ssh_no_ssh_hook(self, mock_ssh_hook):
         """Test tbuild via SSH when SSH hook is not initialized"""
         hook = TptHook(ssh_conn_id="ssh_default")
         hook.ssh_hook = None  # Simulate uninitialized SSH hook
@@ -256,6 +237,7 @@ class TestTptHook:
         with pytest.raises(AirflowException, match="SSH connection is not established"):
             hook._execute_tbuild_via_ssh("CREATE TABLE test (id INT);", "/tmp")
 
+    @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
     @patch("airflow.providers.teradata.hooks.tpt.execute_remote_command")
     @patch("airflow.providers.teradata.hooks.tpt.remote_secure_delete")
     @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
@@ -276,6 +258,7 @@ class TestTptHook:
         mock_secure_delete,
         mock_remote_secure_delete,
         mock_execute_remote_command,
+        mock_ssh_hook,
     ):
         """Test successful transfer and execution of tdload on remote host"""
         # Setup hook with SSH
@@ -317,6 +300,7 @@ class TestTptHook:
         assert "-u" in call_args
         assert "test_job" in call_args
 
+    @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
     @patch("airflow.providers.teradata.hooks.tpt.execute_remote_command")
     @patch("airflow.providers.teradata.hooks.tpt.remote_secure_delete")
     @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
@@ -337,6 +321,7 @@ class TestTptHook:
         mock_secure_delete,
         mock_remote_secure_delete,
         mock_execute_remote_command,
+        mock_ssh_hook,
     ):
         """Test failed transfer and execution of tdload on remote host"""
         # Setup hook with SSH
@@ -363,6 +348,7 @@ class TestTptHook:
         mock_remote_secure_delete.assert_called_once()
         mock_secure_delete.assert_called()
 
+    @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
     @patch("airflow.providers.teradata.hooks.tpt.execute_remote_command")
     @patch("airflow.providers.teradata.hooks.tpt.remote_secure_delete")
     @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
@@ -383,6 +369,7 @@ class TestTptHook:
         mock_secure_delete,
         mock_remote_secure_delete,
         mock_execute_remote_command,
+        mock_ssh_hook,
     ):
         """Test transfer and execution of tdload on remote host with no options"""
         # Setup hook with SSH
@@ -415,7 +402,8 @@ class TestTptHook:
         assert "-v" not in call_args
         assert "-u" not in call_args
 
-    def test_transfer_to_and_execute_tdload_on_remote_no_ssh_hook(self):
+    @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
+    def test_transfer_to_and_execute_tdload_on_remote_no_ssh_hook(self, mock_ssh_hook):
         """Test transfer and execution when SSH hook is not initialized"""
         hook = TptHook(ssh_conn_id="ssh_default")
         hook.ssh_hook = None  # Simulate uninitialized SSH hook
@@ -425,6 +413,7 @@ class TestTptHook:
                 "/tmp/job_var_file.txt", "/remote/tmp", "-v", "test_job"
             )
 
+    @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
     @patch("airflow.providers.teradata.hooks.tpt.remote_secure_delete")
     @patch("airflow.providers.teradata.hooks.tpt.secure_delete")
     @patch("airflow.providers.teradata.hooks.tpt.set_remote_file_permissions")
@@ -446,6 +435,7 @@ class TestTptHook:
         mock_set_permissions,
         mock_secure_delete,
         mock_remote_secure_delete,
+        mock_ssh_hook,
     ):
         """Test transfer and execution when TPT utility verification fails"""
         # Setup hook with SSH

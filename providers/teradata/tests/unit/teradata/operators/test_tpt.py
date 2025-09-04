@@ -599,10 +599,10 @@ class TestTdLoadOperator:
 
     @patch("airflow.providers.ssh.hooks.ssh.SSHHook.get_conn")
     @patch("airflow.providers.teradata.operators.tpt.is_valid_remote_job_var_file", return_value=False)
-    def test_invalid_remote_job_var_file(self, mock_is_valid_remote, mock_get_conn):
+    def test_invalid_remote_job_var_file(self, mock_is_valid_remote, mock_ssh_hook_get_conn):
         """Test with invalid remote job variable file path"""
         mock_ssh_client = MagicMock()
-        mock_get_conn.return_value.__enter__.return_value = mock_ssh_client
+        mock_ssh_hook_get_conn.return_value.__enter__.return_value = mock_ssh_client
         # Configure operator
         operator = TdLoadOperator(
             task_id="test_with_invalid_remote_job_var_file",
@@ -615,10 +615,13 @@ class TestTdLoadOperator:
             operator.execute({})
         assert "invalid or does not exist on remote machine" in str(context.value)
 
-    @patch("airflow.providers.ssh.hooks.ssh.SSHHook.get_conn")
-    @patch("airflow.providers.teradata.operators.tpt.get_remote_temp_directory", return_value="/tmp/mock_dir")
+    @patch("airflow.providers.ssh.hooks.ssh.SSHHook")
     @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_tdload", return_value=0)
-    def test_file_to_table_with_ssh(self, mock_execute_tdload, mock_get_temp_dir, mock_get_conn):
+    @patch("airflow.providers.teradata.operators.tpt.get_remote_temp_directory", return_value="/tmp/mock_dir")
+    @patch("airflow.providers.ssh.hooks.ssh.SSHHook.get_conn")
+    def test_file_to_table_with_ssh(
+        self, mock_get_conn, mock_get_temp_dir, mock_execute_tdload, mock_ssh_hook
+    ):
         """Test loading data from a file to a Teradata table via SSH"""
         # Patch get_conn to return a context manager
         mock_ssh_client = MagicMock()
@@ -657,7 +660,8 @@ class TestDdlOperator:
 
     # ----- DDL Execution Tests -----
 
-    def test_ddl_execution(self):
+    @patch("airflow.providers.ssh.hooks.ssh.SSHHook")
+    def test_ddl_execution(self, mock_ssh_hook):
         # Configure operator
         operator = DdlOperator(
             task_id="test_ddl",
@@ -672,7 +676,8 @@ class TestDdlOperator:
         # Verify the execution was successful (returns 0 for success)
         assert result == 0
 
-    def test_ddl_execution_with_multiple_statements(self):
+    @patch("airflow.providers.ssh.hooks.ssh.SSHHook")
+    def test_ddl_execution_with_multiple_statements(self, mock_ssh_hook):
         # Create a list of complex DDL statements
         ddl_statements = [
             "CREATE TABLE test_db.customers (customer_id INTEGER, name VARCHAR(100), email VARCHAR(255))",
@@ -747,7 +752,8 @@ class TestDdlOperator:
             ).execute({})
         assert "ddl parameter must be a non-empty list" in str(context.value)
 
-    def test_error_list_validation(self):
+    @patch("airflow.providers.ssh.hooks.ssh.SSHHook")
+    def test_error_list_validation(self, mock_ssh_hook):
         # Test with integer error code
         operator = DdlOperator(
             task_id="test_int_error_list",
@@ -873,7 +879,8 @@ class TestDdlOperator:
         operator.on_kill()
 
     # ----- Templating Tests -----
-    def test_template_ext(self):
+    @patch("airflow.providers.ssh.hooks.ssh.SSHHook")
+    def test_template_ext(self, mock_ssh_hook):
         # Verify template_ext contains .sql
         assert ".sql" in DdlOperator.template_ext
 
@@ -1027,11 +1034,14 @@ class TestDdlOperator:
         mock_src_hook.on_kill.assert_called_once()
         mock_dest_hook.on_kill.assert_called_once()
 
+    @patch("airflow.providers.ssh.hooks.ssh.SSHHook")
     @patch.object(TdLoadOperator, "_src_hook", create=True)
     @patch.object(TdLoadOperator, "_dest_hook", create=True)
     @patch("airflow.providers.teradata.hooks.tpt.TptHook.__init__", return_value=None)
     @patch("airflow.models.Connection")
-    def test_on_kill_no_hooks_direct_patch(self, mock_conn, mock_hook_init, mock_dest_hook, mock_src_hook):
+    def test_on_kill_no_hooks_direct_patch(
+        self, mock_conn, mock_hook_init, mock_dest_hook, mock_src_hook, mock_ssh_hook
+    ):
         """Test on_kill method when no hooks are initialized (bteq style)"""
         operator = TdLoadOperator(
             task_id="test_on_kill_no_hooks_direct_patch",
