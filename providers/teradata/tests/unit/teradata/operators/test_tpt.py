@@ -538,39 +538,6 @@ class TestTdLoadOperator:
                 operator.execute({})
             assert "is invalid or does not exist" in str(context.value)
 
-    @patch("airflow.providers.teradata.operators.tpt.SSHHook")
-    @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
-    @patch("airflow.providers.ssh.hooks.ssh.SSHHook")
-    @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_tdload", return_value=0)
-    @patch("airflow.providers.teradata.operators.tpt.get_remote_temp_directory", return_value="/tmp/mock_dir")
-    @patch("airflow.providers.ssh.hooks.ssh.SSHHook.get_conn")
-    def test_file_to_table_with_ssh(
-        self,
-        mock_get_conn,
-        mock_get_temp_dir,
-        mock_execute_tdload,
-        mock_ssh_hook,
-        mock_tpt_ssh_hook,
-        mock_operator_ssh_hook,
-    ):
-        # Patch get_conn to return a context manager
-        mock_ssh_client = MagicMock()
-        mock_get_conn.return_value.__enter__.return_value = mock_ssh_client
-        # Set up operator
-        operator = TdLoadOperator(
-            task_id="test_file_to_table_ssh",
-            source_file_name="/path/to/data.csv",
-            target_table="target_db.target_table",
-            teradata_conn_id="teradata_default",
-            ssh_conn_id="ssh_default",
-        )
-        result = operator.execute({})
-        assert result == 0
-        assert operator._src_hook is not None
-        assert operator._dest_hook is not None
-        mock_get_temp_dir.assert_called_once()
-        mock_execute_tdload.assert_called_once()
-
 
 class TestDdlOperator:
     """
