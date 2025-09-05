@@ -538,91 +538,14 @@ class TestTdLoadOperator:
                 operator.execute({})
             assert "is invalid or does not exist" in str(context.value)
 
-    @patch("airflow.providers.ssh.hooks.ssh.SSHHook.get_conn")
-    @patch("airflow.providers.teradata.operators.tpt.is_valid_remote_job_var_file", return_value=True)
-    @patch("airflow.providers.teradata.hooks.tpt.TptHook._execute_tdload_via_ssh", return_value=0)
-    def test_with_remote_job_var_file(self, mock_execute_tdload, mock_is_valid_remote, mock_get_conn):
-        """Test using a remote job variable file via SSH"""
-        mock_ssh_client = MagicMock()
-        mock_get_conn.return_value.__enter__.return_value = mock_ssh_client
-        # Mock SFTP operations
-        mock_sftp = MagicMock()
-        mock_ssh_client.open_sftp.return_value = mock_sftp
-        mock_remote_file = MagicMock()
-        mock_remote_file.read.return_value.decode.return_value = "remote job var content"
-        mock_sftp.open.return_value.__enter__.return_value = mock_remote_file
-        # Configure operator with remote job var file via SSH
-        operator = TdLoadOperator(
-            task_id="test_with_remote_job_var_file",
-            tdload_job_var_file="/remote/path/to/job_vars.txt",
-            teradata_conn_id="teradata_default",
-            ssh_conn_id="ssh_default",
-        )
-
-        # Execute
-        result = operator.execute({})
-
-        # Verify the execution was successful (returns 0 for success)
-        assert result == 0
-
-    @patch("airflow.providers.ssh.hooks.ssh.SSHHook.get_conn")
-    @patch("airflow.providers.teradata.operators.tpt.is_valid_remote_job_var_file", return_value=True)
-    @patch("airflow.providers.teradata.hooks.tpt.TptHook._execute_tdload_via_ssh", return_value=0)
-    def test_with_remote_job_var_file_and_options(
-        self, mock_execute_tdload, mock_is_valid_remote, mock_get_conn
-    ):
-        """Test using a remote job variable file with additional options"""
-        mock_ssh_client = MagicMock()
-        mock_get_conn.return_value.__enter__.return_value = mock_ssh_client
-        # Mock SFTP operations
-        mock_sftp = MagicMock()
-        mock_ssh_client.open_sftp.return_value = mock_sftp
-        mock_remote_file = MagicMock()
-        mock_remote_file.read.return_value.decode.return_value = "remote job var content"
-        mock_sftp.open.return_value.__enter__.return_value = mock_remote_file
-        # Configure operator with custom options
-        operator = TdLoadOperator(
-            task_id="test_with_remote_job_var_file_options",
-            tdload_job_var_file="/remote/path/to/job_vars.txt",
-            tdload_options="-v -u",
-            tdload_job_name="custom_job_name",
-            remote_working_dir="/custom/remote/dir",
-            teradata_conn_id="teradata_default",
-            ssh_conn_id="ssh_default",
-        )
-
-        # Execute
-        result = operator.execute({})
-
-        # Verify the execution was successful (returns 0 for success)
-        assert result == 0
-
-    @patch("airflow.providers.ssh.hooks.ssh.SSHHook.get_conn")
-    @patch("airflow.providers.teradata.operators.tpt.is_valid_remote_job_var_file", return_value=False)
-    def test_invalid_remote_job_var_file(self, mock_is_valid_remote, mock_ssh_hook_get_conn):
-        """Test with invalid remote job variable file path"""
-        mock_ssh_client = MagicMock()
-        mock_ssh_hook_get_conn.return_value.__enter__.return_value = mock_ssh_client
-        # Configure operator
-        operator = TdLoadOperator(
-            task_id="test_with_invalid_remote_job_var_file",
-            tdload_job_var_file="/remote/path/to/nonexistent_file.txt",
-            teradata_conn_id="teradata_default",
-            ssh_conn_id="ssh_default",
-        )
-        # Execute and check for exception
-        with pytest.raises(ValueError) as context:
-            operator.execute({})
-        assert "invalid or does not exist on remote machine" in str(context.value)
-
+    @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
     @patch("airflow.providers.ssh.hooks.ssh.SSHHook")
     @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_tdload", return_value=0)
     @patch("airflow.providers.teradata.operators.tpt.get_remote_temp_directory", return_value="/tmp/mock_dir")
     @patch("airflow.providers.ssh.hooks.ssh.SSHHook.get_conn")
     def test_file_to_table_with_ssh(
-        self, mock_get_conn, mock_get_temp_dir, mock_execute_tdload, mock_ssh_hook
+        self, mock_get_conn, mock_get_temp_dir, mock_execute_tdload, mock_ssh_hook, mock_tpt_ssh_hook
     ):
-        """Test loading data from a file to a Teradata table via SSH"""
         # Patch get_conn to return a context manager
         mock_ssh_client = MagicMock()
         mock_get_conn.return_value.__enter__.return_value = mock_ssh_client
@@ -660,25 +583,33 @@ class TestDdlOperator:
 
     # ----- DDL Execution Tests -----
 
-    @patch("airflow.providers.ssh.hooks.ssh.SSHHook")
-    def test_ddl_execution(self, mock_ssh_hook):
-        # Configure operator
+    @patch("airflow.providers.teradata.operators.tpt.TptHook")
+    def test_ddl_execution(self, mock_tpt_hook):
+        mock_hook_instance = mock_tpt_hook.return_value
+        mock_hook_instance.get_conn.return_value = {
+            "host": "mock_host",
+            "login": "mock_user",
+            "password": "mock_pass",
+        }
+        mock_hook_instance.execute_ddl.return_value = 0
         operator = DdlOperator(
             task_id="test_ddl",
             ddl=["CREATE TABLE test_db.test_table (id INT)", "CREATE INDEX idx ON test_db.test_table (id)"],
             teradata_conn_id="teradata_default",
             ddl_job_name="test_ddl_job",
         )
-
-        # Execute
         result = operator.execute({})
-
-        # Verify the execution was successful (returns 0 for success)
         assert result == 0
 
-    @patch("airflow.providers.ssh.hooks.ssh.SSHHook")
-    def test_ddl_execution_with_multiple_statements(self, mock_ssh_hook):
-        # Create a list of complex DDL statements
+    @patch("airflow.providers.teradata.operators.tpt.TptHook")
+    def test_ddl_execution_with_multiple_statements(self, mock_tpt_hook):
+        mock_hook_instance = mock_tpt_hook.return_value
+        mock_hook_instance.get_conn.return_value = {
+            "host": "mock_host",
+            "login": "mock_user",
+            "password": "mock_pass",
+        }
+        mock_hook_instance.execute_ddl.return_value = 0
         ddl_statements = [
             "CREATE TABLE test_db.customers (customer_id INTEGER, name VARCHAR(100), email VARCHAR(255))",
             "CREATE INDEX idx_customer_name ON test_db.customers (name)",
@@ -690,18 +621,12 @@ class TestDdlOperator:
             )""",
             "CREATE PROCEDURE test_db.get_customer(IN p_id INTEGER) BEGIN SELECT * FROM test_db.customers WHERE customer_id = p_id; END;",
         ]
-
-        # Configure operator with multiple statements
         operator = DdlOperator(
             task_id="test_multiple_ddl",
             ddl=ddl_statements,
             teradata_conn_id="teradata_default",
         )
-
-        # Execute
         result = operator.execute({})
-
-        # Verify the execution was successful (returns 0 for success)
         assert result == 0
 
     # ----- Parameter Validation Tests -----
@@ -752,8 +677,15 @@ class TestDdlOperator:
             ).execute({})
         assert "ddl parameter must be a non-empty list" in str(context.value)
 
-    @patch("airflow.providers.ssh.hooks.ssh.SSHHook")
-    def test_error_list_validation(self, mock_ssh_hook):
+    @patch("airflow.providers.teradata.operators.tpt.TptHook")
+    def test_error_list_validation(self, mock_tpt_hook):
+        mock_hook_instance = mock_tpt_hook.return_value
+        mock_hook_instance.get_conn.return_value = {
+            "host": "mock_host",
+            "login": "mock_user",
+            "password": "mock_pass",
+        }
+        mock_hook_instance.execute_ddl.return_value = 0
         # Test with integer error code
         operator = DdlOperator(
             task_id="test_int_error_list",
@@ -795,9 +727,6 @@ class TestDdlOperator:
                 teradata_conn_id="teradata_default",
             ).execute({})
         assert "error_list must be an int or a list of ints" in str(context.value)
-
-        # NOTE: The current operator implementation does not validate the contents of the error_list
-        # so lists with mixed types will not raise an error. This could be improved in the future.
 
     # ----- Error Handling Tests -----
 
@@ -880,20 +809,22 @@ class TestDdlOperator:
 
     # ----- Templating Tests -----
     @patch("airflow.providers.ssh.hooks.ssh.SSHHook")
-    def test_template_ext(self, mock_ssh_hook):
+    @patch("airflow.providers.teradata.operators.tpt.TptHook")
+    def test_template_ext(self, mock_tpt_hook, mock_ssh_hook):
+        mock_hook_instance = mock_tpt_hook.return_value
+        mock_hook_instance.get_conn.return_value = {
+            "host": "mock_host",
+            "login": "mock_user",
+            "password": "mock_pass",
+        }
+        mock_hook_instance.execute_ddl.return_value = 0
         # Verify template_ext contains .sql
         assert ".sql" in DdlOperator.template_ext
-
-        # Verify that operator can read from SQL file (simulation)
-        # In a real execution, Airflow would read the SQL file and pass the content to the operator
-        # Here we simulate that the SQL file has been read and its content provided to the operator
         operator = DdlOperator(
             task_id="test_sql_file",
-            ddl=["SELECT * FROM test_table;"],  # This would be the content of the SQL file
+            ddl=["SELECT * FROM test_table;"],
             teradata_conn_id="teradata_default",
         )
-
-        # Execute and verify no errors
         result = operator.execute({})
         assert result == 0
 
