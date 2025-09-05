@@ -538,13 +538,20 @@ class TestTdLoadOperator:
                 operator.execute({})
             assert "is invalid or does not exist" in str(context.value)
 
+    @patch("airflow.providers.teradata.operators.tpt.SSHHook")
     @patch("airflow.providers.teradata.hooks.tpt.SSHHook")
     @patch("airflow.providers.ssh.hooks.ssh.SSHHook")
     @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_tdload", return_value=0)
     @patch("airflow.providers.teradata.operators.tpt.get_remote_temp_directory", return_value="/tmp/mock_dir")
     @patch("airflow.providers.ssh.hooks.ssh.SSHHook.get_conn")
     def test_file_to_table_with_ssh(
-        self, mock_get_conn, mock_get_temp_dir, mock_execute_tdload, mock_ssh_hook, mock_tpt_ssh_hook
+        self,
+        mock_get_conn,
+        mock_get_temp_dir,
+        mock_execute_tdload,
+        mock_ssh_hook,
+        mock_tpt_ssh_hook,
+        mock_operator_ssh_hook,
     ):
         # Patch get_conn to return a context manager
         mock_ssh_client = MagicMock()
