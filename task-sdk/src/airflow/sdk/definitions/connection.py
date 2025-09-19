@@ -17,6 +17,7 @@
 # under the License.
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from json import JSONDecodeError
@@ -189,20 +190,52 @@ class Connection:
         return hook_class(**{hook.connection_id_attribute_name: self.conn_id}, **hook_params)
 
     @classmethod
+    def _handle_connection_error(cls, e: AirflowRuntimeError, conn_id: str) -> None:
+        """Handle connection retrieval errors."""
+        if e.error.error == ErrorType.CONNECTION_NOT_FOUND:
+            raise AirflowNotFoundException(f"The conn_id `{conn_id}` isn't defined") from None
+        raise
+
+    @classmethod
     def get(cls, conn_id: str) -> Any:
         from airflow.sdk.execution_time.context import _get_connection
 
         try:
             return _get_connection(conn_id)
         except AirflowRuntimeError as e:
-            if e.error.error == ErrorType.CONNECTION_NOT_FOUND:
-                raise AirflowNotFoundException(f"The conn_id `{conn_id}` isn't defined") from None
+            cls._handle_connection_error(e, conn_id)
+        except RuntimeError as e:
+            # The error from async_to_sync is a RuntimeError, so we have to fall back to text matching
+            if str(e).startswith("You cannot use AsyncToSync in the same thread as an async event loop"):
+                import greenback
+
+                task = asyncio.current_task()
+                if greenback.has_portal(task):
+                    import warnings
+
+                    warnings.warn(
+                        "You should not use sync calls here -- use `await Conn.async_get` instead",
+                        stacklevel=2,
+                    )
+
+                    return greenback.await_(cls.async_get(conn_id))
+
+            log.exception("async_to_sync failed")
             raise
+
+    @classmethod
+    async def async_get(cls, conn_id: str) -> Any:
+        from airflow.sdk.execution_time.context import _async_get_connection
+
+        try:
+            return await _async_get_connection(conn_id)
+        except AirflowRuntimeError as e:
+            cls._handle_connection_error(e, conn_id)
 
     @property
     def extra_dejson(self) -> dict:
         """Returns the extra property by deserializing json."""
-        from airflow.sdk.execution_time.secrets_masker import mask_secret
+        from airflow.sdk.log import mask_secret
 
         extra = {}
         if self.extra:
@@ -257,6 +290,12 @@ class Connection:
     @classmethod
     def from_json(cls, value, conn_id=None) -> Connection:
         kwargs = json.loads(value)
+        conn_type = kwargs.get("conn_type", None)
+        if not conn_type:
+            raise ValueError(
+                "Connection type (conn_type) is required but missing from connection configuration. "
+                "Please add 'conn_type' field to your connection definition."
+            )
         extra = kwargs.pop("extra", None)
         if extra:
             kwargs["extra"] = extra if isinstance(extra, str) else json.dumps(extra)
