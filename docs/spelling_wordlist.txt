@@ -1707,6 +1707,7 @@ StatsD
 statsd
 stderr
 stdout
+stmt
 stmts
 StorageClass
 StoredInfoType
@@ -1805,8 +1806,10 @@ tasksetmeta
 tasksState
 taskTree
 tblproperties
+tbuild
 TCP
 tcp
+tdload
 teardown
 teardowns
 templatable
@@ -1861,6 +1864,7 @@ toolchain
 Tooltip
 tooltip
 tooltips
+tpt
 traceback
 tracebacks
 tracemalloc

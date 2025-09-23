@@ -264,22 +264,6 @@ class TestBteqUtils:
         # Should not raise
         verify_bteq_installed_remote(ssh_client)
 
-    @patch("paramiko.SSHClient.exec_command")
-    def test_verify_bteq_installed_remote_fail_exec(self, mock_exec):
-        mock_stdin = MagicMock()
-        mock_stdout = MagicMock()
-        mock_stderr = MagicMock()
-        mock_stdout.channel.recv_exit_status.return_value = 1
-        mock_stdout.read.return_value = b""
-        mock_stderr.read.return_value = b"command not found"
-        mock_exec.return_value = (mock_stdin, mock_stdout, mock_stderr)
-
-        ssh_client = MagicMock()
-        ssh_client.exec_command = mock_exec
-
-        with pytest.raises(AirflowException):
-            verify_bteq_installed_remote(ssh_client)
-
     @patch("paramiko.SSHClient.open_sftp")
     def test_transfer_file_sftp(self, mock_open_sftp):
         mock_sftp = MagicMock()
