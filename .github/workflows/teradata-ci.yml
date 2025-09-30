@@ -196,36 +196,12 @@ jobs:
           prek -c dev/.pre-commit-config.yaml --all-files --verbose --hook-stage manual
           pin-versions
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  build-ci-images:
-    name: Build CI images
-    needs: [build-info]
-    uses: ./.github/workflows/ci-image-build.yml
-    permissions:
-      contents: read
-      # This write is only given here for `push` events from "apache/airflow" repo. It is not given for PRs
-      # from forks. This is to prevent malicious PRs from creating images in the "apache/airflow" repo.
-      packages: write
-    with:
-      runners: ${{ needs.build-info.outputs.amd-runners }}
-      platform: "linux/amd64"
-      push-image: "false"
-      upload-image-artifact: "true"
-      upload-mount-cache-artifact: ${{ needs.build-info.outputs.canary-run }}
-      python-versions: ${{ needs.build-info.outputs.python-versions }}
-      branch: ${{ needs.build-info.outputs.default-branch }}
-      constraints-branch: ${{ needs.build-info.outputs.default-constraints-branch }}
-      use-uv: ${{ needs.build-info.outputs.use-uv }}
-      upgrade-to-newer-dependencies: ${{ needs.build-info.outputs.upgrade-to-newer-dependencies }}
-      docker-cache: ${{ needs.build-info.outputs.docker-cache }}
-      disable-airflow-repo-cache: ${{ needs.build-info.outputs.disable-airflow-repo-cache }}
-    if: needs.build-info.outputs.ci-image-build == 'true'
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} 
 
 
   tests-integration-system:
     name: Integration and System Tests
-    needs: [build-info, build-ci-images]
+    needs: [build-info]
     uses: ./.github/workflows/teradata-integration-system-tests.yml
     permissions:
       contents: read
