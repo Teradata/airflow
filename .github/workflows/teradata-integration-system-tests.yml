@@ -122,7 +122,7 @@ jobs:
           CSAE_ENV_NAME: airflow-ci-${{ steps.define-environment-name.outputs.env-name }}
       - name: "System Tests"
         run: >
-          ./scripts/ci/testing/run_system_tests.sh providers/teradata/tests/system/teradata
+          ./scripts/ci/testing/run_system_tests.sh providers/teradata/tests/system/teradata/example_teradata.py
       - name: "Post Tests success"
         uses: ./.github/actions/post_tests_success
         with:
