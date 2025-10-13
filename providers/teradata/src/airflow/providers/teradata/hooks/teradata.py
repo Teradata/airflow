@@ -34,6 +34,8 @@ if TYPE_CHECKING:
     except ImportError:
         from airflow.models.connection import Connection  # type: ignore[assignment]
 
+# The default port is 1025 for non-HTTPS connections to the database. Refer
+# https://teradata-docs.s3.amazonaws.com/doc/connectivity/jdbc/reference/current/jdbcug_chapter_2.html#URL_DBS_PORT
 DEFAULT_DB_PORT = 1025
 PARAM_TYPES = {bool, float, int, str}
 
@@ -199,7 +201,7 @@ class TeradataHook(DbApiHook):
     @property
     def sqlalchemy_url(self) -> URL:
         """
-         Override to return a Sqlalchemy.engine.URL object from the Teradata connection.
+        Override to return a `sqlalchemy.engine.URL` object from the Teradata connection.
 
         :return: the extracted sqlalchemy.engine.URL object.
         """
