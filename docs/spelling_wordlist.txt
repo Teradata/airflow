@@ -1813,6 +1813,7 @@ tblproperties
 tbuild
 TCP
 tcp
+tdload
 teardown
 teardowns
 templatable
