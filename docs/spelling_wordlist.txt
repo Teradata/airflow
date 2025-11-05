@@ -66,6 +66,7 @@ AnExampleDisplayName
 AnnotateTextResponse
 AnotherExampleDisplayName
 ans
+anser
 Ansible
 anyOf
 apache
@@ -252,6 +253,8 @@ chakra
 Changelog
 changelog
 charset
+chatbot
+chatbots
 Checklicence
 checklicence
 CheckOperator
@@ -272,6 +275,7 @@ classpaths
 cleartext
 cli
 clientId
+ClientSecretCredential
 cloudant
 CloudantV
 cloudbuild
@@ -476,6 +480,7 @@ deduplicated
 deduplication
 deepcopy
 deepcopying
+DefaultAzureCredential
 deferrable
 deidentify
 DeidentifyContentResponse
@@ -701,6 +706,8 @@ Firehose
 Firestore
 firestore
 firstname
+Flamegraph
+flamegraph
 Flink
 flink
 flinkDeployment
@@ -1117,6 +1124,7 @@ memberOf
 memcached
 Memorystore
 memorystore
+memray
 Mesos
 mesos
 MessageAttributes
@@ -1612,6 +1620,7 @@ serializer
 serializers
 serverless
 ServiceAccount
+ServicePrincipalCredentials
 ServiceResource
 SES
 sessionmaker
@@ -1881,6 +1890,8 @@ tsql
 tsv
 ttl
 ttlSecondsAfterFinished
+TTU
+Ttu
 TTY
 Tunables
 tunables
@@ -1971,6 +1982,7 @@ Utils
 utils
 uuid
 uv
+uvicorn
 V1JobList
 validator
 validators

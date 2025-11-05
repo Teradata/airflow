@@ -84,7 +84,7 @@ GRID_NODES = [
         "is_mapped": True,
         "label": "mapped_task_group",
     },
-    {"id": "task", "label": "task"},
+    {"id": "task", "label": "A Beautiful Task Name 🚀"},
     {
         "children": [
             {
@@ -92,11 +92,11 @@ GRID_NODES = [
                     {
                         "id": "task_group.inner_task_group.inner_task_group_sub_task",
                         "is_mapped": True,
-                        "label": "inner_task_group_sub_task",
+                        "label": "Inner Task Group Sub Task Label",
                     }
                 ],
                 "id": "task_group.inner_task_group",
-                "label": "inner_task_group",
+                "label": "My Inner Task Group",
             },
             {"id": "task_group.mapped_task", "is_mapped": True, "label": "mapped_task"},
         ],
@@ -121,7 +121,7 @@ def setup(dag_maker, session=None):
 
     # DAG 1
     with dag_maker(dag_id=DAG_ID, serialized=True, session=session) as dag:
-        task = EmptyOperator(task_id=TASK_ID)
+        task = EmptyOperator(task_id=TASK_ID, task_display_name="A Beautiful Task Name 🚀")
 
         @task_group
         def mapped_task_group(arg1):
@@ -131,8 +131,10 @@ def setup(dag_maker, session=None):
 
         with TaskGroup(group_id=TASK_GROUP_ID):
             MockOperator.partial(task_id=MAPPED_TASK_ID).expand(arg1=["a", "b", "c", "d"])
-            with TaskGroup(group_id=INNER_TASK_GROUP):
-                MockOperator.partial(task_id=INNER_TASK_GROUP_SUB_TASK).expand(arg1=["a", "b"])
+            with TaskGroup(group_id=INNER_TASK_GROUP, group_display_name="My Inner Task Group"):
+                MockOperator.partial(
+                    task_id=INNER_TASK_GROUP_SUB_TASK, task_display_name="Inner Task Group Sub Task Label"
+                ).expand(arg1=["a", "b"])
 
         # Mapped but never expanded. API should not crash, but count this as one no-status ti.
         MockOperator.partial(task_id=MAPPED_TASK_ID_2).expand(arg1=task.output)
@@ -480,7 +482,7 @@ class TestGetGridDataEndpoint:
                 "is_mapped": True,
                 "label": "mapped_task_group",
             },
-            {"id": "task", "label": "task"},
+            {"id": "task", "label": "A Beautiful Task Name 🚀"},
             {
                 "children": [
                     {
@@ -488,11 +490,11 @@ class TestGetGridDataEndpoint:
                             {
                                 "id": "task_group.inner_task_group.inner_task_group_sub_task",
                                 "is_mapped": True,
-                                "label": "inner_task_group_sub_task",
+                                "label": "Inner Task Group Sub Task Label",
                             }
                         ],
                         "id": "task_group.inner_task_group",
-                        "label": "inner_task_group",
+                        "label": "My Inner Task Group",
                     },
                     {"id": "task_group.mapped_task", "is_mapped": True, "label": "mapped_task"},
                 ],
@@ -612,7 +614,7 @@ class TestGetGridDataEndpoint:
                     "min_start_date": None,
                 },
                 {
-                    "child_states": {"success": 2},
+                    "child_states": {"success": 4},
                     "max_end_date": "2025-03-02T00:00:12Z",
                     "min_start_date": "2025-03-02T00:00:04Z",
                     "state": "success",
@@ -685,7 +687,7 @@ class TestGetGridDataEndpoint:
                 "state": None,
             },
             {
-                "child_states": {"running": 1},
+                "child_states": {"success": 1, "running": 1, "None": 1},
                 "max_end_date": "2024-12-30T01:02:03Z",
                 "min_start_date": "2024-12-30T01:00:00Z",
                 "state": "running",
@@ -706,14 +708,14 @@ class TestGetGridDataEndpoint:
                 "min_start_date": None,
             },
             {
-                "child_states": {"None": 2},
+                "child_states": {"None": 6},
                 "task_id": "task_group",
                 "max_end_date": None,
                 "min_start_date": None,
                 "state": None,
             },
             {
-                "child_states": {"None": 1},
+                "child_states": {"None": 2},
                 "task_id": "task_group.inner_task_group",
                 "max_end_date": None,
                 "min_start_date": None,

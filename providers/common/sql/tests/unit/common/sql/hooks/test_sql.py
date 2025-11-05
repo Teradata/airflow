@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import inspect
 import logging
-import logging.config
 from unittest.mock import MagicMock
 
 import pandas as pd
@@ -239,9 +238,8 @@ class TestDbApiHook:
     )
     def test_no_query(self, empty_statement):
         dbapi_hook = mock_db_hook(DbApiHook)
-        with pytest.raises(ValueError) as err:
+        with pytest.raises(ValueError, match="List of SQL statements is empty"):
             dbapi_hook.run(sql=empty_statement)
-        assert err.value.args[0] == "List of SQL statements is empty"
 
     @pytest.mark.db_test
     def test_placeholder_config_from_extra(self):
