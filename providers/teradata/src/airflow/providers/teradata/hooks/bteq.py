@@ -170,7 +170,11 @@ class BteqHook(TtuHook):
                             "Transferring encrypted BTEQ script to remote host: %s", remote_working_dir
                         )
                     remote_encrypted_path = os.path.join(remote_working_dir or "", "bteq_script.enc")
-                    remote_encrypted_path = remote_encrypted_path.replace("/", "\\")
+                    os_info = identify_os(ssh_client)
+                    if "windows" in os_info:
+                        remote_encrypted_path = remote_encrypted_path.replace("/", "\\")
+                    else:
+                        remote_encrypted_path = remote_encrypted_path.replace("\\", "/")
                     transfer_file_sftp(ssh_client, encrypted_file_path, remote_encrypted_path)
 
                     bteq_command_str = prepare_bteq_command_for_remote_execution(

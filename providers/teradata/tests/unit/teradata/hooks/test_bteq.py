@@ -278,6 +278,116 @@ def test_execute_bteq_script_at_remote_success(
     assert ret_code == 0
 
 
+@patch("airflow.providers.teradata.hooks.bteq.SSHHook")
+@patch("airflow.providers.teradata.hooks.bteq.verify_bteq_installed_remote")
+@patch("airflow.providers.teradata.hooks.bteq.generate_random_password", return_value="test_password")
+@patch("airflow.providers.teradata.hooks.bteq.generate_encrypted_file_with_openssl")
+@patch("airflow.providers.teradata.hooks.bteq.transfer_file_sftp")
+@patch(
+    "airflow.providers.teradata.hooks.bteq.prepare_bteq_command_for_remote_execution",
+    return_value="bteq_command",
+)
+@patch(
+    "airflow.providers.teradata.hooks.bteq.decrypt_remote_file_to_string", return_value=(0, ["output"], [])
+)
+def test_execute_bteq_script_at_remote_linux_path(
+    mock_decrypt,
+    mock_prepare_cmd,
+    mock_transfer,
+    mock_encrypt,
+    mock_password,
+    mock_verify,
+    mock_ssh_hook_class,
+):
+    """Test that remote path uses forward slashes on Linux remotes."""
+    mock_ssh_hook = MagicMock()
+    mock_ssh_client = MagicMock()
+    mock_ssh_hook.get_conn.return_value.__enter__.return_value = mock_ssh_client
+    mock_ssh_hook_class.return_value = mock_ssh_hook
+
+    # Simulate Linux remote OS
+    mock_stdin = MagicMock()
+    mock_stdout = MagicMock()
+    mock_stderr = MagicMock()
+    mock_stdout.read.return_value = b"Linux\n"
+    mock_ssh_client.exec_command.return_value = (mock_stdin, mock_stdout, mock_stderr)
+
+    hook = BteqHook(ssh_conn_id="ssh_conn_id", teradata_conn_id="teradata_conn")
+
+    hook.execute_bteq_script_at_remote(
+        bteq_script="SELECT 1;",
+        remote_working_dir="/tmp",
+        bteq_script_encoding="utf-8",
+        timeout=10,
+        timeout_rc=None,
+        bteq_session_encoding="utf-8",
+        bteq_quit_rc=0,
+        temp_file_read_encoding=None,
+    )
+
+    # Verify that transfer_file_sftp was called with a path using forward slashes
+    transfer_call_args = mock_transfer.call_args
+    remote_path_arg = transfer_call_args[0][2]  # 3rd positional arg is remote_path
+    assert "/" in remote_path_arg and "\\" not in remote_path_arg, (
+        f"Remote path on Linux should use forward slashes, got: {remote_path_arg}"
+    )
+
+
+@patch("airflow.providers.teradata.hooks.bteq.SSHHook")
+@patch("airflow.providers.teradata.hooks.bteq.verify_bteq_installed_remote")
+@patch("airflow.providers.teradata.hooks.bteq.generate_random_password", return_value="test_password")
+@patch("airflow.providers.teradata.hooks.bteq.generate_encrypted_file_with_openssl")
+@patch("airflow.providers.teradata.hooks.bteq.transfer_file_sftp")
+@patch(
+    "airflow.providers.teradata.hooks.bteq.prepare_bteq_command_for_remote_execution",
+    return_value="bteq_command",
+)
+@patch(
+    "airflow.providers.teradata.hooks.bteq.decrypt_remote_file_to_string", return_value=(0, ["output"], [])
+)
+def test_execute_bteq_script_at_remote_windows_path(
+    mock_decrypt,
+    mock_prepare_cmd,
+    mock_transfer,
+    mock_encrypt,
+    mock_password,
+    mock_verify,
+    mock_ssh_hook_class,
+):
+    """Test that remote path uses backslashes on Windows remotes."""
+    mock_ssh_hook = MagicMock()
+    mock_ssh_client = MagicMock()
+    mock_ssh_hook.get_conn.return_value.__enter__.return_value = mock_ssh_client
+    mock_ssh_hook_class.return_value = mock_ssh_hook
+
+    # Simulate Windows remote OS
+    mock_stdin = MagicMock()
+    mock_stdout = MagicMock()
+    mock_stderr = MagicMock()
+    mock_stdout.read.return_value = b"Microsoft Windows [Version 10.0]\n"
+    mock_ssh_client.exec_command.return_value = (mock_stdin, mock_stdout, mock_stderr)
+
+    hook = BteqHook(ssh_conn_id="ssh_conn_id", teradata_conn_id="teradata_conn")
+
+    hook.execute_bteq_script_at_remote(
+        bteq_script="SELECT 1;",
+        remote_working_dir="C:\\Temp",
+        bteq_script_encoding="utf-8",
+        timeout=10,
+        timeout_rc=None,
+        bteq_session_encoding="utf-8",
+        bteq_quit_rc=0,
+        temp_file_read_encoding=None,
+    )
+
+    # Verify that transfer_file_sftp was called with a path using backslashes
+    transfer_call_args = mock_transfer.call_args
+    remote_path_arg = transfer_call_args[0][2]  # 3rd positional arg is remote_path
+    assert "\\" in remote_path_arg and "/" not in remote_path_arg, (
+        f"Remote path on Windows should use backslashes, got: {remote_path_arg}"
+    )
+
+
 def test_on_kill_terminates_process(hook_without_ssh):
     process_mock = MagicMock()
     # Patch the hook's get_conn method to return a dict with the mocked process
