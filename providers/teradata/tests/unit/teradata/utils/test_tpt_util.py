@@ -834,6 +834,128 @@ class TestTptUtil:
                 target_conn=None,
             )
 
+    def test_prepare_tdload_job_var_file_file_to_table_with_skip_rows(self):
+        """Test prepare_tdload_job_var_file with DCP_SkipRows for file_to_table mode."""
+        source_conn = {"host": "source_host", "login": "source_user", "password": "source_pass"}
+
+        result = prepare_tdload_job_var_file(
+            mode="file_to_table",
+            source_table=None,
+            select_stmt=None,
+            insert_stmt=None,
+            target_table="target_table",
+            source_file_name="/path/to/source.csv",
+            target_file_name=None,
+            source_format="Delimited",
+            target_format="",
+            source_text_delimiter=",",
+            target_text_delimiter="",
+            source_conn=source_conn,
+            skip_rows=1,
+        )
+
+        assert "DCP_SkipRows=1" in result
+        # DCP_SkipRows must NOT be quoted (integer attribute)
+        assert "DCP_SkipRows='1'" not in result
+        # DCP_SkipRowsEveryFile should not appear when skip_rows_every_file=False (default)
+        assert "DCP_SkipRowsEveryFile" not in result
+
+    def test_prepare_tdload_job_var_file_file_to_table_with_skip_rows_every_file(self):
+        """Test prepare_tdload_job_var_file with DCP_SkipRows and DCP_SkipRowsEveryFile."""
+        source_conn = {"host": "source_host", "login": "source_user", "password": "source_pass"}
+
+        result = prepare_tdload_job_var_file(
+            mode="file_to_table",
+            source_table=None,
+            select_stmt=None,
+            insert_stmt=None,
+            target_table="target_table",
+            source_file_name="/path/to/source.csv",
+            target_file_name=None,
+            source_format="Delimited",
+            target_format="",
+            source_text_delimiter=",",
+            target_text_delimiter="",
+            source_conn=source_conn,
+            skip_rows=1,
+            skip_rows_every_file=True,
+        )
+
+        assert "DCP_SkipRows=1" in result
+        assert "DCP_SkipRowsEveryFile='Y'" in result
+        # Verify integer is not quoted
+        assert "DCP_SkipRows='1'" not in result
+
+    def test_prepare_tdload_job_var_file_file_to_table_skip_rows_zero(self):
+        """Test prepare_tdload_job_var_file does not emit DCP_SkipRows when skip_rows=0."""
+        source_conn = {"host": "source_host", "login": "source_user", "password": "source_pass"}
+
+        result = prepare_tdload_job_var_file(
+            mode="file_to_table",
+            source_table=None,
+            select_stmt=None,
+            insert_stmt=None,
+            target_table="target_table",
+            source_file_name="/path/to/source.csv",
+            target_file_name=None,
+            source_format="Delimited",
+            target_format="",
+            source_text_delimiter=",",
+            target_text_delimiter="",
+            source_conn=source_conn,
+            skip_rows=0,
+        )
+
+        assert "DCP_SkipRows" not in result
+        assert "DCP_SkipRowsEveryFile" not in result
+
+    def test_prepare_tdload_job_var_file_table_to_table_skip_rows_ignored(self):
+        """Test that skip_rows is ignored for table_to_table mode."""
+        source_conn = {"host": "source_host", "login": "source_user", "password": "source_pass"}
+        target_conn = {"host": "target_host", "login": "target_user", "password": "target_pass"}
+
+        result = prepare_tdload_job_var_file(
+            mode="table_to_table",
+            source_table="source_table",
+            select_stmt=None,
+            insert_stmt=None,
+            target_table="target_table",
+            source_file_name=None,
+            target_file_name=None,
+            source_format="",
+            target_format="",
+            source_text_delimiter="",
+            target_text_delimiter="",
+            source_conn=source_conn,
+            target_conn=target_conn,
+            skip_rows=1,
+            skip_rows_every_file=True,
+        )
+
+        assert "DCP_SkipRows" not in result
+        assert "DCP_SkipRowsEveryFile" not in result
+
+    def test_prepare_tdload_job_var_file_negative_skip_rows(self):
+        """Test that negative skip_rows raises ValueError."""
+        source_conn = {"host": "source_host", "login": "source_user", "password": "source_pass"}
+
+        with pytest.raises(ValueError, match="skip_rows must be a non-negative integer"):
+            prepare_tdload_job_var_file(
+                mode="file_to_table",
+                source_table=None,
+                select_stmt=None,
+                insert_stmt=None,
+                target_table="target_table",
+                source_file_name="/path/to/source.csv",
+                target_file_name=None,
+                source_format="Delimited",
+                target_format="",
+                source_text_delimiter=",",
+                target_text_delimiter="",
+                source_conn=source_conn,
+                skip_rows=-1,
+            )
+
     def test_is_valid_remote_job_var_file_success(self):
         """Test is_valid_remote_job_var_file with valid file."""
         mock_ssh = Mock()

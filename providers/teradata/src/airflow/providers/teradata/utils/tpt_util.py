@@ -459,6 +459,8 @@ def prepare_tdload_job_var_file(
     target_text_delimiter: str,
     source_conn: dict[str, Any],
     target_conn: dict[str, Any] | None = None,
+    skip_rows: int = 0,
+    skip_rows_every_file: bool = False,
 ) -> str:
     """
     Prepare a tdload job variable file based on the specified mode.
@@ -474,6 +476,11 @@ def prepare_tdload_job_var_file(
     :param target_format: Format of target data
     :param source_text_delimiter: Source text delimiter
     :param target_text_delimiter: Target text delimiter
+    :param skip_rows: Number of rows to skip per DataConnector instance (DCP_SkipRows).
+        Non-negative integer. Only applicable for 'file_to_table' mode. Default: 0 (no skipping).
+    :param skip_rows_every_file: When True, restart skip count at each file boundary
+        (DCP_SkipRowsEveryFile='Y'). When False (default), skip count spans files cumulatively.
+        Only applicable when skip_rows > 0.
     :return: The content of the job variable file
     :raises ValueError: If invalid parameters are provided
     """
@@ -541,8 +548,22 @@ def prepare_tdload_job_var_file(
     if target_text_delimiter:
         job_vars["TargetTextDelimiter"] = target_text_delimiter
 
-    # Format job variables content
-    job_var_content = "".join([f"{key}='{value}',\n" for key, value in job_vars.items()])
+    # Validate and add DataConnector skip rows attributes
+    if skip_rows < 0:
+        raise ValueError(f"skip_rows must be a non-negative integer, got {skip_rows}.")
+    if skip_rows > 0 and mode == "file_to_table":
+        job_vars["DCP_SkipRows"] = skip_rows
+        if skip_rows_every_file:
+            job_vars["DCP_SkipRowsEveryFile"] = "Y"
+
+    # Format job variables content — integers without quotes, strings with quotes
+    lines = []
+    for key, value in job_vars.items():
+        if isinstance(value, int):
+            lines.append(f"{key}={value},\n")
+        else:
+            lines.append(f"{key}='{value}',\n")
+    job_var_content = "".join(lines)
     job_var_content = job_var_content.rstrip(",\n")
 
     return job_var_content

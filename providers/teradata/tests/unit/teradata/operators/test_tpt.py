@@ -575,6 +575,57 @@ class TestTdLoadOperator:
         assert operator._src_hook is not None
         assert operator._dest_hook is not None
 
+    # ----- Skip Rows Tests -----
+
+    @patch(
+        "airflow.providers.teradata.hooks.ttu.TtuHook.get_conn",
+        return_value={"host": "mock_host", "login": "mock_user", "password": "mock_pass"},
+    )
+    @patch(
+        "airflow.providers.teradata.operators.tpt.prepare_tdload_job_var_file",
+        return_value="dummy job var content",
+    )
+    @patch("airflow.providers.teradata.hooks.tpt.TptHook.execute_tdload", return_value=0)
+    def test_file_to_table_with_skip_rows(self, mock_execute_tdload, mock_prepare_job_var, mock_get_conn):
+        """Test loading from file to table with skip_rows and skip_rows_every_file parameters"""
+        operator = TdLoadOperator(
+            task_id="test_file_to_table_skip_rows",
+            source_file_name="/path/to/data.csv",
+            target_table="target_db.target_table",
+            teradata_conn_id="teradata_default",
+            target_teradata_conn_id="teradata_target",
+            skip_rows=1,
+            skip_rows_every_file=True,
+        )
+
+        result = operator.execute({})
+
+        assert result == 0
+        assert operator.skip_rows == 1
+        assert operator.skip_rows_every_file is True
+        mock_prepare_job_var.assert_called_once()
+        # Verify skip_rows and skip_rows_every_file were passed to prepare_tdload_job_var_file
+        call_kwargs = mock_prepare_job_var.call_args.kwargs
+        assert call_kwargs["skip_rows"] == 1
+        assert call_kwargs["skip_rows_every_file"] is True
+
+    def test_skip_rows_default_values(self):
+        """Test that skip_rows and skip_rows_every_file have correct defaults"""
+        operator = TdLoadOperator(
+            task_id="test_defaults",
+            source_file_name="/path/to/data.csv",
+            target_table="target_db.target_table",
+            teradata_conn_id="teradata_default",
+        )
+
+        assert operator.skip_rows == 0
+        assert operator.skip_rows_every_file is False
+
+    def test_template_fields_include_skip_rows(self):
+        """Test that template_fields includes skip_rows and skip_rows_every_file"""
+        assert "skip_rows" in TdLoadOperator.template_fields
+        assert "skip_rows_every_file" in TdLoadOperator.template_fields
+
     # ----- Parameter Validation Tests -----
 
     def test_invalid_parameter_combinations(self):

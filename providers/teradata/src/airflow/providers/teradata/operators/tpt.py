@@ -248,6 +248,11 @@ class TdLoadOperator(BaseOperator):
         :param tdload_job_name: Name for the tdload job (optional)
         :param tdload_job_var_file: Path to tdload job variable file (optional)
         :param ssh_conn_id: SSH connection ID for secure file transfer (optional, used for file operations)
+        :param skip_rows: Number of rows to skip per DataConnector instance (DCP_SkipRows).
+            Non-negative integer. Only applicable for file_to_table mode. Default: 0 (no skipping).
+        :param skip_rows_every_file: When True, restart skip count at each file boundary
+            (DCP_SkipRowsEveryFile='Y'). When False (default), skip count spans files cumulatively.
+            Only applicable when skip_rows > 0.
 
     :raises ValueError: If parameter combinations are invalid or required files are missing.
     :raises RuntimeError: If underlying TPT execution (tdload) fails with non-zero exit status.
@@ -298,6 +303,8 @@ class TdLoadOperator(BaseOperator):
         "source_file_name",
         "target_file_name",
         "tdload_options",
+        "skip_rows",
+        "skip_rows_every_file",
     )
     ui_color = "#a8e4b1"
 
@@ -321,6 +328,8 @@ class TdLoadOperator(BaseOperator):
         tdload_job_name: str | None = None,
         tdload_job_var_file: str | None = None,
         remote_working_dir: str | None = None,
+        skip_rows: int = 0,
+        skip_rows_every_file: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -341,6 +350,8 @@ class TdLoadOperator(BaseOperator):
         self.tdload_job_name = tdload_job_name
         self.tdload_job_var_file = tdload_job_var_file
         self.remote_working_dir = remote_working_dir
+        self.skip_rows = skip_rows
+        self.skip_rows_every_file = skip_rows_every_file
         self._src_hook: TptHook | None = None
         self._dest_hook: TptHook | None = None
 
@@ -484,6 +495,8 @@ class TdLoadOperator(BaseOperator):
             target_text_delimiter=self.target_text_delimiter,
             source_conn=self._src_hook.get_conn(),
             target_conn=self._dest_hook.get_conn() if self._dest_hook else None,
+            skip_rows=self.skip_rows,
+            skip_rows_every_file=self.skip_rows_every_file,
         )
 
     def _execute_based_on_configuration(
