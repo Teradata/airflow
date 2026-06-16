@@ -1,0 +1,157 @@
+name: Teradata - Sync Feature Branches with Upstream
+
+# Rebases all Teradata feature branches onto the latest apache/airflow:main.
+# This is separate from main branch sync (teradata-sync-main-sequential.yml).
+# main, master, and teradata_main are never touched by this workflow.
+#
+# On conflict: auto-opens a GitHub issue tagged [upstream-conflict] so the
+# developer can resolve it manually with `git rebase upstream/main`.
+
+on:
+  schedule:
+    - cron: '30 2 * * *'  # Daily at 02:30 UTC (after main sync at 02:00)
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Specific feature branch to sync (leave empty to sync all)'
+        required: false
+        type: string
+
+jobs:
+  sync-feature-branches:
+    name: Rebase feature branches onto upstream/main
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch apache/airflow upstream
+        run: |
+          git remote add upstream https://github.com/apache/airflow.git
+          git fetch upstream main --no-tags
+          echo "Upstream tip: $(git rev-parse upstream/main)"
+
+      - name: Determine feature branches to sync
+        id: branches
+        run: |
+          if [ -n "${{ inputs.branch }}" ]; then
+            echo "branches=${{ inputs.branch }}" >> $GITHUB_OUTPUT
+          else
+            BRANCHES=$(git branch -r \
+              | grep 'origin/' \
+              | grep -v 'origin/HEAD' \
+              | grep -v 'origin/main$' \
+              | grep -v 'origin/master$' \
+              | grep -v 'origin/teradata_main$' \
+              | sed 's|[[:space:]]*origin/||' \
+              | tr '\n' ' ')
+            echo "branches=$BRANCHES" >> $GITHUB_OUTPUT
+            echo "Feature branches: $BRANCHES"
+          fi
+
+      - name: Rebase each feature branch
+        id: rebase
+        env:
+          BRANCHES: ${{ steps.branches.outputs.branches }}
+        run: |
+          FAILED=""
+          SUCCESS=""
+
+          for branch in $BRANCHES; do
+            echo ""
+            echo "=== $branch ==="
+
+            if ! git ls-remote --exit-code origin "refs/heads/$branch" > /dev/null 2>&1; then
+              echo "  remote branch gone — skipping"
+              continue
+            fi
+
+            git checkout -B "$branch" "origin/$branch"
+
+            if git rebase upstream/main; then
+              git push origin "$branch" --force-with-lease
+              echo "  ✓ synced"
+              SUCCESS="$SUCCESS $branch"
+            else
+              git rebase --abort
+              echo "  ✗ conflict"
+              FAILED="$FAILED $branch"
+            fi
+          done
+
+          echo "failed=$FAILED" >> $GITHUB_OUTPUT
+          echo "success=$SUCCESS" >> $GITHUB_OUTPUT
+
+      - name: Write job summary
+        if: always()
+        run: |
+          echo "## Feature Branch Sync" >> $GITHUB_STEP_SUMMARY
+          echo "**Rebased onto:** \`apache/airflow:main\` @ \`$(git rev-parse upstream/main)\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          SUCCESS="${{ steps.rebase.outputs.success }}"
+          FAILED="${{ steps.rebase.outputs.failed }}"
+
+          if [ -n "$(echo $SUCCESS | tr -d ' ')" ]; then
+            echo "### ✅ Synced" >> $GITHUB_STEP_SUMMARY
+            for b in $SUCCESS; do echo "- \`$b\`" >> $GITHUB_STEP_SUMMARY; done
+          fi
+
+          if [ -n "$(echo $FAILED | tr -d ' ')" ]; then
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### ⚠️ Conflicts — manual rebase needed" >> $GITHUB_STEP_SUMMARY
+            for b in $FAILED; do echo "- \`$b\`" >> $GITHUB_STEP_SUMMARY; done
+          fi
+
+      - name: Open issue for conflicted branches
+        if: steps.rebase.outputs.failed != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const failed = '${{ steps.rebase.outputs.failed }}'.trim().split(/\s+/).filter(Boolean);
+            if (!failed.length) return;
+
+            const body = [
+              '## ⚠️ Upstream Sync Conflict',
+              '',
+              'The following feature branches conflict with `apache/airflow:main` and need manual rebase:',
+              '',
+              ...failed.map(b => `- \`${b}\``),
+              '',
+              '### How to resolve',
+              '```bash',
+              'git fetch upstream',
+              'git checkout <branch>',
+              'git rebase upstream/main',
+              '# fix conflicts, then:',
+              'git add .',
+              'git rebase --continue',
+              'git push origin <branch> --force-with-lease',
+              '```',
+              '',
+              `_Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}_`,
+            ].join('\n');
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `⚠️ Upstream conflict: ${failed.join(', ')}`,
+              body,
+              labels: ['upstream-conflict'],
+            });
+
+      - name: Fail if any conflicts
+        if: steps.rebase.outputs.failed != ''
+        run: exit 1

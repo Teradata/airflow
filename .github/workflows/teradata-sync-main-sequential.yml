@@ -1,0 +1,125 @@
+name: Teradata - Sequential Main Branch Sync
+
+# Flow:
+#   Step 1 — Sync Teradata/airflow:main  ← apache/airflow:main
+#   Step 2 — Sync Teradata-PE:main       ← Teradata/airflow:main  (only if Step 1 succeeds)
+#
+# main is a sync-only branch. No commits should be made directly to main
+# in either Teradata repo. All development happens on feature branches.
+#
+# Required secrets (set in Teradata/airflow repo settings):
+#   TERADATA_PE_PAT  — PAT with Contents:write to Teradata-PE/devtools-airflow
+#                      The PAT owner must be allowed to force-push main in that repo.
+#
+# Branch protection note:
+#   If Teradata/airflow:main has branch protection enabled, you must add
+#   "github-actions[bot]" (or use a PAT) as a bypass actor for force pushes.
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # Daily at 02:00 UTC
+  workflow_dispatch:       # Manual trigger from Actions UI
+
+jobs:
+  # ── Job 1: apache/airflow:main → Teradata/airflow:main ────────────────────
+  sync-public-main:
+    name: "1 · Sync Teradata public main ← apache/airflow main"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Teradata public main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch apache/airflow main
+        run: |
+          git remote add upstream https://github.com/apache/airflow.git
+          git fetch upstream main --no-tags
+          echo "apache/airflow:main  → $(git rev-parse upstream/main)"
+          echo "Teradata/airflow:main → $(git rev-parse HEAD)"
+
+      - name: Reset local main to upstream/main and push
+        run: |
+          git reset --hard upstream/main
+          git push origin main --force-with-lease
+          echo "synced_sha=$(git rev-parse HEAD)" >> $GITHUB_ENV
+          echo "✓ Teradata/airflow:main is now at $(git rev-parse HEAD)"
+
+      - name: Write step summary
+        if: always()
+        run: |
+          echo "### Step 1 — Teradata public main" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Source | \`apache/airflow:main\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Target | \`Teradata/airflow:main\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| SHA | \`$(git rev-parse HEAD)\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | ${{ job.status }} |" >> $GITHUB_STEP_SUMMARY
+
+  # ── Job 2: Teradata/airflow:main → Teradata-PE/devtools-airflow:main ──────
+  sync-private-main:
+    name: "2 · Sync Teradata private main ← Teradata public main"
+    needs: sync-public-main
+    if: needs.sync-public-main.result == 'success'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Teradata public main (just synced)
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Add Teradata private enterprise remote
+        run: |
+          git remote add private \
+            https://x-access-token:${{ secrets.TERADATA_PE_PAT }}@github.com/Teradata-PE/devtools-airflow.git
+          git fetch private main --no-tags 2>/dev/null || true
+
+      - name: Check sync status
+        id: check
+        run: |
+          PRIVATE_SHA=$(git ls-remote private refs/heads/main | cut -f1)
+          PUBLIC_SHA=$(git rev-parse HEAD)
+          echo "Teradata/airflow:main         → $PUBLIC_SHA"
+          echo "Teradata-PE/devtools-airflow:main → $PRIVATE_SHA"
+          if [ "$PRIVATE_SHA" = "$PUBLIC_SHA" ]; then
+            echo "already_synced=true" >> $GITHUB_OUTPUT
+            echo "Already in sync — nothing to push"
+          else
+            echo "already_synced=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Push to Teradata private main
+        if: steps.check.outputs.already_synced == 'false'
+        run: |
+          git push private main --force-with-lease
+          echo "✓ Teradata-PE/devtools-airflow:main is now at $(git rev-parse HEAD)"
+
+      - name: Write step summary
+        if: always()
+        run: |
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Step 2 — Teradata private main" >> $GITHUB_STEP_SUMMARY
+          echo "| | |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Source | \`Teradata/airflow:main\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Target | \`Teradata-PE/devtools-airflow:main\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| SHA | \`$(git rev-parse HEAD)\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Already synced | ${{ steps.check.outputs.already_synced }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Status | ${{ job.status }} |" >> $GITHUB_STEP_SUMMARY
