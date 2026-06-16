@@ -24,6 +24,20 @@ This is where *Deferrable Operators* can be used. When it has nothing to do but 
 
 *Triggers* are small, asynchronous pieces of Python code designed to run in a single Python process. Because they are asynchronous, they can all co-exist efficiently in the *triggerer* Airflow component.
 
+.. note::
+
+   Airflow 3.2 also supports Python-native async tasks that can perform
+   concurrent I/O operations within a single worker slot. While deferred
+   operators release the worker slot while waiting for an external event,
+   async tasks keep the task process running and use a shared event loop
+   to multiplex operations.
+
+   For guidance on when to use deferred operators versus async tasks,
+   see `Deferred vs Async Operators <https://airflow.apache.org/docs/task-sdk/stable/deferred-vs-async-operators.html>`__.
+   For guidance on when to use deferrable operators versus resumable tasks
+   (crash-safe synchronous operators that use the task state store), see
+   :ref:`Resumable Tasks <concepts-resumable-tasks>`.
+
 An overview of how this process works:
 
 * A task instance (running operator) reaches a point where it has to wait for other operations or conditions, and defers itself with a trigger tied to an event to resume it. This frees up the worker to run something else.
@@ -42,6 +56,12 @@ If you want to use pre-written deferrable operators that come with Airflow, such
 * Use deferrable operators/sensors in your Dags
 
 Airflow automatically handles and implements the deferral processes for you.
+
+.. note::
+
+    :doc:`Human-in-the-loop <../tutorial/hitl>` operators do **not** use deferral or the triggerer.
+    They wait in the scheduler-managed ``awaiting_input`` task state, so a deployment that waits only
+    on human input rather than deferrable operators does not need a running triggerer.
 
 If you're upgrading existing Dags to use deferrable operators, Airflow contains API-compatible sensor variants. Add these variants into your Dag to use deferrable operators with no other changes required.
 
@@ -105,6 +125,11 @@ A *Trigger* is written as a class that inherits from ``BaseTrigger``, and implem
 * ``run``: An asynchronous method that runs its logic and yields one or more ``TriggerEvent`` instances as an asynchronous generator.
 * ``serialize``: Returns the information needed to re-construct this trigger, as a tuple of the classpath, and keyword arguments to pass to ``__init__``.
 
+Two optional lifecycle hooks are also available:
+
+* ``cleanup``: Called after ``run`` exits for any reason (success, timeout, triggerer shutdown, or user kill). Use this to release local resources held by the trigger instance, such as open connections or temporary files.
+* ``on_kill``: Called only when a user explicitly kills the deferred task (mark-failed, clear, or mark-succeeded). Use this to cancel external work — for example, cancelling a BigQuery job or terminating a Databricks run — that you do not want to keep running after the user acts on the task. Unlike ``cleanup``, ``on_kill`` is **not** called on triggerer restart or redistribution, so you can safely put external cancellation logic here without risk of cancelling in-flight work during a rolling deploy.
+
 This example shows the structure of a basic trigger, a very simplified version of Airflow's ``DateTimeTrigger``:
 
 .. code-block:: python
@@ -144,7 +169,7 @@ There's some design constraints to be aware of when writing your own trigger:
 * ``run`` must ``yield`` its TriggerEvents, not return them. If it returns before yielding at least one event, Airflow will consider this an error and fail any Task Instances waiting on it. If it throws an exception, Airflow will also fail any dependent task instances.
 * You should assume that a trigger instance can run *more than once*. This can happen if a network partition occurs and Airflow re-launches a trigger on a separated machine. So, you must be mindful about side effects. For example you might not want to use a trigger to insert database rows.
 * If your trigger is designed to emit more than one event (not currently supported), then each emitted event *must* contain a payload that can be used to deduplicate events if the trigger is running in multiple places. If you only fire one event and don't need to pass information back to the operator, you can just set the payload to ``None``.
-* A trigger can suddenly be removed from one triggerer service and started on a new one. For example, if subnets are changed and a network partition results or if there is a deployment. If desired, you can implement the ``cleanup`` method, which is always called after ``run``, whether the trigger exits cleanly or otherwise.
+* A trigger can suddenly be removed from one triggerer service and started on a new one. For example, if subnets are changed and a network partition results or if there is a deployment. If desired, you can implement the ``cleanup`` method, which is always called after ``run``, whether the trigger exits cleanly or otherwise. If you need to cancel external work when a user explicitly kills the task, implement ``on_kill`` instead — it is only called for user-initiated cancellations, not on restart or redistribution.
 * In order for any changes to a trigger to be reflected, the *triggerer* needs to be restarted whenever the trigger is modified.
 * Your trigger must not come from a Dag bundle - anywhere else on ``sys.path`` is fine. The triggerer does not initialize any bundles when running a trigger.
 
@@ -456,6 +481,92 @@ Airflow tries to only run triggers in one place at once, and maintains a heartbe
 This means it's possible, but unlikely, for triggers to run in multiple places at once. This behavior is designed into the trigger contract, however, and is expected behavior. Airflow de-duplicates events fired when a trigger is running in multiple places simultaneously, so this process is transparent to your operators.
 
 Note that every extra ``triggerer`` you run results in an extra persistent connection to your database.
+
+Balance the workload for HA Triggerers
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: 3.2.0
+
+A Triggerer will select only ``[triggerer] max_trigger_to_select_per_loop`` triggers per loop to avoid starving other Triggerers in HA deployments. It is recommended to set this value significantly lower than ``[triggerer] capacity`` to help keep the load balanced across Triggerers. Currently, the default value of ``max_trigger_to_select_per_loop`` is ``50``, while the default ``capacity`` is ``1000``.
+
+According to `benchmarks <https://github.com/apache/airflow/pull/58803#pullrequestreview-3549403487>`_, two Triggerers can still claim 1,000 triggers within one second while maintaining an almost even load distribution with the default settings.
+
+You can determine a suitable value for your deployment by creating a large number of triggers (for example, by triggering a Dag with many deferrable tasks) and observing both how the load is distributed across Triggerers in your environment and how long it takes for all Triggerers to pick up the triggers.
+
+Controlling Triggerer Host Assignment Per Trigger
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: 3.2.0
+
+Under some circumstances, it may be desirable to assign a Trigger to a specific subset of ``triggerer`` hosts. Some examples of when this might be desirable are:
+
+* In a multi-tenant Airflow system where you run a distinct set of ``triggerers`` per team.
+* Running distinct sets of ``triggerers`` hosts, where each set of hosts are configured for different trigger operations (e.g. each set of triggerers may have different cloud permissions).
+
+.. tip::
+
+    If you are using :doc:`Multi-Team mode</core-concepts/multi-team>`, the ``--team-name`` option provides
+    native team-scoped triggerer assignment for all trigger types (task-created, event-driven, and callback).
+    See :ref:`Team-scoped Triggerer <multi-team-triggerer>` in the Multi-Team documentation.
+    The ``--queues`` option described below is an older, queue-based mechanism that can be combined with
+    ``--team-name`` if needed.
+
+To enable queue assignment for triggers, do the following:
+
+1. Set the :ref:`config:triggerer__queues_enabled` config value to ``true``. This will ensure when tasks defer, they pass their assigned task queue to the newly registered trigger instance.
+2. For a given ``triggerer`` host(s), add ``--queues=<comma-separated string of task queue names to consume from>`` to the Triggerers' startup command. This option ensures the triggerer will only pick up ``trigger`` instances deferred by tasks from the specified task queue(s).
+
+For example, let's say you are running two triggerer hosts (labeled "X", and "Y") with the following commands:
+
+.. code-block:: bash
+
+      # triggerer "X" startup command
+      airflow triggerer --queues=alice,bob
+      # triggerer "Y" startup command
+      airflow triggerer --queues=test_q
+
+In this scenario, triggerer "X" will exclusively run triggers deferred from tasks originating from task queues ``"alice"`` or ``"bob"``.
+Similarly, triggerer "Y" will exclusively run triggers deferred from tasks originating from task queue ``"test_q"``.
+
+Trigger Queue Assignment Caveats
+''''''''''''''''''''''''''''''''
+
+This feature is only compatible with executors which utilize the task ``queue`` concept
+(such as the :ref:`CeleryExecutor<apache-airflow-providers-celery:celery_executor:queue>`).
+
+Additionally, queue assignment is currently only compatible with the subset of triggers originating from a task's defer ``method``.
+
++------------------------------------------------------------------------------------------------------+----------------------+----------------------------------------------------------------------------------+
+|          Trigger Type                                                                                |   Supports queues?   |  Triggerer assignment when :ref:`config:triggerer__queues_enabled` is ``True``   |
++======================================================================================================+======================+==================================================================================+
+| Task-created Trigger instances                                                                       |   Yes                |  Any triggerer with the task queue present in its ``--queues`` option            |
++------------------------------------------------------------------------------------------------------+----------------------+----------------------------------------------------------------------------------+
+| :doc:`Event-Driven Triggers<../authoring-and-scheduling/event-scheduling>`                           |   No                 |  Any triggerer running without the ``--queues`` option                           |
++------------------------------------------------------------------------------------------------------+----------------------+----------------------------------------------------------------------------------+
+| Triggers from async :doc:`Callbacks<../administration-and-deployment/logging-monitoring/callbacks>`  |   No                 |  Any triggerer running without the ``--queues`` option                           |
++------------------------------------------------------------------------------------------------------+----------------------+----------------------------------------------------------------------------------+
+
+If you use queues for task-based triggers, while **also** using event-based triggers and/or callback triggers,
+you must run one or more triggerer hosts **without** the ``--queues`` option, so the latter 2 types of triggers are still run.
+
+.. note::
+    To enable trigger queues, you must set the ``--queues`` option on one or more triggerers' startup command (these values may differ between the various triggerers).
+    If you set the ``--queue`` value of a triggerer to some value which no task queues exist for, that triggerer will never run any triggers.
+    Similarly, all ``triggerer`` instances running without the ``--queues`` option will only consume event-driven and callback-based triggers.
+
+
+The following example shows how to run HA triggerers so that all trigger types are run (assuming all tasks'
+queue values are set to either ``"team_A"`` or ``"team_B"``):
+
+.. code-block:: bash
+
+      # triggerer "A" startup command, only consumes triggers registered by tasks in queue "team_A"
+      airflow triggerer --queues=team_A
+      # triggerer "B" startup command, only consumes triggers registered by tasks in queue "team_B"
+      airflow triggerer --queues=team_B
+      # triggerer "C" startup command, consumes only event-based triggers and callback-based triggers.
+      airflow triggerer
+
 
 Difference between Mode='reschedule' and Deferrable=True in Sensors
 -------------------------------------------------------------------

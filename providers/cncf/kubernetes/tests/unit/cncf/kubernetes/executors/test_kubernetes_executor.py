@@ -19,16 +19,18 @@ from __future__ import annotations
 import random
 import re
 import string
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from unittest import mock
 
 import pytest
 import yaml
 from kubernetes.client import models as k8s
 from kubernetes.client.rest import ApiException
+from sqlalchemy import inspect
 from urllib3 import HTTPResponse
 
-from airflow.exceptions import AirflowException
+from airflow.jobs.job import Job
 from airflow.models.taskinstancekey import TaskInstanceKey
 from airflow.providers.cncf.kubernetes import pod_generator
 from airflow.providers.cncf.kubernetes.executors.kubernetes_executor import (
@@ -53,6 +55,7 @@ from airflow.providers.cncf.kubernetes.kubernetes_helper_functions import (
     create_unique_id,
     get_logs_task_metadata,
 )
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.standard.operators.empty import EmptyOperator
 
 try:
@@ -64,6 +67,16 @@ from airflow.utils.state import State, TaskInstanceState
 
 from tests_common.test_utils.config import conf_vars
 from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS, AIRFLOW_V_3_2_PLUS
+
+try:
+    # Check whether a module-level function from stats is importable.
+    from airflow._shared.observability.metrics.stats import gauge  # noqa: F401
+
+    stats_reference = "airflow._shared.observability.metrics.stats"
+    _executor_name_tag_key = "executor_class_name"
+except ImportError:
+    stats_reference = "airflow.executors.base_executor.Stats"
+    _executor_name_tag_key = "name"
 
 if AIRFLOW_V_3_0_PLUS:
     LOGICAL_DATE_KEY = "logical_date"
@@ -233,6 +246,55 @@ class TestAirflowKubernetesScheduler:
         finally:
             kube_executor.end()
 
+    @pytest.mark.skipif(
+        AirflowKubernetesScheduler is None, reason="kubernetes python package is not installed"
+    )
+    @mock.patch("airflow.providers.cncf.kubernetes.executors.kubernetes_executor_utils.Stats")
+    @mock.patch("airflow.providers.cncf.kubernetes.kube_client.get_kube_client")
+    @mock.patch("airflow.providers.cncf.kubernetes.executors.kubernetes_executor_utils.client")
+    @mock.patch("airflow.providers.cncf.kubernetes.executors.kubernetes_executor_utils.KubernetesJobWatcher")
+    def test_delete_pod_emits_metrics_on_success(
+        self, mock_watcher, mock_client, mock_kube_client, mock_stats
+    ):
+        pod_name = "my-pod-1"
+        namespace = "my-namespace-1"
+        mock_kube_client.return_value.delete_namespaced_pod = mock.MagicMock()
+
+        kube_executor = KubernetesExecutor()
+        kube_executor.job_id = 1
+        kube_executor.start()
+        try:
+            kube_executor.kube_scheduler.delete_pod(pod_name, namespace)
+            mock_stats.timer.assert_any_call("kubernetes_executor.pod_deletion")
+            mock_stats.incr.assert_any_call("kubernetes_executor.pod_deletion_status", tags={"status": "200"})
+        finally:
+            kube_executor.end()
+
+    @pytest.mark.skipif(
+        AirflowKubernetesScheduler is None, reason="kubernetes python package is not installed"
+    )
+    @mock.patch("airflow.providers.cncf.kubernetes.executors.kubernetes_executor_utils.Stats")
+    @mock.patch("airflow.providers.cncf.kubernetes.kube_client.get_kube_client")
+    @mock.patch("airflow.providers.cncf.kubernetes.executors.kubernetes_executor_utils.client")
+    @mock.patch("airflow.providers.cncf.kubernetes.executors.kubernetes_executor_utils.KubernetesJobWatcher")
+    def test_delete_pod_emits_metrics_on_failure(
+        self, mock_watcher, mock_client, mock_kube_client, mock_stats
+    ):
+        pod_name = "my-pod-1"
+        namespace = "my-namespace-2"
+        mock_kube_client.return_value.delete_namespaced_pod.side_effect = ApiException(status=429)
+
+        kube_executor = KubernetesExecutor()
+        kube_executor.job_id = 1
+        kube_executor.start()
+        try:
+            with pytest.raises(ApiException):
+                kube_executor.kube_scheduler.delete_pod(pod_name, namespace)
+            mock_stats.timer.assert_any_call("kubernetes_executor.pod_deletion")
+            mock_stats.incr.assert_any_call("kubernetes_executor.pod_deletion_status", tags={"status": "429"})
+        finally:
+            kube_executor.end()
+
     def test_running_pod_log_lines(self):
         # default behaviour
         kube_executor = KubernetesExecutor()
@@ -256,18 +318,32 @@ class TestKubernetesExecutor:
     def setup_method(self) -> None:
         self.kubernetes_executor = KubernetesExecutor()
         self.kubernetes_executor.job_id = 5
+        self.kubernetes_executor._last_completed_pod_adoption = time.monotonic()
+
+    def test_resource_version_singleton(self):
+        """Test that ResourceVersion returns the same instance."""
+        rv1 = ResourceVersion()
+        rv2 = ResourceVersion()
+
+        assert rv1 is rv2
+
+        rv1.resource_version["ns"] = "123"
+        assert rv2.resource_version["ns"] == "123"
+
+        rv1.resource_version.clear()
 
     @pytest.mark.skipif(
         AirflowKubernetesScheduler is None, reason="kubernetes python package is not installed"
     )
     @pytest.mark.parametrize(
-        ("response", "task_publish_max_retries", "should_requeue", "task_expected_state"),
+        ("response", "task_publish_max_retries", "should_requeue", "task_expected_state", "retry_delay"),
         [
             pytest.param(
                 HTTPResponse(body='{"message": "any message"}', status=400),
                 0,
                 False,
                 State.FAILED,
+                None,
                 id="400 BadRequest",
             ),
             pytest.param(
@@ -275,6 +351,7 @@ class TestKubernetesExecutor:
                 1,
                 False,
                 State.FAILED,
+                None,
                 id="400 BadRequest (task_publish_max_retries=1)",
             ),
             pytest.param(
@@ -282,6 +359,7 @@ class TestKubernetesExecutor:
                 0,
                 False,
                 State.FAILED,
+                None,
                 id="403 Forbidden (permission denied)",
             ),
             pytest.param(
@@ -289,6 +367,7 @@ class TestKubernetesExecutor:
                 1,
                 False,
                 State.FAILED,
+                None,
                 id="403 Forbidden (permission denied) (task_publish_max_retries=1)",
             ),
             pytest.param(
@@ -301,6 +380,7 @@ class TestKubernetesExecutor:
                 0,
                 False,
                 State.FAILED,
+                None,
                 id="403 Forbidden (exceeded quota)",
             ),
             pytest.param(
@@ -313,6 +393,7 @@ class TestKubernetesExecutor:
                 1,
                 True,
                 State.SUCCESS,
+                None,
                 id="403 Forbidden (exceeded quota) (task_publish_max_retries=1) (retry succeeded)",
             ),
             pytest.param(
@@ -325,6 +406,7 @@ class TestKubernetesExecutor:
                 1,
                 True,
                 State.FAILED,
+                None,
                 id="403 Forbidden (exceeded quota) (task_publish_max_retries=1)  (retry failed)",
             ),
             pytest.param(
@@ -332,6 +414,7 @@ class TestKubernetesExecutor:
                 0,
                 False,
                 State.FAILED,
+                None,
                 id="404 Not Found",
             ),
             pytest.param(
@@ -339,6 +422,7 @@ class TestKubernetesExecutor:
                 1,
                 False,
                 State.FAILED,
+                None,
                 id="404 Not Found (task_publish_max_retries=1)",
             ),
             pytest.param(
@@ -346,6 +430,7 @@ class TestKubernetesExecutor:
                 0,
                 False,
                 State.FAILED,
+                None,
                 id="422 Unprocessable Entity",
             ),
             pytest.param(
@@ -353,6 +438,7 @@ class TestKubernetesExecutor:
                 1,
                 False,
                 State.FAILED,
+                None,
                 id="422 Unprocessable Entity (task_publish_max_retries=1)",
             ),
             pytest.param(
@@ -360,6 +446,7 @@ class TestKubernetesExecutor:
                 0,
                 False,
                 State.FAILED,
+                None,
                 id="12345 fake-unhandled-reason",
             ),
             pytest.param(
@@ -367,6 +454,7 @@ class TestKubernetesExecutor:
                 1,
                 False,
                 State.FAILED,
+                None,
                 id="12345 fake-unhandled-reason (task_publish_max_retries=1) (retry succeeded)",
             ),
             pytest.param(
@@ -374,6 +462,7 @@ class TestKubernetesExecutor:
                 1,
                 False,
                 State.FAILED,
+                None,
                 id="12345 fake-unhandled-reason (task_publish_max_retries=1) (retry failed)",
             ),
             pytest.param(
@@ -384,27 +473,38 @@ class TestKubernetesExecutor:
                 1,
                 True,
                 State.SUCCESS,
+                None,
                 id="409 conflict",
             ),
             pytest.param(
-                HTTPResponse(body="Too many requests, please try again later.", status=429),
-                0,
-                False,
-                State.FAILED,
-                id="429 Too Many Requests (non-JSON body)",
+                HTTPResponse(
+                    body='{"message": "too old resource version: 65442975 (65489651)"}',
+                    status=410,
+                ),
+                1,
+                True,
+                State.SUCCESS,
+                None,
+                id="410 gone",
             ),
             pytest.param(
-                HTTPResponse(body="Too many requests, please try again later.", status=429),
+                HTTPResponse(
+                    body="Too many requests, please try again later.",
+                    status=429,
+                    headers={"Retry-After": "3"},
+                ),
                 1,
-                False,
-                State.FAILED,
-                id="429 Too Many Requests (non-JSON body) (task_publish_max_retries=1)",
+                True,
+                State.SUCCESS,
+                3,
+                id="429 Too Many Requests (non-JSON body) (requeued after retry delay)",
             ),
             pytest.param(
                 HTTPResponse(body="", status=429),
                 0,
                 False,
                 State.FAILED,
+                None,
                 id="429 Too Many Requests (empty body)",
             ),
             pytest.param(
@@ -415,6 +515,7 @@ class TestKubernetesExecutor:
                 1,
                 True,
                 State.SUCCESS,
+                None,
                 id="500 Internal Server Error (webhook failure)",
             ),
             pytest.param(
@@ -425,6 +526,7 @@ class TestKubernetesExecutor:
                 1,
                 True,
                 State.FAILED,
+                None,
                 id="500 Internal Server Error (webhook failure) (retry failed)",
             ),
         ],
@@ -439,6 +541,7 @@ class TestKubernetesExecutor:
         task_publish_max_retries,
         should_requeue,
         task_expected_state,
+        retry_delay: int | None,
         data_file,
     ):
         """
@@ -467,11 +570,11 @@ class TestKubernetesExecutor:
         template_file = data_file("pods/generator_base_with_secrets.yaml").as_posix()
         # A mock kube_client that throws errors when making a pod
         mock_kube_client = mock.patch("kubernetes.client.CoreV1Api", autospec=True)
-        mock_kube_client.create_namespaced_pod = mock.MagicMock(side_effect=ApiException(http_resp=response))
+        mock_kube_client.create_namespaced_pod = mock.MagicMock(side_effect=ApiException(http_resp=response))  # type: ignore[attr-defined]
         mock_get_kube_client.return_value = mock_kube_client
         mock_api_client = mock.MagicMock()
         mock_api_client.sanitize_for_serialization.return_value = {}
-        mock_kube_client.api_client = mock_api_client
+        mock_kube_client.api_client = mock_api_client  # type: ignore[attr-defined]
         config = {
             ("kubernetes_executor", "pod_template_file"): template_file,
         }
@@ -490,25 +593,105 @@ class TestKubernetesExecutor:
                 )
                 kubernetes_executor.sync()
 
-                assert mock_kube_client.create_namespaced_pod.call_count == 1
+                assert mock_kube_client.create_namespaced_pod.call_count == 1  # type: ignore[attr-defined]
 
                 if should_requeue:
                     assert not kubernetes_executor.task_queue.empty()
 
                     # Disable the ApiException
-                    if task_expected_state == State.SUCCESS:
-                        mock_kube_client.create_namespaced_pod.side_effect = None
+                    if task_expected_state == State.SUCCESS or task_expected_state == State.QUEUED:
+                        mock_kube_client.create_namespaced_pod.side_effect = None  # type: ignore[attr-defined]
 
                     # Execute the task without errors should empty the queue
-                    mock_kube_client.create_namespaced_pod.reset_mock()
+                    mock_kube_client.create_namespaced_pod.reset_mock()  # type: ignore[attr-defined]
+
+                    if retry_delay:
+                        time.sleep(retry_delay + 1)
+
                     kubernetes_executor.sync()
-                    assert mock_kube_client.create_namespaced_pod.called
+                    assert mock_kube_client.create_namespaced_pod.called  # type: ignore[attr-defined]
                     assert kubernetes_executor.task_queue.empty()
                     if task_expected_state != State.SUCCESS:
                         assert kubernetes_executor.event_buffer[task_instance_key][0] == task_expected_state
                 else:
                     assert kubernetes_executor.task_queue.empty()
                     assert kubernetes_executor.event_buffer[task_instance_key][0] == task_expected_state
+            finally:
+                kubernetes_executor.end()
+
+    @pytest.mark.skipif(
+        AirflowKubernetesScheduler is None, reason="kubernetes python package is not installed"
+    )
+    @mock.patch("airflow.providers.cncf.kubernetes.executors.kubernetes_executor_utils.KubernetesJobWatcher")
+    @mock.patch("airflow.providers.cncf.kubernetes.kube_client.get_kube_client")
+    def test_skip_pod_creation_on_create_pods_after(
+        self,
+        mock_get_kube_client,
+        mock_kubernetes_job_watcher,
+        data_file,
+    ):
+        """
+        Skip pod creation when create_pods_after is in the future
+        """
+
+        template_file = data_file("pods/generator_base_with_secrets.yaml").as_posix()
+        # A mock kube_client that throws errors when making a pod
+        mock_kube_client = mock.patch("kubernetes.client.CoreV1Api", autospec=True)
+        mock_kube_client.create_namespaced_pod = mock.MagicMock(  # type: ignore[attr-defined]
+            side_effect=ApiException(
+                http_resp=HTTPResponse(
+                    body="Too many requests, please try again later.",
+                    status=429,
+                    headers={"Retry-After": "999999"},
+                ),
+            )
+        )
+        mock_get_kube_client.return_value = mock_kube_client
+        mock_api_client = mock.MagicMock()
+        mock_api_client.sanitize_for_serialization.return_value = {}
+        mock_kube_client.api_client = mock_api_client  # type: ignore[attr-defined]
+        config = {
+            ("kubernetes_executor", "pod_template_file"): template_file,
+        }
+        with conf_vars(config):
+            kubernetes_executor = self.kubernetes_executor
+            kubernetes_executor.task_publish_max_retries = 1
+            kubernetes_executor.start()
+            try:
+                try_number = 1
+                task_instance_key = TaskInstanceKey("dag", "task", "run_id", try_number)
+                kubernetes_executor.execute_async(
+                    key=task_instance_key,
+                    queue=None,
+                    command=["airflow", "tasks", "run", "true", "some_parameter"],
+                )
+                kubernetes_executor.sync()
+
+                # There should be only one request to create pod which fails
+                assert mock_kube_client.create_namespaced_pod.call_count == 1  # type: ignore[attr-defined]
+                # The task is queued
+                assert not kubernetes_executor.task_queue.empty()
+
+                # sync multiple times to make sure that no other pod is trying to be created
+                kubernetes_executor.sync()
+                kubernetes_executor.sync()
+                kubernetes_executor.sync()
+
+                assert not kubernetes_executor.task_queue.empty()
+                assert mock_kube_client.create_namespaced_pod.call_count == 1  # type: ignore[attr-defined]
+
+                kubernetes_executor.create_pods_after = datetime.now() - timedelta(hours=1)
+
+                mock_kube_client.create_namespaced_pod.side_effect = None
+                mock_kube_client.create_namespaced_pod.reset_mock()
+
+                kubernetes_executor.sync()
+
+                assert mock_kube_client.create_namespaced_pod.call_count == 1
+
+                assert kubernetes_executor.task_queue.empty()
+                assert kubernetes_executor.event_buffer[task_instance_key][0] == State.QUEUED
+
             finally:
                 kubernetes_executor.end()
 
@@ -571,6 +754,7 @@ class TestKubernetesExecutor:
         mock_api_client = mock.MagicMock()
         mock_api_client.sanitize_for_serialization.return_value = {}
         mock_kube_client.api_client = mock_api_client
+
         config = {("kubernetes_executor", "pod_template_file"): template_file}
         with conf_vars(config):
             kubernetes_executor = self.kubernetes_executor
@@ -595,23 +779,25 @@ class TestKubernetesExecutor:
     @mock.patch("airflow.providers.cncf.kubernetes.executors.kubernetes_executor.KubeConfig")
     @mock.patch("airflow.providers.cncf.kubernetes.executors.kubernetes_executor.KubernetesExecutor.sync")
     @mock.patch("airflow.executors.base_executor.BaseExecutor.trigger_tasks")
-    @mock.patch("airflow.executors.base_executor.Stats.gauge")
+    @mock.patch(f"{stats_reference}.gauge")
     def test_gauge_executor_metrics(self, mock_stats_gauge, mock_trigger_tasks, mock_sync, mock_kube_config):
         executor = self.kubernetes_executor
         executor.heartbeat()
         calls = [
             mock.call(
-                "executor.open_slots", value=mock.ANY, tags={"status": "open", "name": "KubernetesExecutor"}
+                "executor.open_slots",
+                value=mock.ANY,
+                tags={"status": "open", _executor_name_tag_key: "KubernetesExecutor"},
             ),
             mock.call(
                 "executor.queued_tasks",
                 value=mock.ANY,
-                tags={"status": "queued", "name": "KubernetesExecutor"},
+                tags={"status": "queued", _executor_name_tag_key: "KubernetesExecutor"},
             ),
             mock.call(
                 "executor.running_tasks",
                 value=mock.ANY,
-                tags={"status": "running", "name": "KubernetesExecutor"},
+                tags={"status": "running", _executor_name_tag_key: "KubernetesExecutor"},
             ),
         ]
         mock_stats_gauge.assert_has_calls(calls)
@@ -624,7 +810,7 @@ class TestKubernetesExecutor:
         try:
             assert executor.event_buffer == {}
             executor.execute_async(
-                key=("dag", "task", timezone.utcnow(), 1),
+                key=TaskInstanceKey("dag", "task", "run_id", 1, -1),
                 queue=None,
                 command=["airflow", "tasks", "run", "true", "some_parameter"],
                 executor_config=k8s.V1Pod(
@@ -638,7 +824,7 @@ class TestKubernetesExecutor:
         finally:
             executor.end()
 
-    @pytest.mark.execution_timeout(10)
+    @pytest.mark.execution_timeout(30)
     @pytest.mark.skipif(
         AirflowKubernetesScheduler is None, reason="kubernetes python package is not installed"
     )
@@ -994,8 +1180,8 @@ class TestKubernetesExecutor:
         mock_ti.queued_by_job_id = "10"  # scheduler_job would have updated this after the first adoption
         executor.scheduler_job_id = "20"
         # assume success adopting, `adopt_launched_task` pops `ti_key` from `tis_to_flush_by_key`
-        mock_adopt_launched_task.side_effect = (
-            lambda client, pod, tis_to_flush_by_key: tis_to_flush_by_key.pop(ti_key)
+        mock_adopt_launched_task.side_effect = lambda client, pod, tis_to_flush_by_key: (
+            tis_to_flush_by_key.pop(ti_key)
         )
 
         reset_tis = executor.try_adopt_task_instances([mock_ti])
@@ -1248,6 +1434,108 @@ class TestKubernetesExecutor:
         assert len(pod_names) == mock_kube_client.patch_namespaced_pod.call_count
         assert executor.running == set()
 
+    @mock.patch(
+        "airflow.providers.cncf.kubernetes.executors.kubernetes_executor."
+        "KubernetesExecutor._alive_other_scheduler_job_ids"
+    )
+    @mock.patch("airflow.providers.cncf.kubernetes.executors.kubernetes_executor.DynamicClient")
+    @mock.patch("airflow.providers.cncf.kubernetes.kube_client.get_kube_client")
+    def test_adopt_completed_pods_excludes_alive_siblings(
+        self, mock_kube_client, mock_kube_dynamic_client, mock_alive_ids
+    ):
+        """
+        With multiple alive schedulers, the label selector must exclude pods owned
+        by every alive sibling — not just self — so the schedulers do not thrash
+        relabeling each other's completed pods (see #66396).
+        """
+        mock_alive_ids.return_value = {7, 9}
+        executor = self.kubernetes_executor
+        executor.scheduler_job_id = "5"
+        executor.kube_client = mock_kube_client
+        mock_kube_dynamic_client.return_value = mock.MagicMock()
+        mock_pod_resource = mock.MagicMock()
+        mock_kube_dynamic_client.return_value.resources.get.return_value = mock_pod_resource
+        mock_kube_dynamic_client.return_value.get.return_value.items = []
+        executor.kube_config.kube_namespace = "somens"
+
+        executor._adopt_completed_pods(mock_kube_client)
+
+        # Selector must use set-based `notin (...)` listing self + every alive sibling,
+        # sorted for determinism. Anything outside that set is a pod whose owning
+        # scheduler is gone and therefore safe for this scheduler to adopt.
+        mock_kube_dynamic_client.return_value.get.assert_called_once_with(
+            resource=mock_pod_resource,
+            namespace="somens",
+            field_selector="status.phase=Succeeded",
+            label_selector=(
+                "kubernetes_executor=True,airflow-worker notin (5,7,9),airflow_executor_done!=True"
+            ),
+            header_params={"Accept": "application/json;as=PartialObjectMetadataList;v=v1;g=meta.k8s.io"},
+        )
+
+    @mock.patch(
+        "airflow.providers.cncf.kubernetes.executors.kubernetes_executor."
+        "KubernetesExecutor._alive_other_scheduler_job_ids"
+    )
+    @mock.patch("airflow.providers.cncf.kubernetes.executors.kubernetes_executor.DynamicClient")
+    @mock.patch("airflow.providers.cncf.kubernetes.kube_client.get_kube_client")
+    def test_adopt_completed_pods_single_scheduler_unchanged(
+        self, mock_kube_client, mock_kube_dynamic_client, mock_alive_ids
+    ):
+        """
+        With only one scheduler (no alive siblings), the selector must remain
+        identical to the pre-#66396-fix equality form so single-scheduler
+        deployments see no behavior change.
+        """
+        mock_alive_ids.return_value = set()
+        executor = self.kubernetes_executor
+        executor.scheduler_job_id = "modified"
+        executor.kube_client = mock_kube_client
+        mock_kube_dynamic_client.return_value = mock.MagicMock()
+        mock_pod_resource = mock.MagicMock()
+        mock_kube_dynamic_client.return_value.resources.get.return_value = mock_pod_resource
+        mock_kube_dynamic_client.return_value.get.return_value.items = []
+        executor.kube_config.kube_namespace = "somens"
+
+        executor._adopt_completed_pods(mock_kube_client)
+
+        mock_kube_dynamic_client.return_value.get.assert_called_once_with(
+            resource=mock_pod_resource,
+            namespace="somens",
+            field_selector="status.phase=Succeeded",
+            label_selector="kubernetes_executor=True,airflow-worker!=modified,airflow_executor_done!=True",
+            header_params={"Accept": "application/json;as=PartialObjectMetadataList;v=v1;g=meta.k8s.io"},
+        )
+
+    @pytest.mark.db_test
+    def test_alive_other_scheduler_job_ids_does_not_detach_caller_session(self, session):
+        """``_alive_other_scheduler_job_ids`` must use an independent (non-scoped) session.
+
+        Regression test for #67813. ``try_adopt_task_instances`` runs inside the scheduler's
+        own scoped transaction (``adopt_or_reset_orphaned_tasks``). If this helper opens a
+        *scoped* ``create_session()``, the context manager's ``commit()``/``close()`` on exit
+        tears down that shared transaction: it commits the scheduler's in-flight work early
+        (releasing its ``FOR UPDATE SKIP LOCKED`` row locks) and detaches the orphaned
+        TaskInstances it still holds, crashing the reset path with ``DetachedInstanceError``.
+        """
+        # An object attached to the caller's scoped session, standing in for the orphaned
+        # TaskInstances the scheduler holds while adopting.
+        job = Job()
+        session.add(job)
+        session.flush()
+        assert inspect(job).session is not None
+
+        executor = self.kubernetes_executor
+        executor.scheduler_job_id = "5"
+
+        executor._alive_other_scheduler_job_ids()
+
+        # A scoped create_session() inside the helper would have closed this session and
+        # detached ``job``; an independent session leaves the caller's session untouched.
+        assert inspect(job).session is not None, (
+            "_alive_other_scheduler_job_ids closed/detached the caller's scoped session"
+        )
+
     @mock.patch("airflow.providers.cncf.kubernetes.kube_client.get_kube_client")
     def test_not_adopt_unassigned_task(self, mock_kube_client):
         """
@@ -1382,7 +1670,7 @@ class TestKubernetesExecutor:
         assert not executor.has_task(task_instance=ti)
         executor.kube_scheduler.patch_pod_revoked.assert_called_once()
         executor.kube_scheduler.delete_pod.assert_called_once()
-        mock_kube_client.patch_namespaced_pod.calls[0] == []
+        mock_kube_client.patch_namespaced_pod.assert_not_called()
         assert executor.running == set()
 
     @pytest.mark.parametrize(
@@ -1737,6 +2025,26 @@ class TestKubernetesJobWatcher:
                 False,
                 id="OtherReasons",
             ),
+            pytest.param(
+                {
+                    "status": {
+                        "startTime": "2020-05-12T03:49:57Z",
+                        "containerStatuses": [
+                            {
+                                "name": "base",
+                                "state": {"waiting": {}},  # No "reason" key - optional per K8s API spec
+                                "lastState": {},
+                                "ready": False,
+                                "restartCount": 0,
+                                "image": "dockerhub.com/apache/airflow:latest",
+                                "imageID": "",
+                            }
+                        ],
+                    }
+                },
+                False,
+                id="MissingReason",
+            ),
         ],
     )
     def test_process_status_pending(self, raw_object, is_watcher_queue_called):
@@ -1900,3 +2208,156 @@ class TestKubernetesJobWatcher:
             executor = KubernetesExecutor()
 
         assert executor.kube_config.worker_pod_pending_fatal_container_state_reasons == expected_result
+
+
+class TestKubernetesExecutorMultiTeam:
+    """Tests for AIP-67 multi-team support in KubernetesExecutor."""
+
+    def test_supports_multi_team(self):
+        """Test that KubernetesExecutor declares multi-team support."""
+        assert KubernetesExecutor.supports_multi_team is True
+
+    def test_global_executor_without_team_name(self):
+        """Test that global executor (no team) works correctly with backwards compatibility."""
+        executor = KubernetesExecutor()
+
+        # Verify executor has conf
+        assert hasattr(executor, "conf")
+        # On older Airflow versions, conf is the global AirflowConfigParser (no team_name attr).
+        # On newer versions, conf is an ExecutorConf with team_name=None.
+        assert getattr(executor.conf, "team_name", None) is None
+
+        # Verify KubeConfig was created with the executor's conf
+        assert executor.kube_config is not None
+
+    @pytest.mark.skipif(not AIRFLOW_V_3_2_PLUS, reason="Multi-team requires Airflow 3.2+")
+    def test_executor_with_team_name(self):
+        """Test that executor created with a team_name has team-specific conf."""
+        executor = KubernetesExecutor(team_name="ml_team")
+
+        assert executor.conf.team_name == "ml_team"
+        assert executor.team_name == "ml_team"
+        assert executor.kube_config is not None
+
+    @pytest.mark.skipif(not AIRFLOW_V_3_2_PLUS, reason="Multi-team requires Airflow 3.2+")
+    def test_multiple_team_executors_isolation(self, monkeypatch):
+        """Test that multiple team executors can coexist with isolated resources."""
+        monkeypatch.setenv("AIRFLOW__TEAM_A___KUBERNETES_EXECUTOR__WORKER_PODS_CREATION_BATCH_SIZE", "4")
+        monkeypatch.setenv("AIRFLOW__TEAM_B___KUBERNETES_EXECUTOR__WORKER_PODS_CREATION_BATCH_SIZE", "8")
+
+        team_a_executor = KubernetesExecutor(team_name="team_a")
+        team_b_executor = KubernetesExecutor(team_name="team_b")
+
+        try:
+            assert team_a_executor.task_queue is not team_b_executor.task_queue
+            assert team_a_executor.result_queue is not team_b_executor.result_queue
+            assert team_a_executor.running is not team_b_executor.running
+            assert team_a_executor.queued_tasks is not team_b_executor.queued_tasks
+
+            assert team_a_executor.conf.team_name == "team_a"
+            assert team_b_executor.conf.team_name == "team_b"
+
+            assert team_a_executor.kube_config.worker_pods_creation_batch_size == 4
+            assert team_b_executor.kube_config.worker_pods_creation_batch_size == 8
+
+        finally:
+            team_a_executor.end()
+            team_b_executor.end()
+
+    @pytest.mark.skipif(not AIRFLOW_V_3_2_PLUS, reason="Multi-team requires Airflow 3.2+")
+    def test_team_specific_kube_config(self, monkeypatch):
+        """Test that KubeConfig uses team-specific configuration when provided via env vars."""
+        # Set team-specific namespace via environment variable
+        monkeypatch.setenv("AIRFLOW__TEAM_A___KUBERNETES_EXECUTOR__NAMESPACE", "team-a-namespace")
+        monkeypatch.setenv(
+            "AIRFLOW__TEAM_A___KUBERNETES_EXECUTOR__DELETE_WORKER_PODS",
+            "false",
+        )
+
+        team_a_executor = KubernetesExecutor(team_name="team_a")
+
+        try:
+            # Verify the KubeConfig picked up the team-specific namespace
+            assert team_a_executor.kube_config.kube_namespace == "team-a-namespace"
+            assert team_a_executor.kube_config.delete_worker_pods is False
+        finally:
+            team_a_executor.end()
+
+    @pytest.mark.skipif(not AIRFLOW_V_3_2_PLUS, reason="Multi-team requires Airflow 3.2+")
+    def test_team_and_global_config_isolation(self, monkeypatch):
+        """Test that team-specific and global executors use correct configurations side-by-side."""
+        global_namespace = "default"
+        team_namespace = "team-ml-namespace"
+
+        # Set up global configuration
+        config_overrides = {
+            ("kubernetes_executor", "namespace"): global_namespace,
+        }
+
+        # Set up team-specific config via environment variable
+        monkeypatch.setenv("AIRFLOW__ML_TEAM___KUBERNETES_EXECUTOR__NAMESPACE", team_namespace)
+
+        with conf_vars(config_overrides):
+            # Create team-specific executor
+            team_executor = KubernetesExecutor(team_name="ml_team")
+
+            # Create global executor (no team)
+            global_executor = KubernetesExecutor()
+
+            try:
+                # Verify team-specific namespace was used
+                assert team_executor.kube_config.kube_namespace == team_namespace
+
+                # Verify global namespace was used for global executor
+                assert global_executor.kube_config.kube_namespace == global_namespace
+            finally:
+                team_executor.end()
+                global_executor.end()
+
+    def test_kube_config_fallback_to_global_conf(self):
+        """Test that KubeConfig falls back to global conf when no executor_conf is provided."""
+        from airflow.providers.cncf.kubernetes.kube_config import KubeConfig
+
+        # KubeConfig without executor_conf should fall back to global configuration
+        kube_config = KubeConfig()
+
+        # Should still have valid configuration from global defaults
+        assert kube_config.kube_namespace is not None
+        assert kube_config.airflow_home is not None
+
+    def test_executor_conf_passed_to_kube_config(self):
+        """Test that the executor's conf is passed through to KubeConfig."""
+        executor = KubernetesExecutor()
+
+        # The executor should pass its conf to KubeConfig
+        assert executor.kube_config._conf is executor.conf
+
+    @pytest.mark.skipif(not AIRFLOW_V_3_2_PLUS, reason="Multi-team requires Airflow 3.2+")
+    def test_task_publish_max_retries_uses_team_conf(self, monkeypatch):
+        """Test that task_publish_max_retries reads from team-specific conf."""
+        monkeypatch.setenv("AIRFLOW__TEAM_A___KUBERNETES_EXECUTOR__TASK_PUBLISH_MAX_RETRIES", "5")
+
+        executor = KubernetesExecutor(team_name="team_a")
+
+        try:
+            assert executor.task_publish_max_retries == 5
+        finally:
+            executor.end()
+
+    @pytest.mark.skipif(not AIRFLOW_V_3_2_PLUS, reason="Multi-team requires Airflow 3.2+")
+    def test_get_pod_namespace_uses_instance_conf(self, monkeypatch):
+        """Test that _get_pod_namespace uses self.conf instead of global conf."""
+        monkeypatch.setenv("AIRFLOW__TEAM_A___KUBERNETES_EXECUTOR__NAMESPACE", "team-a-ns")
+
+        executor = KubernetesExecutor(team_name="team_a")
+
+        try:
+            mock_ti = mock.MagicMock()
+            mock_ti.executor_config = {}
+
+            namespace = executor._get_pod_namespace(mock_ti)
+
+            # Should return the team-specific namespace from the executor's conf
+            assert namespace == "team-a-ns"
+        finally:
+            executor.end()

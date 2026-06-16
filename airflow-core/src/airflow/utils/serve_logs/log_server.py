@@ -33,10 +33,10 @@ from jwt.exceptions import (
     InvalidSignatureError,
 )
 
+from airflow._shared.module_loading import import_string
 from airflow.api_fastapi.auth.tokens import JWTValidator, get_signing_key
 from airflow.configuration import conf
 from airflow.utils.docs import get_docs_url
-from airflow.utils.module_loading import import_string
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ class JWTAuthStaticFiles(StaticFiles):
             payload = await signer.avalidated_claims(auth)
             token_filename = payload.get("filename")
             # Extract filename from url path
-            request_filename = request.url.path.lstrip("/log/")
+            request_filename = request.url.path.removeprefix("/log/")
             if token_filename is None:
                 logger.warning("The payload does not contain 'filename' key: %s.", payload)
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)

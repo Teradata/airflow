@@ -22,10 +22,13 @@
   "backfill_other": "Backfills",
   "browse": {
     "auditLog": "Audit Log",
+    "jobs": "Jobs",
     "requiredActions": "Vereiste acties",
     "xcoms": "XComs"
   },
+  "collapseAllExtra": "All extra JSON inklappen",
   "collapseDetailsPanel": "Details inklappen",
+  "consumingAsset": "Consumerende Asset",
   "createdAssetEvent_one": "Asset Event aangemaakt",
   "createdAssetEvent_other": "Asset Events aangemaakt",
   "dag_one": "Dag",
@@ -58,7 +61,13 @@
     "dagVersions": "Dag Versie(s)",
     "dataIntervalEnd": "Data interval einde",
     "dataIntervalStart": "Data interval begin",
+    "durationStats": {
+      "mean": "Gemiddelde",
+      "mode": "Modus"
+    },
+    "expectedDuration": "Verwachte Duur",
     "lastSchedulingDecision": "Laatste planningsbeslissing",
+    "mappedPartitionKey": "Gemapte partitie sleutel",
     "partitionKey": "Partitie sleutel",
     "queuedAt": "In de wachtrij gezet om",
     "runAfter": "Run na",
@@ -73,6 +82,11 @@
   "dagWarnings": "Dag waarschuwingen/fouten",
   "defaultToGraphView": "Standaard grafiekweergave",
   "defaultToGridView": "Standaard rasterweergave",
+  "delete": "Verwijder",
+  "diff": "Diff",
+  "diffCompareWith": "Vergelijk met",
+  "diffExit": "Verlaat diff",
+  "diffSelectVersionToCompare": "Selecteer versie om te vergelijken",
   "direction": "Richting",
   "docs": {
     "documentation": "Documentatie",
@@ -85,13 +99,21 @@
     "tooltip": "Druk op {{hotkey}} om logs te downloaden"
   },
   "duration": "Duur",
+  "edit": "Wijzig",
   "endDate": "Einddatum",
   "error": {
     "back": "Terug",
     "defaultMessage": "Een onverwachte fout is opgetreden",
     "home": "Home",
+    "invalidUrl": "Pagina niet gevonden. Controleer de URL en probeer het opnieuw.",
     "notFound": "Pagina niet gevonden",
     "title": "Fout"
+  },
+  "errors": {
+    "forbidden": {
+      "description": "Je hebt geen permissies om deze actie uit te voeren.",
+      "title": "Toegang geweigerd"
+    }
   },
   "expand": {
     "collapse": "Uitklappen",
@@ -99,6 +121,7 @@
     "hotkey": "e",
     "tooltip": "Druk op {{hotkey}} op in- of uit te klappen"
   },
+  "expandAllExtra": "Alle extra JSON uitklappen",
   "expression": {
     "all": "Alles",
     "and": "En",
@@ -109,22 +132,29 @@
   "filters": {
     "durationFrom": "Duur van",
     "durationTo": "Duur tot",
+    "endTime": "Eindtijd",
     "logicalDateFrom": "Van logische datum",
     "logicalDateTo": "Tot logische datum",
     "runAfterFrom": "Van Run na",
-    "runAfterTo": "Tot Run na"
+    "runAfterTo": "Tot Run na",
+    "searchAsset": "Zoek Asset",
+    "selectDateRange": "Selecteer datumbereik",
+    "startTime": "Starttijd"
   },
+  "generateToken": "Genereer token",
   "logicalDate": "Logische datum",
   "logout": "Uitloggen",
   "logoutConfirmation": "Je staat op het punt om uit te loggen uit de applicatie.",
   "mapIndex": "Map Index",
   "modal": {
+    "add": "Toevoegen",
     "cancel": "Annuleer",
     "confirm": "Bevestig",
     "delete": {
       "button": "Verwijder",
       "confirmation": "Weet je zeker dat je {{resourceName}} wilt verwijderen? Deze actie kan niet ongedaan gemaakt worden."
-    }
+    },
+    "save": "Opslaan"
   },
   "nav": {
     "admin": "Beheer",
@@ -145,22 +175,21 @@
     "placeholder": "Voeg een notitie toe...",
     "taskInstance": "Task Instance notitie"
   },
-  "pools": {
-    "deferred": "Uitgesteld",
-    "open": "Open",
-    "pools_one": "pool",
-    "pools_other": "pools",
-    "queued": "Wachtend",
-    "running": "Lopend",
-    "scheduled": "Gepland"
+  "partitionedDagRun_one": "Gepartitioneerde Dag Run",
+  "partitionedDagRun_other": "Gepartitioneerde Dag Runs",
+  "partitionedDagRunDetail": {
+    "receivedAssetEvents": "Ontvangen Asset Events"
   },
+  "pendingDagRun_one": "{{count}} Wachtende Dag Run",
+  "pendingDagRun_other": "{{count}} Wachtende Dag Runs",
   "reset": "Reset",
   "runId": "Run ID",
   "runTypes": {
+    "asset_materialization": "Asset materialisatie",
     "asset_triggered": "Asset Triggered",
     "backfill": "Backfill",
     "manual": "Handmatig",
-    "scheduled": "Scheduled"
+    "scheduled": "Gepland"
   },
   "scroll": {
     "direction": {
@@ -177,7 +206,9 @@
     "users": "Gebruikers"
   },
   "selectLanguage": "Selecteer taal",
+  "selected": "Geselecteerd",
   "showDetailsPanel": "Details weergeven",
+  "signedInAs": "Ingelogd als",
   "source": {
     "hide": "Verberg bron",
     "hotkey": "s",
@@ -192,6 +223,7 @@
     "failed": "Mislukt",
     "no_status": "Geen status",
     "none": "Geen status",
+    "open": "Open",
     "planned": "Gepland",
     "queued": "Wachtend",
     "removed": "Verwijderd",
@@ -229,7 +261,6 @@
   },
   "task_one": "Task",
   "task_other": "Tasks",
-  "taskGroup": "Task groep",
   "taskId": "Task ID",
   "taskInstance": {
     "dagVersion": "Dag versie",
@@ -275,11 +306,25 @@
     "utc": "UTC (Gecoördineerde wereldtijd)"
   },
   "toaster": {
+    "bulkClear": {
+      "error": "Bulk opschoonverzoek voor {{resourceName}} mislukt",
+      "success": {
+        "description": "{{count}} {{resourceName}} zijn succesvol opgeschoond. Sleutels: {{keys}}",
+        "title": "Bulk opschoonverzoek voor {{resourceName}} verzonden"
+      }
+    },
     "bulkDelete": {
-      "error": "Massaverwijderingsverzoek voor {{resourceName}} verzoek mislukt",
+      "error": "Bulkwijderingsverzoek voor {{resourceName}} mislukt",
       "success": {
         "description": "{{count}} {{resourceName}} zijn succesvol verwijderd. Sleutels: {{keys}}",
-        "title": "Massaverwijderingsverzoek voor {{resourceName}} verzoek verzonden"
+        "title": "Bulkwijderingsverzoek voor {{resourceName}} verzonden"
+      }
+    },
+    "bulkUpdate": {
+      "error": "Bulkupdateverzoek voor {{resourceName}} mislukt",
+      "success": {
+        "description": "{{count}} {{resourceName}} zijn succesvol geüpdatet. Sleutels: {{keys}}",
+        "title": "Bulkupdateverzoek voor {{resourceName}} verzonden"
       }
     },
     "create": {
@@ -311,10 +356,26 @@
       }
     }
   },
+  "tokenGeneration": {
+    "apiToken": "API token",
+    "cliToken": "CLI token",
+    "errorDescription": "Er is een fout opgetreden bij het genereren van het token. Probeer het opnieuw.",
+    "errorTitle": "Token generatie mislukt",
+    "generate": "Genereer",
+    "selectType": "Selecteer het type token om te genereren.",
+    "title": "Genereer token",
+    "tokenExpiresIn": "Dit token verloopt over {{duration}}.",
+    "tokenGenerated": "Je token is gegenereerd.",
+    "tokenShownOnce": "Dit token wordt slechts één keer weergegeven. Kopieer het nu."
+  },
   "total": "Totaal {{state}}",
   "triggered": "Triggered",
   "tryNumber": "Poging nummer",
   "user": "Gebruiker",
+  "validation": {
+    "mustBeAtLeast": "Moet minimaal {{min}} zijn.",
+    "mustBeValidNumber": "Moet een geldig nummer zijn."
+  },
   "wrap": {
     "hotkey": "w",
     "tooltip": "Druk op {{hotkey}} om wrap te schakelen",

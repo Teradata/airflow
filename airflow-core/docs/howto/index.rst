@@ -36,6 +36,7 @@ configuring an Airflow environment.
     notifications
     sla-to-deadlines
     deadline-alerts
+    dag-level-retry-via-callback
     set-config
     set-up-database
     operator/index
@@ -45,6 +46,7 @@ configuring an Airflow environment.
     customize-ui
     custom-operator
     create-custom-decorator
+    static-type-checking
     export-more-env-vars
     connection
     variable
@@ -56,4 +58,5 @@ configuring an Airflow environment.
     dynamic-dag-generation
     docker-compose/index
     run-with-self-signed-certificate
+    performance
     memory-profiling

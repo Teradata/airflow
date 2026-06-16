@@ -34,7 +34,6 @@ export const FieldAdvancedArray = ({ name, namespace = "default", onUpdate }: Fl
     if (value === "") {
       if (paramsDict[name]) {
         // "undefined" values are removed from params, so we set it to null to avoid falling back to DAG defaults.
-        // eslint-disable-next-line unicorn/no-null
         paramsDict[name].value = null;
       }
       setParamsDict(paramsDict);
@@ -43,18 +42,24 @@ export const FieldAdvancedArray = ({ name, namespace = "default", onUpdate }: Fl
         const parsedValue = JSON.parse(value) as unknown;
 
         if (!Array.isArray(parsedValue)) {
-          throw new TypeError(translate("flexibleForm.validationErrorArrayNotArray"));
+          onUpdate(undefined, translate("flexibleForm.validationErrorArrayNotArray"));
+
+          return;
         }
 
         if (expectedType === "number" && !parsedValue.every((item) => typeof item === "number")) {
           // Ensure all elements in the array are numbers
-          throw new TypeError(translate("flexibleForm.validationErrorArrayNotNumbers"));
+          onUpdate(undefined, translate("flexibleForm.validationErrorArrayNotNumbers"));
+
+          return;
         } else if (
           expectedType === "object" &&
           !parsedValue.every((item) => typeof item === "object" && item !== null)
         ) {
           // Ensure all elements in the array are objects
-          throw new TypeError(translate("flexibleForm.validationErrorArrayNotObject"));
+          onUpdate(undefined, translate("flexibleForm.validationErrorArrayNotObject"));
+
+          return;
         }
 
         if (paramsDict[name]) {

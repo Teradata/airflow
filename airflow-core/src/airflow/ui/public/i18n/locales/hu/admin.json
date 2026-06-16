@@ -3,6 +3,7 @@
     "description": "Leírás",
     "key": "Kulcs",
     "name": "Név",
+    "team": "Csapat",
     "value": "Érték"
   },
   "config": {
@@ -43,12 +44,18 @@
     "nothingFound": {
       "description": "A környezeti változókon vagy secret kezelőkön keresztül meghatározott kapcsolatok itt nem jelennek meg.",
       "documentationLink": "További információkért tekintse meg az Airflow dokumentációját.",
-      "learnMore": "Ezek futásidőben kerülnek feldogozásra, és nem láthatók a felhasználói felületen.",
+      "learnMore": "Ezek futásidőben kerülnek feldolgozásra, és nem láthatók a felhasználói felületen.",
       "title": "Nem található kapcsolat!"
     },
     "searchPlaceholder": "Kapcsolatok keresése",
     "test": "Kapcsolat tesztelése",
     "testDisabled": "A kapcsolat tesztelése funkció le van tiltva. Kérjük, forduljon az adminisztrátorhoz az engedélyezéshez.",
+    "testError": {
+      "title": "Kapcsolat tesztelése sikertelen"
+    },
+    "testSuccess": {
+      "title": "Kapcsolat tesztelése sikeres"
+    },
     "typeMeta": {
       "error": "Nem sikerült lekérni a kapcsolat típus metaadatait",
       "standardFields": {
@@ -74,12 +81,29 @@
   "formActions": {
     "save": "Mentés"
   },
+  "jobs": {
+    "columns": {
+      "executorClass": "Végrehajtó osztály",
+      "hostname": "Gépnév",
+      "id": "Azonosító",
+      "jobType": "Feladat típusa",
+      "latestHeartbeat": "Utolsó életjel",
+      "unixname": "Unix-felhasználónév"
+    },
+    "filters": {
+      "allStates": "Minden állapot",
+      "allTypes": "Minden típus",
+      "dagProcessorJob": "DAG-feldolgozó feladat",
+      "schedulerJob": "Ütemező feladat",
+      "triggererJob": "Indító feladat"
+    }
+  },
   "plugins": {
     "columns": {
       "source": "Forrás"
     },
-    "importError_one": "Plugin importálási hiba",
-    "importError_other": "Plugin importálási hibák",
+    "importError_one": "Bővítmény importálási hiba",
+    "importError_other": "Bővítmény importálási hibák",
     "searchPlaceholder": "Keresés fájl szerint"
   },
   "pools": {
@@ -96,7 +120,8 @@
       "includeDeferred": "Várakozó feladatok belefoglalása",
       "nameMaxLength": "A név maximum 256 karakter hosszú lehet",
       "nameRequired": "Név megadása kötelező",
-      "slots": "Slotok"
+      "slots": "Slotok",
+      "slotsHelperText": "Korátlan számú slot-hoz adjon meg -1 értéket"
     },
     "noPoolsFound": "Nem található pool",
     "pool_one": "Pool",

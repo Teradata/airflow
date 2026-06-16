@@ -30,6 +30,7 @@ from airflow.providers.amazon.aws.operators.s3 import (
     S3ListOperator,
     S3ListPrefixesOperator,
     S3PutBucketTaggingOperator,
+    S3ReadObjectOperator,
 )
 from airflow.providers.amazon.aws.sensors.s3 import S3KeySensor, S3KeysUnchangedSensor
 from airflow.providers.common.compat.sdk import DAG, chain
@@ -64,7 +65,6 @@ with DAG(
     schedule="@once",
     start_date=datetime(2021, 1, 1),
     catchup=False,
-    tags=["example"],
 ) as dag:
     test_context = sys_test_context_task()
     env_id = test_context[ENV_ID_KEY]
@@ -141,6 +141,14 @@ with DAG(
         data=DATA,
         replace=True,
     )
+
+    # [START howto_operator_s3_read_object]
+    read_object = S3ReadObjectOperator(
+        task_id="read_object",
+        s3_bucket=bucket_name,
+        s3_key=key,
+    )
+    # [END howto_operator_s3_read_object]
 
     # [START howto_operator_s3_list_prefixes]
     list_prefixes = S3ListPrefixesOperator(
@@ -302,6 +310,7 @@ with DAG(
         delete_tagging,
         create_object,
         create_object_2,
+        read_object,
         list_prefixes,
         list_keys,
         [sensor_one_key, sensor_two_keys, sensor_key_with_function, sensor_key_with_regex],
@@ -327,5 +336,5 @@ with DAG(
 
 from tests_common.test_utils.system_tests import get_test_run  # noqa: E402
 
-# Needed to run the example DAG with pytest (see: tests/system/README.md#run_via_pytest)
+# Needed to run the example DAG with pytest (see: contributing-docs/testing/system_tests.rst)
 test_run = get_test_run(dag)

@@ -156,6 +156,13 @@ looks like:
         # A list of timetable classes to register so they can be used in Dags.
         timetables = []
 
+        # A list of deadline reference classes that can be used as custom deadlines in Dags.
+        # Custom deadline reference classes must be registered here in order to be
+        # resolvable at scheduler-side deserialization time; classes that are not
+        # registered will raise ``DeadlineReferenceNotRegistered`` when a Dag attempts
+        # to use them.
+        deadline_references = []
+
         # A list of Listeners that plugin provides. Listeners can register to
         # listen to particular events that happen in Airflow, like
         # TaskInstance state changes. Listeners are python modules.
@@ -172,8 +179,6 @@ Plugin Management Interface
 
 Airflow 3.1 introduces a Plugin Management Interface, available under *Admin → Plugins* in the Airflow UI.
 This page allows you to view installed plugins.
-
-...
 
 External Views
 --------------
@@ -235,7 +240,7 @@ definitions in Airflow.
         # the context variables available will be different, i.e a subset of (DAG_ID, RUN_ID, TASK_ID, MAP_INDEX).
         "href": "https://example.com/{DAG_ID}/{RUN_ID}/{TASK_ID}/{MAP_INDEX}",
         # Destination of the external view. This is used to determine where the view will be loaded in the UI.
-        # Supported locations are Literal["nav", "dag", "dag_run", "task", "task_instance"], default to "nav".
+        # Supported locations are Literal["nav", "dag", "dag_run", "task", "task_instance", "base"], default to "nav".
         "destination": "dag_run",
         # Optional icon, url to an svg file.
         "icon": "https://example.com/icon.svg",
@@ -247,6 +252,11 @@ definitions in Airflow.
         # Optional category, only relevant for destination "nav". This is used to group the external links in the navigation bar.  We will match the existing
         # menus of ["browse", "docs", "admin", "user"] and if there's no match then create a new menu.
         "category": "browse",
+        # Optional flag, only relevant for destination "nav". When True, this item is always rendered directly on the
+        # navigation toolbar instead of inside the "Plugins" submenu. When two or more non-promoted items remain they
+        # are still grouped into the submenu; a single remaining non-promoted item is also shown on the toolbar.
+        # Defaults to False.
+        "nav_top_level": True,
     }
 
     # Note: The React app integration is experimental and interfaces might change in future versions.
@@ -258,9 +268,10 @@ definitions in Airflow.
         # the context variables available will be different, i.e a subset of (DAG_ID, RUN_ID, TASK_ID, MAP_INDEX).
         "bundle_url": "https://example.com/static/js/my_react_app.js",
         # Destination of the react app. This is used to determine where the app will be loaded in the UI.
-        # Supported locations are Literal["nav", "dag", "dag_run", "task", "task_instance"], default to "nav".
+        # Supported locations are Literal["nav", "dag", "dag_run", "task", "task_instance", "base"], default to "nav".
         # It can also be put inside of an existing page, the supported views are ["dashboard", "dag_overview", "task_overview"]. You can position
         # element in the existing page via the css `order` rule which will determine the flex order.
+        # Use "base" to mount the app in the base layout (e.g. a toolbar strip); the host uses a flex container so you can set ``order`` in your root JSX to control position.
         "destination": "dag_run",
         # Optional icon, url to an svg file.
         "icon": "https://example.com/icon.svg",
@@ -271,6 +282,11 @@ definitions in Airflow.
         # Optional category, only relevant for destination "nav". This is used to group the react apps in the navigation bar. We will match the existing
         # menus of ["browse", "docs", "admin", "user"] and if there's no match then create a new menu.
         "category": "browse",
+        # Optional flag, only relevant for destination "nav". When True, this item is always rendered directly on the
+        # navigation toolbar instead of inside the "Plugins" submenu. When two or more non-promoted items remain they
+        # are still grouped into the submenu; a single remaining non-promoted item is also shown on the toolbar.
+        # Defaults to False.
+        "nav_top_level": True,
     }
 
 

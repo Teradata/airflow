@@ -37,6 +37,7 @@ export const taskInstanceStateOptions = createListCollection<{
     { label: "common:states.upstream_failed", value: "upstream_failed" },
     { label: "common:states.skipped", value: "skipped" },
     { label: "common:states.deferred", value: "deferred" },
+    { label: "common:states.awaiting_input", value: "awaiting_input" },
     { label: "common:states.removed", value: "removed" },
     { label: "common:states.none", value: "none" },
   ],
@@ -49,6 +50,25 @@ export const dagRunStateOptions = createListCollection({
     { label: "common:states.running", value: "running" },
     { label: "common:states.failed", value: "failed" },
     { label: "common:states.success", value: "success" },
+  ],
+});
+
+export const jobStateOptions = createListCollection({
+  items: [
+    { label: "admin:jobs.filters.allStates", value: "all" },
+    { label: "common:states.running", value: "running" },
+    { label: "common:states.success", value: "success" },
+    { label: "common:states.restarting", value: "restarting" },
+    { label: "common:states.failed", value: "failed" },
+  ],
+});
+
+export const jobTypeOptions = createListCollection({
+  items: [
+    { label: "admin:jobs.filters.allTypes", value: "all" },
+    { label: "admin:jobs.filters.schedulerJob", value: "SchedulerJob" },
+    { label: "admin:jobs.filters.triggererJob", value: "TriggererJob" },
+    { label: "admin:jobs.filters.dagProcessorJob", value: "DagProcessorJob" },
   ],
 });
 

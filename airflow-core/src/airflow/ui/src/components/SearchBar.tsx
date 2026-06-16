@@ -16,46 +16,62 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { Button, Input, Kbd, type ButtonProps } from "@chakra-ui/react";
-import { useState, useRef, type ChangeEvent } from "react";
+import { CloseButton, HStack, Input, InputGroup, Kbd, type InputGroupProps } from "@chakra-ui/react";
+import { useEffect, useRef, useState, type ChangeEvent } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { useTranslation } from "react-i18next";
 import { FiSearch } from "react-icons/fi";
 import { useDebouncedCallback } from "use-debounce";
 
+import { AdvancedSearchToggle, type AdvancedSearchToggleProps } from "src/components/AdvancedSearchToggle";
 import { getMetaKey } from "src/utils";
-
-import { CloseButton, InputGroup, type InputGroupProps } from "./ui";
 
 const debounceDelay = 200;
 
+type AdvancedSearchProps = Omit<AdvancedSearchToggleProps, "size">;
+
 type Props = {
-  readonly buttonProps?: ButtonProps;
+  readonly advancedSearch?: AdvancedSearchProps;
   readonly defaultValue: string;
-  readonly groupProps?: InputGroupProps;
-  readonly hideAdvanced?: boolean;
   readonly hotkeyDisabled?: boolean;
   readonly onChange: (value: string) => void;
-  readonly placeHolder: string;
-};
+  readonly placeholder: string;
+} & Omit<InputGroupProps, "children" | "onChange">;
 
 export const SearchBar = ({
-  buttonProps,
+  advancedSearch,
   defaultValue,
-  groupProps,
-  hideAdvanced = false,
   hotkeyDisabled = false,
   onChange,
-  placeHolder,
+  placeholder,
+  ...props
 }: Props) => {
-  const handleSearchChange = useDebouncedCallback((val: string) => onChange(val), debounceDelay);
+  const lastSentValue = useRef(defaultValue);
+  const handleSearchChange = useDebouncedCallback((val: string) => {
+    lastSentValue.current = val;
+    onChange(val);
+  }, debounceDelay);
   const searchRef = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState(defaultValue);
   const metaKey = getMetaKey();
   const { t: translate } = useTranslation(["dags"]);
+
+  useEffect(() => {
+    if (defaultValue !== lastSentValue.current) {
+      setValue(defaultValue);
+      lastSentValue.current = defaultValue;
+    }
+  }, [defaultValue]);
+
   const onSearchChange = (event: ChangeEvent<HTMLInputElement>) => {
     setValue(event.target.value);
     handleSearchChange(event.target.value);
+  };
+  const clearSearch = () => {
+    handleSearchChange.cancel();
+    lastSentValue.current = "";
+    setValue("");
+    onChange("");
   };
 
   useHotkeys(
@@ -66,29 +82,20 @@ export const SearchBar = ({
     { enabled: !hotkeyDisabled, preventDefault: true },
   );
 
-  return (
+  const inputGroup = (
     <InputGroup
-      {...groupProps}
       colorPalette="brand"
+      {...props}
       endElement={
         <>
           {Boolean(value) ? (
             <CloseButton
               aria-label={translate("search.clear")}
-              colorPalette="brand"
               data-testid="clear-search"
-              onClick={() => {
-                setValue("");
-                onChange("");
-              }}
+              onClick={clearSearch}
               size="xs"
             />
           ) : undefined}
-          {Boolean(hideAdvanced) ? undefined : (
-            <Button fontWeight="normal" height={28} variant="ghost" {...buttonProps}>
-              {translate("search.advanced")}
-            </Button>
-          )}
           {!hotkeyDisabled && (
             <Kbd size="sm">
               {metaKey}
@@ -102,11 +109,22 @@ export const SearchBar = ({
       <Input
         data-testid="search-dags"
         onChange={onSearchChange}
-        placeholder={placeHolder}
+        placeholder={placeholder}
         pr={150}
         ref={searchRef}
         value={value}
       />
     </InputGroup>
+  );
+
+  if (!advancedSearch) {
+    return inputGroup;
+  }
+
+  return (
+    <HStack alignItems="center" gap={2}>
+      {inputGroup}
+      <AdvancedSearchToggle {...advancedSearch} />
+    </HStack>
   );
 };

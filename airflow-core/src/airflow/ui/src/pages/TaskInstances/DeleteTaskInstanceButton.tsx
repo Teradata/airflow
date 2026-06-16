@@ -22,15 +22,14 @@ import { FiTrash2 } from "react-icons/fi";
 
 import type { TaskInstanceResponse } from "openapi/requests/types.gen";
 import DeleteDialog from "src/components/DeleteDialog";
-import ActionButton from "src/components/ui/ActionButton";
+import { IconButton } from "src/components/ui";
 import { useDeleteTaskInstance } from "src/queries/useDeleteTaskInstance";
 
 type DeleteTaskInstanceButtonProps = {
   readonly taskInstance: TaskInstanceResponse;
-  readonly withText?: boolean;
 };
 
-const DeleteTaskInstanceButton = ({ taskInstance, withText = true }: DeleteTaskInstanceButtonProps) => {
+const DeleteTaskInstanceButton = ({ taskInstance }: DeleteTaskInstanceButtonProps) => {
   const { onClose, onOpen, open } = useDisclosure();
   const { t: translate } = useTranslation();
 
@@ -46,17 +45,15 @@ const DeleteTaskInstanceButton = ({ taskInstance, withText = true }: DeleteTaskI
 
   return (
     <>
-      <ActionButton
-        actionName={translate("dags:runAndTaskActions.delete.button", {
+      <IconButton
+        colorPalette="danger"
+        label={translate("dags:runAndTaskActions.delete.button", {
           type: translate("taskInstance_one"),
         })}
-        colorPalette="danger"
-        icon={<FiTrash2 />}
         onClick={onOpen}
-        text={translate("dags:runAndTaskActions.delete.button", { type: translate("taskInstance_one") })}
-        variant="solid"
-        withText={withText}
-      />
+      >
+        <FiTrash2 />
+      </IconButton>
 
       <DeleteDialog
         isDeleting={isPending}

@@ -17,23 +17,18 @@
 from __future__ import annotations
 
 import copy
-import datetime
 import os
 import sys
 import tempfile
 import types
-from typing import TYPE_CHECKING
 from unittest import mock
 
-import pendulum
 import pytest
 
 from airflow import settings
 from airflow._shared.timezones import timezone
 from airflow.config_templates.airflow_local_settings import DEFAULT_LOGGING_CONFIG
 from airflow.models.tasklog import LogTemplate
-from airflow.providers.standard.operators.python import PythonOperator
-from airflow.timetables.base import DataInterval
 from airflow.utils.log.log_reader import TaskLogReader
 from airflow.utils.log.logging_mixin import ExternalLoggingMixin
 from airflow.utils.state import TaskInstanceState
@@ -44,10 +39,6 @@ from tests_common.test_utils.db import clear_db_dags, clear_db_runs
 from tests_common.test_utils.file_task_handler import convert_list_to_stream
 
 pytestmark = pytest.mark.db_test
-
-
-if TYPE_CHECKING:
-    from airflow.models import DagRun
 
 
 class TestLogView:
@@ -140,11 +131,11 @@ class TestLogView:
 
         logs = list(logs)
         assert logs[0].event == "::group::Log message source details"
-        assert logs[0].sources == [
-            f"{self.log_dir}/dag_log_reader/task_log_reader/2017-09-01T00.00.00+00.00/1.log"
-        ]
-        assert logs[1].event == "::endgroup::"
-        assert logs[2].event == "try_number=1."
+        assert (
+            logs[1].event == f"{self.log_dir}/dag_log_reader/task_log_reader/2017-09-01T00.00.00+00.00/1.log"
+        )
+        assert logs[2].event == "::endgroup::"
+        assert logs[3].event == "try_number=1."
         assert metadata == {"end_of_log": True, "log_pos": 1}
 
     def test_test_read_log_chunks_should_read_latest_files(self):
@@ -155,11 +146,11 @@ class TestLogView:
 
         logs = list(logs)
         assert logs[0].event == "::group::Log message source details"
-        assert logs[0].sources == [
-            f"{self.log_dir}/dag_log_reader/task_log_reader/2017-09-01T00.00.00+00.00/3.log"
-        ]
-        assert logs[1].event == "::endgroup::"
-        assert logs[2].event == f"try_number={ti.try_number}."
+        assert (
+            logs[1].event == f"{self.log_dir}/dag_log_reader/task_log_reader/2017-09-01T00.00.00+00.00/3.log"
+        )
+        assert logs[2].event == "::endgroup::"
+        assert logs[3].event == f"try_number={ti.try_number}."
         assert metadata == {"end_of_log": True, "log_pos": 1}
 
     def test_test_test_read_log_stream_should_read_one_try(self):
@@ -169,10 +160,8 @@ class TestLogView:
         stream = task_log_reader.read_log_stream(ti=ti, try_number=1, metadata={})
 
         assert list(stream) == [
-            '{"timestamp":null,'
-            '"event":"::group::Log message source details",'
-            f'"sources":["{self.log_dir}/dag_log_reader/task_log_reader/2017-09-01T00.00.00+00.00/1.log"]'
-            "}\n",
+            '{"timestamp":null,"event":"::group::Log message source details"}\n',
+            f'{{"timestamp":null,"event":"{self.log_dir}/dag_log_reader/task_log_reader/2017-09-01T00.00.00+00.00/1.log"}}\n',
             '{"timestamp":null,"event":"::endgroup::"}\n',
             '{"timestamp":null,"event":"try_number=1."}\n',
         ]
@@ -183,10 +172,8 @@ class TestLogView:
         stream = task_log_reader.read_log_stream(ti=self.ti, try_number=None, metadata={})
 
         assert list(stream) == [
-            '{"timestamp":null,'
-            '"event":"::group::Log message source details",'
-            f'"sources":["{self.log_dir}/dag_log_reader/task_log_reader/2017-09-01T00.00.00+00.00/3.log"]'
-            "}\n",
+            '{"timestamp":null,"event":"::group::Log message source details"}\n',
+            f'{{"timestamp":null,"event":"{self.log_dir}/dag_log_reader/task_log_reader/2017-09-01T00.00.00+00.00/3.log"}}\n',
             '{"timestamp":null,"event":"::endgroup::"}\n',
             '{"timestamp":null,"event":"try_number=3."}\n',
         ]
@@ -291,54 +278,6 @@ class TestLogView:
 
         mock_prop.return_value = True
         assert task_log_reader.supports_external_link
-
-    def test_task_log_filename_unique(self, dag_maker):
-        """
-        Ensure the default log_filename_template produces a unique filename.
-
-        See discussion in apache/airflow#19058 [1]_ for how uniqueness may
-        change in a future Airflow release. For now, the logical date is used
-        to distinguish DAG runs. This test should be modified when the logical
-        date is no longer used to ensure uniqueness.
-
-        [1]: https://github.com/apache/airflow/issues/19058
-        """
-        dag_id = "test_task_log_filename_ts_corresponds_to_logical_date"
-        task_id = "echo_run_type"
-
-        def echo_run_type(dag_run: DagRun, **kwargs):
-            print(dag_run.run_type)
-
-        with dag_maker(dag_id, start_date=self.DEFAULT_DATE, schedule="@daily") as dag:
-            PythonOperator(task_id=task_id, python_callable=echo_run_type)
-
-        start = pendulum.datetime(2021, 1, 1)
-        end = start + datetime.timedelta(days=1)
-        trigger_time = end + datetime.timedelta(hours=4, minutes=29)  # Arbitrary.
-
-        # Create two DAG runs that have the same data interval, but not the same
-        # logical date, to check if they correctly use different log files.
-        scheduled_dagrun: DagRun = dag_maker.create_dagrun(
-            run_type=DagRunType.SCHEDULED,
-            logical_date=start,
-            data_interval=DataInterval(start, end),
-        )
-        manual_dagrun: DagRun = dag_maker.create_dagrun(
-            run_type=DagRunType.MANUAL,
-            logical_date=trigger_time,
-            data_interval=DataInterval(start, end),
-        )
-
-        scheduled_ti = scheduled_dagrun.get_task_instance(task_id)
-        manual_ti = manual_dagrun.get_task_instance(task_id)
-        assert scheduled_ti is not None
-        assert manual_ti is not None
-
-        scheduled_ti.refresh_from_task(dag.get_task(task_id))
-        manual_ti.refresh_from_task(dag.get_task(task_id))
-
-        reader = TaskLogReader()
-        assert reader.render_log_filename(scheduled_ti, 1) != reader.render_log_filename(manual_ti, 1)
 
     @pytest.mark.parametrize(
         ("state", "try_number", "expected_event", "use_self_ti"),

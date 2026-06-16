@@ -16,7 +16,7 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { Box, HStack, Skeleton } from "@chakra-ui/react";
+import { Box, HStack, Skeleton, Spacer } from "@chakra-ui/react";
 import { createListCollection } from "@chakra-ui/react/collection";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -32,6 +32,7 @@ import { SearchBar } from "src/components/SearchBar";
 import { Select } from "src/components/ui";
 import type { SearchParamsKeysType } from "src/constants/searchParams";
 import { SearchParamsKeys } from "src/constants/searchParams";
+import { useAdvancedSearch } from "src/hooks/useAdvancedSearch";
 
 import AddPoolButton from "./AddPoolButton";
 import PoolBarCard from "./PoolBarCard";
@@ -53,8 +54,9 @@ export const Pools = () => {
     ],
   });
   const [searchParams, setSearchParams] = useSearchParams();
-  const { NAME_PATTERN: NAME_PATTERN_PARAM }: SearchParamsKeysType = SearchParamsKeys;
-  const [poolNamePattern, setPoolNamePattern] = useState(searchParams.get(NAME_PATTERN_PARAM) ?? undefined);
+  const { NAME_PATTERN, OFFSET }: SearchParamsKeysType = SearchParamsKeys;
+  const [poolNamePattern, setPoolNamePattern] = useState(searchParams.get(NAME_PATTERN) ?? undefined);
+  const advancedSearch = useAdvancedSearch("pools");
 
   const { setTableURLState, tableURLState } = useTableURLState();
   const { pagination, sorting } = tableURLState;
@@ -65,15 +67,18 @@ export const Pools = () => {
     limit: pagination.pageSize,
     offset: pagination.pageIndex * pagination.pageSize,
     orderBy,
-    poolNamePattern: poolNamePattern ?? undefined,
+    ...(advancedSearch.enabled
+      ? { poolNamePattern: poolNamePattern ?? undefined }
+      : { poolNamePrefixPattern: poolNamePattern ?? undefined }),
   });
 
   const handleSearchChange = (value: string) => {
     if (value) {
-      searchParams.set(NAME_PATTERN_PARAM, value);
+      searchParams.set(NAME_PATTERN, value);
     } else {
-      searchParams.delete(NAME_PATTERN_PARAM);
+      searchParams.delete(NAME_PATTERN);
     }
+    searchParams.delete(OFFSET);
     setSearchParams(searchParams);
     setPoolNamePattern(value);
   };
@@ -93,10 +98,10 @@ export const Pools = () => {
     <>
       <ErrorAlert error={error} />
       <SearchBar
-        buttonProps={{ disabled: true }}
+        advancedSearch={advancedSearch}
         defaultValue={poolNamePattern ?? ""}
         onChange={handleSearchChange}
-        placeHolder={translate("pools.searchPlaceholder")}
+        placeholder={translate("pools.searchPlaceholder")}
       />
       <HStack gap={4} mt={4}>
         <Select.Root
@@ -118,6 +123,7 @@ export const Pools = () => {
             ))}
           </Select.Content>
         </Select.Root>
+        <Spacer />
         <AddPoolButton />
       </HStack>
       <Box mt={4}>
@@ -128,7 +134,7 @@ export const Pools = () => {
           displayMode="card"
           initialState={tableURLState}
           isLoading={isLoading}
-          modelName={translate("common:admin.Pools")}
+          modelName="admin:pools.pool"
           noRowsMessage={translate("pools.noPoolsFound")}
           onStateChange={setTableURLState}
           total={data ? data.total_entries : 0}

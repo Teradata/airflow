@@ -27,6 +27,424 @@
 Changelog
 ---------
 
+3.8.0
+.....
+
+.. note::
+    The new execute-callback worker support (#67679) requires Apache Airflow 3.3+, as it relies on APIs available only in Airflow 3.3 and later. The Edge provider itself continues to support Apache Airflow 3.0+; the execute-callback feature is simply inactive on older releases.
+
+Features
+~~~~~~~~
+
+* ``Fix edge executor to support handling execute callback workload (#67679)``
+* ``Add 'awaiting_input' task state for Human-in-the-loop, off the triggerer (#68028)``
+* ``Add async connection testing via workers for security isolation (#62343)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fix Edge worker fork mode reporting supervisor failures as success (#67887)``
+* ``Fix team name authorization bypass in edgeworker (#64556)``
+* ``Remove unnecessarily added logging in edge worker (#68019)``
+
+Misc
+~~~~
+
+* ``Fix exceptions of positional session use in Edge provider (2) (#67812)``
+* ``Bump the edge-ui-package-updates group across 1 directory with 16 updates (#67740)``
+* ``Fix exceptions of positional session use in Edge provider (#67661)``
+* ``Add prek hook to enforce HTTPException is imported from fastapi (#67367)``
+* ``Remove dead auth code from Airflow2 times in Edge (#67374)``
+* ``Add prek hook enforcing the "example" tag on example DAGs (#67354)``
+* ``Bump the edge-ui-package-updates group across 1 directory with 7 updates (#68087)``
+* ``Bump aiohttp regarding dependabot warning (#67978)``
+
+Doc-only
+~~~~~~~~
+
+* ``Replace Sphinx Redoc with Swagger API Docs (#67390)``
+* ``Correct README.rst common compat version reference inconsistency (#67554)``
+* ``Add some more clarifications on edge roles (#67379)``
+* ``Clarify WorkerQueuesBase.team_name is an experimental hint, cross-ref workload.rst (#66718)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``fix test in main (#67861)``
+   * ``[main] CI: Upgrade important CI environment (#67593)``
+   * ``[main] CI: Upgrade important CI environment (#67313)``
+
+
+3.7.0
+.....
+
+Features
+~~~~~~~~
+
+* ``Allow using fresh interpreter besides fork() in Edge Worker (#65943)``
+* ``Support BaseExecutor.run_workload() for Airflow 3.3 in Edge Worker (#65847)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Make Edge resilient against log errors (#66995)``
+* ``Fix provider DB upgrades with existing tables (#66883)``
+
+Misc
+~~~~
+
+* ``Bump the edge-ui-package-updates group across 1 directory with 15 updates (#67002)``
+* ``Bump the edge-ui-package-updates group across 1 directory with 6 updates (#66532)``
+* ``Regenerate Edge worker OpenAPI spec after #67093 env upgrade (#67188)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Fix hardcoded OS path in edge provider (#67039)``
+   * ``[main] CI: Upgrade important CI environment (#66843)``
+
+3.6.0
+.....
+
+Features
+~~~~~~~~
+
+* ``Allow automated edge worker maintenance (#66310)``
+* ``Relax version checks for remote Edge Workers (#66292)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fix ASYNC110 violation in edge3 worker (#66192)``
+* ``Fix deadlock and add unit test (#66144)``
+* ``Edge worker: bound drain with SIGTERM/SIGKILL escalation (#65838)``
+* ``Fix Edge worker SIGTERM storm during API server outage (#65830)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``[main] CI: Upgrade important CI environment (#66068)``
+   * ``Fix edge3 worker deadlock regression test on Python 3.14 (#66247)``
+   * ``Bump the edge-ui-package-updates group across 1 directory with 11 updates (#66227)``
+   * ``Bump the edge-ui-package-updates group across 1 directory with 15 updates (#65802)``
+   * ``[main] CI: Upgrade important CI environment (#65933)``
+   * ``Remove the DualStatsManager and the Stats interfaces (#63932)``
+   * ``Providers wave 2026-04-21 (#65614)``
+   * ``Providers wave 2026-04-21``
+   * ``Fix typo 'matchning' -> 'matching' (#66427)``
+
+3.5.0
+.....
+
+Features
+~~~~~~~~
+
+* ``Add extended sysinfo for Edge worker (#65472)``
+* ``Add bulk support for maintenance mode entry and exit for edge workers (#65015)``
+
+Misc
+~~~~
+
+* ``Bump the edge-ui-package-updates group across 1 directory with 20 updates (#65434)``
+* ``Fix Edge provider plugin broken by Vite 8 upgrade (#65387)``
+* ``Bump vite in Edge Provider to 8.0 (#65175)``
+* ``Move ExecutorCallback execution into a supervised process (#62645)``
+* ``Bump axios in /providers/edge3/src/airflow/providers/edge3/plugins/www (#65004)``
+* ``Keep DualStatsManager as a try/except import as it is soon going to be removed (#65676)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``[main] CI: Upgrade important CI environment (#65521)``
+   * ``Isolate non-provider mypy hooks per distribution with dedicated .build/ venvs (#65492)``
+   * ``Remove AirflowException from Edge Example Dag (#64975)``
+
+3.4.0
+.....
+
+Features
+~~~~~~~~
+
+* ``AIP 67 - Multi-Team: Update Edge Executor to support multi team (#61646)``
+
+Misc
+~~~~
+
+* ``Remove dependabot alarms in edge provider plugin (#64788)``
+* ``Bump vite in /providers/edge3/src/airflow/providers/edge3/plugins/www (#64800)``
+* ``Add no-op _process_workloads to EdgeExecutor to improve readability (#64236)``
+* ``Add 4-day cooldown for pnpm dependency resolution (#64337)``
+* ``chore(deps-dev): bump happy-dom (#64421)``
+* ``Fix dependabot alarms in Edge provider (#64368)``
+* ``chore(deps-dev): bump happy-dom (#64272)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``CI: Upgrade important CI environment (#64744)``
+   * ``CI: Upgrade important CI environment (#64451)``
+   * ``Compat sdk conf follow-up: Celery, Common AI, FAB, Edge3 (#64292)``
+   * ``[main] Upgrade important CI environment (#64239)``
+   * ``Add 4-day cooldown for uv dependency resolution (#64249)``
+
+3.3.0
+.....
+
+Features
+~~~~~~~~
+
+* ``Add Bulk operations for edge workers page (#64033)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fix edge executor UI navigation when behind reverse proxy with subpath (#63777)``
+
+Misc
+~~~~
+
+* ``Fix dependabot alarms for Flatted (#63955)``
+* ``Add Python 3.14 Support (#63520)``
+* ``Fix make_partial_model (#63716)``
+* ``Re-introducing '--use-migration-files' and fix inconsistences between ORM/migration files (#62234)``
+* ``Fix dependabot warning regarding flatten lib - providers (#63586)``
+* ``Bump pydantic min version to 2.12.3 (#63570)``
+* ``Fix dependabot for edge3 on TS (#63375)``
+* ``Update edge executor's import conf path to use common compat SDK (#64137)``
+
+Doc-only
+~~~~~~~~
+
+* ``Generate ERD diagrams at doc build time instead of committing them (#63402)``
+* ``Fix typos and spelling (#64139)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Add *.iml to .gitignore in all distributions (#63636)``
+
+3.2.0
+.....
+
+Features
+~~~~~~~~
+
+* ``Add real-time concurrency control for edge workers via UI (#63142)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Centralized runtime control of Edge Worker concurrency in distributed deployments (#62896)``
+* ``Fix _execution_api_server_url() reading edge.api_url when execution_api_server_url is already set (#63192)``
+
+Doc-only
+~~~~~~~~
+
+* ``docs(edge3): add set-worker-concurrency command to deployment guide (#63083)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``chore(deps): bump the edge-ui-package-updates group across 1 directory with 6 updates (#63070)``
+   * ``Upgrade 'tar' (#62939)``
+   * ``Update dependencies for TS code (#62678)``
+
+3.1.0
+.....
+
+Features
+~~~~~~~~
+
+* ``Introduce EdgeDBManager: Independent Provider Specific Database Schema Management (#61155)``
+* ``Add Filtering to Edge UI Plugin Jobs Page (#61934)``
+* ``Route providers to consume Stats from common compat provider (#61812)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fix Toaster in Plugin in Edge UI (#55641)``
+* ``Executor Synchronous callback workload (#61153)``
+* ``Fix edge3 executor startup crash on Airflow < 3.2 (#62593)``
+
+Misc
+~~~~
+
+* ``Bump minimum prek version to 0.3.2 in edge3 provider (#62194)``
+* ``Auto-discover DB managers from provider.yaml (#62308)``
+* ``Upgrade dependency to minimatch (#62303)``
+* ``Warn when EdgeDBManager is missing from external_db_managers in config (#62204)``
+* ``Replace Base.metadata.remove() hack with dedicated Edge3 declarative base (#62202)``
+* ``Bump the edge-ui-package-updates group across 1 directory with 11 updates (#62040)``
+* ``Enable dynamic generation of assets for Edge UI Plugin (#56456)``
+* ``Dependabot: Upgrade vulnerable rolloup (#62535)``
+
+
+Doc-only
+~~~~~~~~
+
+* ``Add external_db_managers configuration requirement (#62203)``
+* ``docs: edge3 db-manager is auto loaded by provider manager (#62550)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Remove comments for missing features (#61922)``
+   * ``Add 'lifecycle' field to provider.yaml schema and all providers per AIP-95 (#62190)``
+   * ``Fix version check for RC versions (#61318)``
+   * ``CI: Upgrade important CI environment (#62610)``
+   * ``Fix all build-system/requires including transitive dependencies (#62570)``
+   * ``Prepare documentation for next release of providers (2026-02-24) (#62495)``
+
+3.0.2
+.....
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fix ASYNC240: replace blocking filesystem calls with anyio (#61616)``
+
+Misc
+~~~~
+
+* ``Bump axios from 1.13.4 to 1.13.5 in /providers/edge3/src/airflow/providers/edge3/plugins/www (#61695)``
+* ``Upgrade fastapi and conform openapi schema changes (#61476)``
+* ``Bump the edge-ui-package-updates group across 1 directory with 11 updates (#61406)``
+* ``Bump Edge Dependencies after Dependabot (#61298)``
+* ``Bump happy-dom from 20.3.7 to 20.3.9 in /providers/edge3/src/airflow/providers/edge3/plugins/www in the edge-ui-package-updates group across 1 directory (#61265)``
+* ``Bump axios from 1.13.2 to 1.13.3 in /providers/edge3/src/airflow/providers/edge3/plugins/www in the edge-ui-package-updates group across 1 directory (#61220)``
+* ``Bump the edge-ui-package-updates group across 1 directory with 5 updates (#61146)``
+
+Doc-only
+~~~~~~~~
+
+* ``Clarification on Edge UI Plugin roles and permissions (#61509)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+3.0.1
+.....
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fix edge3 router (#61078)``
+
+Misc
+~~~~
+
+* ``Edge3 inherit core UI Theme (#60417)``
+* ``Bump the edge-ui-package-updates group across 1 directory with 15 updates (#60986)``
+* ``Define 'TaskInstanceKey' in task-sdk to support client server separation (#60776)``
+* ``Cleanup leftover AppBuilder Templates in Edge Plugin (#60669)``
+* ``Option to disable exporting of legacy metric names (#53722)``
+* ``Bump the edge-ui-package-updates group across 1 directory with 11 updates (#61088)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+3.0.0
+.....
+
+Breaking changes
+~~~~~~~~~~~~~~~~
+
+* ``Make Edge Worker using async loop (#56457)``
+
+.. note::
+    This release of provider is marked as a breaking change as a major improvement in scaling
+    is implemented via python asyncio. There are no user-facing breaking changes
+    in the provider API or functionality. With the re-implementation of the Edge Worker
+    using asyncio, the worker can now handle a much larger number of concurrent tasks
+    efficiently. This change is internal to the worker's architecture and does not affect
+    how users interact with the Edge3 provider or its features.
+
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Improve error handling in edge worker on 405 (#60425)``
+
+Misc
+~~~~
+
+* ``Upgrade react-router in Edge3 to 7.12.0 (#60353)``
+* ``New year means updated Copyright notices (#60344)``
+* ``Bump the edge-ui-package-updates group across 1 directory with 8 updates (#60170)``
+* ``Introduce a "cli" section in provider metadata (#59805)``
+* ``Move over plugins_manager to a shared library (#59956)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+2.0.1
+.....
+
+Misc
+~~~~
+
+* ``Bump the edge-ui-package-updates group across 1 directory with 19 updates (#59719)``
+* ``Add typescript eslint plugin to edge3 (#59606)``
+* ``Make Edge provider SQLA2 compatible (#59414)``
+* ``Pnpm upgrade to 10.x and prevent script execution (#59466)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Remove top-level SDK reference in Core (#59817)``
+
+2.0.0
+.....
+
+.. warning::
+    This release of the Edge3 provider drops support for Airflow versions below 3.0.0.
+
+    The support for Airflow 2.10-2.11 was experimental and GA for the provider is only for Airflow 3.0+.
+    Productive operation was not intended in Airflow 2.x, therefore the support for Airflow 2.x is now dropped
+    earlier than the usual release support policy would indicate.
+
+
+Breaking Changes
+~~~~~~~~~~~~~~~~
+
+* ``Drop Airflow 2 Support in Edge Provider (#59143)``
+
+Misc
+~~~~
+
+* ``Add backcompat for exceptions in providers (#58727)``
+* ``Move the traces and metrics code under a common observability package (#56187)``
+* ``Bump minimum prek version to 0.2.0 (#58952)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+1.6.0
+.....
+
+.. note::
+    This release of provider is only available for Airflow 2.11+ as explained in the
+    Apache Airflow providers support policy <https://github.com/apache/airflow/blob/main/PROVIDERS.rst#minimum-supported-version-of-airflow-for-community-managed-providers>_.
+
+Features
+~~~~~~~~
+
+* ``Send executor integration info in workload (#57800)``
+* ``Prevent duplicate edge workers unless existing worker is offline or unknown (#58586)``
+* ``Add multi-select state filter to worker page (#58505)``
+* ``Add queue name filtering to Edge Worker tab (#58416)``
+* ``Add search functionality to Edge Worker tab (#58331)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Use 'before_sleep_log' in retries of Edge Worker (#58480)``
+
+Misc
+~~~~
+
+* ``Bump the edge-ui-package-updates group across 1 directory with 8 updates (#58780)``
+* ``Move out some exceptions to TaskSDK (#54505)``
+* ``Bump minimum Airflow version in providers to Airflow 2.11.0 (#58612)``
+* ``Upgrade Edge TS dependencies (#58413)``
+* ``Fix lower bound dependency to common-compat provider (#58833)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Remove SDK reference for NOTSET in Airflow Core (#58258)``
+   * ``Prepare release for 2025-11-27 wave of providers (#58697)``
+
 1.5.0
 .....
 
@@ -52,14 +470,14 @@ Misc
 
 .. warning::
   The React Plugin integration in this release is incompatible with Airflow 3.1.0
-  It is recommended to use apache-airflow>=3.1.1
+  It is recommended to use apache-airflow>=3.2.0
 
 Bug Fixes
 ~~~~~~~~~
 
 * ``Fix Link to Dag in Plugin (#55642)``
 * ``Bugfix/support Subpath w/o Execution API Url (#57372)``
-* ``Adjust authentication token after UI changes in Airflow 3.1.1 (#57370)``
+* ``Adjust authentication token after UI changes in Airflow 3.2.0 (#57370)``
 
 Misc
 ~~~~
@@ -271,7 +689,7 @@ Misc
 * ``Refactor Edge Worker CLI for smaller module (#50738)``
 * ``Bump some provider dependencies for faster resolution (#51727)``
 * ``Edge list worker cli command to list active job metrics (#51720)``
-* ``Extend command column in the edge_job table to accomodate more chars (#51716)``
+* ``Extend command column in the edge_job table to accommodate more chars (#51716)``
 
 Doc-only
 ~~~~~~~~
@@ -297,7 +715,7 @@ Bug Fixes
 * ``Edge worker maintenance state is remembered if worker crashes (#50338)``
 * ``Fix execution API server URL handling for relative paths (#49782)``
 * ``Make default execution server URL be relative to API Base URL (#49747)``
-* ``Make Edge3 Intergation Test DAG working in 2.10 (#49474)``
+* ``Make Edge3 Integration Test DAG working in 2.10 (#49474)``
 * ``Ensure fab provider is installed when running EdgeExecutor (#49473)``
 
 Misc

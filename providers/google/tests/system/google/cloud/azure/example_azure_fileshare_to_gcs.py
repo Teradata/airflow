@@ -62,7 +62,7 @@ with DAG(
     sync_azure_files_with_gcs = AzureFileShareToGCSOperator(
         task_id="sync_azure_files_with_gcs",
         share_name=AZURE_SHARE_NAME,
-        dest_gcs=BUCKET_NAME,
+        dest_gcs=f"gs://{BUCKET_NAME}/",
         directory_path=AZURE_DIRECTORY_PATH,
         replace=False,
         gzip=True,
@@ -92,5 +92,5 @@ with DAG(
 
 from tests_common.test_utils.system_tests import get_test_run  # noqa: E402
 
-# Needed to run the example DAG with pytest (see: tests/system/README.md#run_via_pytest)
+# Needed to run the example DAG with pytest (see: contributing-docs/testing/system_tests.rst)
 test_run = get_test_run(dag)

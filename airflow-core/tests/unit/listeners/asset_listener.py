@@ -18,16 +18,13 @@
 from __future__ import annotations
 
 import copy
-import typing
+from typing import Any
 
 from airflow.listeners import hookimpl
 
-if typing.TYPE_CHECKING:
-    from airflow.sdk.definitions.asset import Asset
-
-
-changed: list[Asset] = []
-created: list[Asset] = []
+changed: list[Any] = []
+created: list[Any] = []
+emitted: list[Any] = []
 
 
 @hookimpl
@@ -36,10 +33,16 @@ def on_asset_changed(asset):
 
 
 @hookimpl
+def on_asset_event_emitted(asset_event):
+    emitted.append(copy.deepcopy(asset_event))
+
+
+@hookimpl
 def on_asset_created(asset):
     created.append(copy.deepcopy(asset))
 
 
 def clear():
-    global changed, created
-    changed, created = [], []
+    changed.clear()
+    created.clear()
+    emitted.clear()

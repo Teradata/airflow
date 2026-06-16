@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from airflow.providers.common.compat.sdk import conf
 from airflow.providers.hashicorp._internal_client.vault_client import _VaultClient
 from airflow.secrets import BaseSecretsBackend
 from airflow.utils.log.logging_mixin import LoggingMixin
@@ -52,9 +53,13 @@ class VaultBackend(BaseSecretsBackend, LoggingMixin):
         (default: 'variables'). If set to None (null), requests for variables will not be sent to Vault.
     :param config_path: Specifies the path of the secret to read Airflow Configurations
         (default: 'config'). If set to None (null), requests for configurations will not be sent to Vault.
+    :param use_team_secrets_path: Flag to enable team scoped secret retrieval from {base_path}/{team_name}/{key}
+        in multi team deployments. (default: true)
+    :param global_secrets_path: Path prefix to add to global scoped connections and variables in multi team deployments.
+        (default: No prefix)
     :param url: Base URL for the Vault instance being addressed.
     :param auth_type: Authentication Type for Vault. Default is ``token``. Available values are:
-        ('approle', 'aws_iam', 'azure', 'github', 'gcp', 'kubernetes', 'ldap', 'radius', 'token', 'userpass')
+        ('approle', 'aws_iam', 'azure', 'github', 'gcp', 'jwt', 'kubernetes', 'ldap', 'radius', 'token', 'userpass')
     :param auth_mount_point: It can be used to define mount_point for authentication chosen
           Default depends on the authentication method used.
     :param mount_point: The "path" the secret engine was mounted on. Default is "secret". Note that
@@ -70,7 +75,7 @@ class VaultBackend(BaseSecretsBackend, LoggingMixin):
     :param password: Password for Authentication (for ``ldap`` and ``userpass`` auth_type).
     :param key_id: Key ID for Authentication (for ``aws_iam`` and ''azure`` auth_type).
     :param secret_id: Secret ID for Authentication (for ``approle``, ``aws_iam`` and ``azure`` auth_types).
-    :param role_id: Role ID for Authentication (for ``approle``, ``aws_iam`` auth_types).
+    :param role_id: Role ID for Authentication (for ``approle``, ``aws_iam`` and ``gcp`` auth_types).
     :param assume_role_kwargs: AWS assume role param.
         See AWS STS Docs:
         https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/sts/client/assume_role.html
@@ -89,6 +94,9 @@ class VaultBackend(BaseSecretsBackend, LoggingMixin):
     :param radius_host: Host for radius (for ``radius`` auth_type).
     :param radius_secret: Secret for radius (for ``radius`` auth_type).
     :param radius_port: Port for radius (for ``radius`` auth_type).
+    :param jwt_role: Role for Authentication (for ``jwt`` auth_type).
+    :param jwt_token: JWT token for Authentication (for ``jwt`` auth_type).
+    :param jwt_token_path: Path to file containing JWT token for Authentication (for ``jwt`` auth_type).
     """
 
     def __init__(
@@ -96,6 +104,8 @@ class VaultBackend(BaseSecretsBackend, LoggingMixin):
         connections_path: str | None = "connections",
         variables_path: str | None = "variables",
         config_path: str | None = "config",
+        use_team_secrets_path: bool = True,
+        global_secrets_path: str | None = None,
         url: str | None = None,
         auth_type: str = "token",
         auth_mount_point: str | None = None,
@@ -120,12 +130,19 @@ class VaultBackend(BaseSecretsBackend, LoggingMixin):
         radius_host: str | None = None,
         radius_secret: str | None = None,
         radius_port: int | None = None,
+        jwt_role: str | None = None,
+        jwt_token: str | None = None,
+        jwt_token_path: str | None = None,
         **kwargs,
     ):
         super().__init__()
         self.connections_path = connections_path.rstrip("/") if connections_path is not None else None
         self.variables_path = variables_path.rstrip("/") if variables_path is not None else None
         self.config_path = config_path.rstrip("/") if config_path is not None else None
+        self.use_team_secrets_path = use_team_secrets_path
+        self.global_secrets_path = (
+            global_secrets_path.rstrip("/") if global_secrets_path is not None else None
+        )
         self.mount_point = mount_point
         self.kv_engine_version = kv_engine_version
         self.vault_client = _VaultClient(
@@ -153,6 +170,9 @@ class VaultBackend(BaseSecretsBackend, LoggingMixin):
             radius_host=radius_host,
             radius_secret=radius_secret,
             radius_port=radius_port,
+            jwt_role=jwt_role,
+            jwt_token=jwt_token,
+            jwt_token_path=jwt_token_path,
             **kwargs,
         )
 
@@ -164,29 +184,52 @@ class VaultBackend(BaseSecretsBackend, LoggingMixin):
             return split_secret_path[0], split_secret_path[1]
         return "", secret_path
 
-    def get_response(self, conn_id: str) -> dict | None:
-        """
-        Get data from Vault.
+    def _get_secret_with_base(self, base_path: str | None, key: str) -> dict | None:
+        """Resolve mount and base path, then fetch the secret from Vault."""
+        mount_point, key_part = self._parse_path(key)
 
-        :return: The data from the Vault path if exists
-        """
-        mount_point, conn_key = self._parse_path(conn_id)
-        if self.connections_path is None or conn_key is None:
+        if base_path is None or key_part is None:
             return None
-        if self.connections_path == "":
-            secret_path = conn_key
+
+        if base_path == "":
+            secret_path = key_part
         else:
-            secret_path = self.build_path(self.connections_path, conn_key)
+            secret_path = self.build_path(base_path, key_part)
+
         return self.vault_client.get_secret(
             secret_path=(mount_point + "/" if mount_point else "") + secret_path
         )
+
+    def _get_team_or_global_secret(self, base_path: str | None, team_name: str | None, key: str):
+        """
+        Get a secret from a team specific path or the global path.
+
+        If multi team is enabled, check {base_path}/{team_name}/{key}, then fallback to {base_path}/{global_path}/{key} or {base_path}/{key}.
+        """
+        if base_path is None:
+            return None
+        if (
+            conf.getboolean("core", "multi_team", fallback=False)
+            and self.use_team_secrets_path
+            and team_name is not None
+        ):
+            response = self._get_secret_with_base(self.build_path(base_path, team_name), key)
+            if response is not None:
+                return response
+        # Fallback to global secret
+        if conf.getboolean("core", "multi_team", fallback=False) and self.global_secrets_path is not None:
+            path = self.build_path(base_path, self.global_secrets_path)
+        else:
+            path = base_path
+
+        return self._get_secret_with_base(path, key)
 
     # Make sure connection is imported this way for type checking, otherwise when importing
     # the backend it will get a circular dependency and fail
     if TYPE_CHECKING:
         from airflow.models.connection import Connection
 
-    def get_connection(self, conn_id: str) -> Connection | None:
+    def get_connection(self, conn_id: str, team_name: str | None = None) -> Connection | None:
         """
         Get connection from Vault as secret.
 
@@ -198,7 +241,7 @@ class VaultBackend(BaseSecretsBackend, LoggingMixin):
         # problems when instantiating the backend during configuration
         from airflow.models.connection import Connection
 
-        response = self.get_response(conn_id)
+        response = self._get_team_or_global_secret(self.connections_path, team_name, conn_id)
         if response is None:
             return None
 
@@ -208,24 +251,23 @@ class VaultBackend(BaseSecretsBackend, LoggingMixin):
 
         return Connection(conn_id, **response)
 
-    def get_variable(self, key: str) -> str | None:
+    def get_variable(self, key: str, team_name: str | None = None) -> str | None:
         """
         Get Airflow Variable.
 
         :param key: Variable Key
+        :param team_name: Team name associated to the task trying to access the variable (if any)
         :return: Variable Value retrieved from the vault
         """
-        mount_point, variable_key = self._parse_path(key)
-        if self.variables_path is None or variable_key is None:
+        response = self._get_team_or_global_secret(self.variables_path, team_name, key)
+
+        if not response:
             return None
-        if self.variables_path == "":
-            secret_path = variable_key
-        else:
-            secret_path = self.build_path(self.variables_path, variable_key)
-        response = self.vault_client.get_secret(
-            secret_path=(mount_point + "/" if mount_point else "") + secret_path
-        )
-        return response.get("value") if response else None
+        try:
+            return response["value"]
+        except KeyError:
+            self.log.warning('Vault secret %s fetched but does not have required key "value"', key)
+            return None
 
     def get_config(self, key: str) -> str | None:
         """
@@ -234,14 +276,11 @@ class VaultBackend(BaseSecretsBackend, LoggingMixin):
         :param key: Configuration Option Key
         :return: Configuration Option Value retrieved from the vault
         """
-        mount_point, config_key = self._parse_path(key)
-        if self.config_path is None or config_key is None:
+        response = self._get_secret_with_base(self.config_path, key)
+        if not response:
             return None
-        if self.config_path == "":
-            secret_path = config_key
-        else:
-            secret_path = self.build_path(self.config_path, config_key)
-        response = self.vault_client.get_secret(
-            secret_path=(mount_point + "/" if mount_point else "") + secret_path
-        )
-        return response.get("value") if response else None
+        try:
+            return response["value"]
+        except KeyError:
+            self.log.warning('Vault config %s fetched but does not have required key "value"', key)
+            return None

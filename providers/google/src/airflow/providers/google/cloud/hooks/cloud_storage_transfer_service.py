@@ -47,7 +47,8 @@ from google.protobuf.json_format import MessageToDict
 from googleapiclient.discovery import Resource, build
 from googleapiclient.errors import HttpError
 
-from airflow.exceptions import AirflowException, AirflowProviderDeprecationWarning
+from airflow.exceptions import AirflowProviderDeprecationWarning
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.common.consts import CLIENT_INFO
 from airflow.providers.google.common.hooks.base_google import (
     PROVIDE_PROJECT_ID,
@@ -181,7 +182,11 @@ class CloudDataTransferServiceHook(GoogleBaseHook):
         if not self._conn:
             http_authorized = self._authorize()
             self._conn = build(
-                "storagetransfer", self.api_version, http=http_authorized, cache_discovery=False
+                "storagetransfer",
+                self.api_version,
+                http=http_authorized,
+                cache_discovery=False,
+                client_options=self.get_client_options(),
             )
         return self._conn
 
@@ -566,10 +571,13 @@ class CloudDataTransferServiceAsyncHook(GoogleBaseAsyncHook):
         :return: Google Storage Transfer asynchronous client.
         """
         if not self._client:
-            credentials = (await self.get_sync_hook()).get_credentials()
+            sync_hook = await self.get_sync_hook()
+            credentials = sync_hook.get_credentials()
+            client_options = sync_hook.get_client_options()
             self._client = StorageTransferServiceAsyncClient(
                 credentials=credentials,
                 client_info=CLIENT_INFO,
+                client_options=client_options,
             )
         return self._client
 

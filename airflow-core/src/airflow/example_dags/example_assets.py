@@ -56,9 +56,7 @@ from __future__ import annotations
 import pendulum
 
 from airflow.providers.standard.operators.bash import BashOperator
-from airflow.sdk import DAG, Asset
-from airflow.timetables.assets import AssetOrTimeSchedule
-from airflow.timetables.trigger import CronTriggerTimetable
+from airflow.sdk import DAG, Asset, AssetOrTimeSchedule, CronTriggerTimetable
 
 dag1_asset = Asset("s3://dag1/output_1.txt", extra={"hi": "bye"})
 dag2_asset = Asset("s3://dag2/output_1.txt", extra={"hi": "bye"})
@@ -69,7 +67,7 @@ with DAG(
     catchup=False,
     start_date=pendulum.datetime(2021, 1, 1, tz="UTC"),
     schedule="@daily",
-    tags=["produces", "asset-scheduled"],
+    tags=["example", "produces", "asset-scheduled"],
 ) as dag1:
     # [START task_outlet]
     BashOperator(outlets=[dag1_asset], task_id="producing_task_1", bash_command="sleep 5")
@@ -80,7 +78,7 @@ with DAG(
     catchup=False,
     start_date=pendulum.datetime(2021, 1, 1, tz="UTC"),
     schedule=None,
-    tags=["produces", "asset-scheduled"],
+    tags=["example", "produces", "asset-scheduled"],
 ) as dag2:
     BashOperator(outlets=[dag2_asset], task_id="producing_task_2", bash_command="sleep 5")
 
@@ -90,7 +88,7 @@ with DAG(
     catchup=False,
     start_date=pendulum.datetime(2021, 1, 1, tz="UTC"),
     schedule=[dag1_asset],
-    tags=["consumes", "asset-scheduled"],
+    tags=["example", "consumes", "asset-scheduled"],
 ) as dag3:
     # [END dag_dep]
     BashOperator(
@@ -104,7 +102,7 @@ with DAG(
     catchup=False,
     start_date=pendulum.datetime(2021, 1, 1, tz="UTC"),
     schedule=[dag1_asset, dag2_asset],
-    tags=["consumes", "asset-scheduled"],
+    tags=["example", "consumes", "asset-scheduled"],
 ) as dag4:
     BashOperator(
         outlets=[Asset("s3://consuming_2_task/asset_other_unknown.txt")],
@@ -120,7 +118,7 @@ with DAG(
         dag1_asset,
         Asset("s3://unrelated/this-asset-doesnt-get-triggered"),
     ],
-    tags=["consumes", "asset-scheduled"],
+    tags=["example", "consumes", "asset-scheduled"],
 ) as dag5:
     BashOperator(
         outlets=[Asset("s3://consuming_2_task/asset_other_unknown.txt")],
@@ -136,7 +134,7 @@ with DAG(
         Asset("s3://unrelated/asset3.txt"),
         Asset("s3://unrelated/asset_other_unknown.txt"),
     ],
-    tags=["asset-scheduled"],
+    tags=["example", "asset-scheduled"],
 ) as dag6:
     BashOperator(
         task_id="unrelated_task",
@@ -148,6 +146,7 @@ with DAG(
     dag_id="consume_1_and_2_with_asset_expressions",
     start_date=pendulum.datetime(2021, 1, 1, tz="UTC"),
     schedule=(dag1_asset & dag2_asset),
+    tags=["example"],
 ) as dag5:
     BashOperator(
         outlets=[Asset("s3://consuming_2_task/asset_other_unknown.txt")],
@@ -158,6 +157,7 @@ with DAG(
     dag_id="consume_1_or_2_with_asset_expressions",
     start_date=pendulum.datetime(2021, 1, 1, tz="UTC"),
     schedule=(dag1_asset | dag2_asset),
+    tags=["example"],
 ) as dag6:
     BashOperator(
         outlets=[Asset("s3://consuming_2_task/asset_other_unknown.txt")],
@@ -168,6 +168,7 @@ with DAG(
     dag_id="consume_1_or_both_2_and_3_with_asset_expressions",
     start_date=pendulum.datetime(2021, 1, 1, tz="UTC"),
     schedule=(dag1_asset | (dag2_asset & dag3_asset)),
+    tags=["example"],
 ) as dag7:
     BashOperator(
         outlets=[Asset("s3://consuming_2_task/asset_other_unknown.txt")],
@@ -181,7 +182,7 @@ with DAG(
     schedule=AssetOrTimeSchedule(
         timetable=CronTriggerTimetable("0 1 * * 3", timezone="UTC"), assets=(dag1_asset & dag2_asset)
     ),
-    tags=["asset-time-based-timetable"],
+    tags=["example", "asset-time-based-timetable"],
 ) as dag8:
     BashOperator(
         outlets=[Asset("s3://asset_time_based/asset_other_unknown.txt")],

@@ -40,7 +40,7 @@ class ConnectionDetails:
 
 @dataclass
 class DagDetails:
-    """Represents the details of a DAG."""
+    """Represents the details of a Dag."""
 
     id: str | None = None
     team_name: str | None = None
@@ -48,7 +48,12 @@ class DagDetails:
 
 @dataclass
 class BackfillDetails:
-    """Represents the details of a backfill."""
+    """
+    Represents the details of a backfill.
+
+    .. deprecated:: 3.1.8
+        Use DagAccessEntity.Run instead for a dag level access control.
+    """
 
     id: NonNegativeInt | None = None
 
@@ -104,7 +109,7 @@ class AccessView(Enum):
 
 
 class DagAccessEntity(Enum):
-    """Enum of DAG entities the user tries to access."""
+    """Enum of Dag entities the user tries to access."""
 
     AUDIT_LOG = "AUDIT_LOG"
     CODE = "CODE"

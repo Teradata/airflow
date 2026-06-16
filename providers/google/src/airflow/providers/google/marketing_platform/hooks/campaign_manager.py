@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from googleapiclient.discovery import Resource, build
 
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.common.hooks.base_google import GoogleBaseHook
 
 if TYPE_CHECKING:
@@ -57,6 +57,7 @@ class GoogleCampaignManagerHook(GoogleBaseHook):
                 self.api_version,
                 http=http_authorized,
                 cache_discovery=False,
+                client_options=self.get_client_options(),
             )
         return self._conn
 

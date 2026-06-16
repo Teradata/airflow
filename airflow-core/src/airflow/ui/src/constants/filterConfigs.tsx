@@ -16,12 +16,10 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-
-/* eslint-disable max-lines */
 import { Flex } from "@chakra-ui/react";
 import { useTranslation } from "react-i18next";
 import { BiTargetLock } from "react-icons/bi";
-import { FiBarChart, FiUser } from "react-icons/fi";
+import { FiBarChart, FiUser, FiDatabase } from "react-icons/fi";
 import { LuBrackets } from "react-icons/lu";
 import {
   MdDateRange,
@@ -32,6 +30,7 @@ import {
   MdPlayArrow,
   MdCheckCircle,
   MdBuild,
+  MdComputer,
 } from "react-icons/md";
 import { PiQueue } from "react-icons/pi";
 
@@ -41,7 +40,13 @@ import { TaskIcon } from "src/assets/TaskIcon";
 import type { FilterConfig } from "src/components/FilterBar";
 import { RunTypeIcon } from "src/components/RunTypeIcon";
 import { StateBadge } from "src/components/StateBadge";
-import { dagRunStateOptions, dagRunTypeOptions, taskInstanceStateOptions } from "src/constants/stateOptions";
+import {
+  dagRunStateOptions,
+  dagRunTypeOptions,
+  jobStateOptions,
+  jobTypeOptions,
+  taskInstanceStateOptions,
+} from "src/constants/stateOptions";
 
 import { SearchParamsKeys } from "./searchParams";
 
@@ -70,10 +75,23 @@ export const useFilterConfigs = () => {
       label: translate("hitl:filters.body"),
       type: FilterTypes.TEXT,
     },
+    [SearchParamsKeys.BUNDLE_VERSION]: {
+      hotkeyDisabled: true,
+      icon: <MdCode />,
+      label: translate("components:versionDetails.bundleVersion"),
+      type: FilterTypes.TEXT,
+    },
     [SearchParamsKeys.CONF_CONTAINS]: {
       hotkeyDisabled: true,
       icon: <MdCode />,
       label: translate("common:dagRun.conf"),
+      type: FilterTypes.TEXT,
+    },
+    [SearchParamsKeys.CONSUMING_ASSET_PATTERN]: {
+      hotkeyDisabled: true,
+      icon: <FiDatabase />,
+      label: translate("common:consumingAsset"),
+      placeholder: translate("common:filters.searchAsset"),
       type: FilterTypes.TEXT,
     },
     [SearchParamsKeys.CREATED_AT_RANGE]: {
@@ -87,18 +105,21 @@ export const useFilterConfigs = () => {
       hotkeyDisabled: true,
       icon: <DagIcon />,
       label: translate("common:dagId"),
+      supportsAdvancedSearch: true,
       type: FilterTypes.TEXT,
     },
     [SearchParamsKeys.DAG_ID]: {
       hotkeyDisabled: true,
       icon: <DagIcon />,
       label: translate("common:dagId"),
+      supportsAdvancedSearch: true,
       type: FilterTypes.TEXT,
     },
     [SearchParamsKeys.DAG_ID_PATTERN]: {
       hotkeyDisabled: true,
       icon: <DagIcon />,
       label: translate("common:dagId"),
+      supportsAdvancedSearch: true,
       type: FilterTypes.TEXT,
     },
     [SearchParamsKeys.DAG_VERSION]: {
@@ -107,6 +128,13 @@ export const useFilterConfigs = () => {
       label: translate("common:dagRun.dagVersions"),
       min: 1,
       type: FilterTypes.NUMBER,
+    },
+    [SearchParamsKeys.DEADLINE_TIME_RANGE]: {
+      endKey: SearchParamsKeys.DEADLINE_TIME_LTE,
+      icon: <MdDateRange />,
+      label: translate("browse:deadlines.columns.deadlineTime"),
+      startKey: SearchParamsKeys.DEADLINE_TIME_GTE,
+      type: FilterTypes.DATERANGE,
     },
     [SearchParamsKeys.DURATION_GTE]: {
       icon: <MdHourglassEmpty />,
@@ -120,6 +148,13 @@ export const useFilterConfigs = () => {
       min: 0,
       type: FilterTypes.NUMBER,
     },
+    [SearchParamsKeys.END_DATE_RANGE]: {
+      endKey: SearchParamsKeys.END_DATE_LTE,
+      icon: <MdDateRange />,
+      label: translate("common:endDate"),
+      startKey: SearchParamsKeys.END_DATE_GTE,
+      type: FilterTypes.DATERANGE,
+    },
     [SearchParamsKeys.EVENT_DATE_RANGE]: {
       endKey: SearchParamsKeys.BEFORE,
       icon: <MdDateRange />,
@@ -129,11 +164,43 @@ export const useFilterConfigs = () => {
     },
     [SearchParamsKeys.EVENT_TYPE]: {
       label: translate("browse:auditLog.filters.eventType"),
+      supportsAdvancedSearch: true,
       type: FilterTypes.TEXT,
+    },
+    [SearchParamsKeys.EXECUTOR_CLASS]: {
+      hotkeyDisabled: true,
+      icon: <MdBuild />,
+      label: translate("admin:jobs.columns.executorClass"),
+      type: FilterTypes.TEXT,
+    },
+    [SearchParamsKeys.HOSTNAME]: {
+      hotkeyDisabled: true,
+      icon: <MdComputer />,
+      label: translate("admin:jobs.columns.hostname"),
+      type: FilterTypes.TEXT,
+    },
+    [SearchParamsKeys.JOB_STATE]: {
+      icon: <MdCheckCircle />,
+      label: translate("common:state"),
+      options: jobStateOptions.items.map((option) => ({
+        label: translate(option.label),
+        value: option.value === "all" ? "" : option.value,
+      })),
+      type: FilterTypes.SELECT,
+    },
+    [SearchParamsKeys.JOB_TYPE]: {
+      icon: <MdBuild />,
+      label: translate("admin:jobs.columns.jobType"),
+      options: jobTypeOptions.items.map((option) => ({
+        label: translate(option.label),
+        value: option.value === "all" ? "" : option.value,
+      })),
+      type: FilterTypes.SELECT,
     },
     [SearchParamsKeys.KEY_PATTERN]: {
       icon: <MdSearch />,
       label: translate("admin:columns.key"),
+      supportsAdvancedSearch: true,
       type: FilterTypes.TEXT,
     },
     [SearchParamsKeys.LOGICAL_DATE_RANGE]: {
@@ -149,28 +216,56 @@ export const useFilterConfigs = () => {
       min: -1,
       type: FilterTypes.NUMBER,
     },
+    [SearchParamsKeys.MISSED]: {
+      icon: <MdCheckCircle />,
+      label: translate("browse:deadlines.filters.status"),
+      options: [
+        { label: translate("browse:deadlines.filters.statusOptions.all"), value: "" },
+        { label: translate("browse:deadlines.filters.statusOptions.pending"), value: "false" },
+        { label: translate("browse:deadlines.filters.statusOptions.missed"), value: "true" },
+      ],
+      type: FilterTypes.SELECT,
+    },
     [SearchParamsKeys.NAME_PATTERN]: {
       hotkeyDisabled: true,
       icon: <TaskIcon />,
       label: translate("common:taskId"),
+      supportsAdvancedSearch: true,
       type: FilterTypes.TEXT,
     },
     [SearchParamsKeys.OPERATOR_NAME_PATTERN]: {
       hotkeyDisabled: true,
       icon: <MdBuild />,
       label: translate("common:task.operator"),
+      supportsAdvancedSearch: true,
+      type: FilterTypes.TEXT,
+    },
+    [SearchParamsKeys.PARTITION_KEY_PATTERN]: {
+      hotkeyDisabled: true,
+      icon: <MdSearch />,
+      label: translate("common:dagRun.partitionKey"),
+      supportsAdvancedSearch: true,
       type: FilterTypes.TEXT,
     },
     [SearchParamsKeys.POOL_NAME_PATTERN]: {
       hotkeyDisabled: true,
       icon: <BiTargetLock />,
       label: translate("common:taskInstance.pool"),
+      supportsAdvancedSearch: true,
       type: FilterTypes.TEXT,
     },
     [SearchParamsKeys.QUEUE_NAME_PATTERN]: {
       hotkeyDisabled: true,
       icon: <PiQueue />,
       label: translate("common:taskInstance.queue"),
+      supportsAdvancedSearch: true,
+      type: FilterTypes.TEXT,
+    },
+    [SearchParamsKeys.RENDERED_MAP_INDEX]: {
+      hotkeyDisabled: true,
+      icon: <MdSearch />,
+      label: translate("common:taskInstance.renderedMapIndex"),
+      supportsAdvancedSearch: true,
       type: FilterTypes.TEXT,
     },
     [SearchParamsKeys.RESPONDED_BY_USER_NAME]: {
@@ -185,7 +280,7 @@ export const useFilterConfigs = () => {
       options: [
         { label: translate("hitl:filters.response.all"), value: "all" },
         {
-          label: <StateBadge state="deferred">{translate("hitl:filters.response.pending")}</StateBadge>,
+          label: <StateBadge state="awaiting_input">{translate("hitl:filters.response.pending")}</StateBadge>,
           value: "false",
         },
         {
@@ -206,12 +301,14 @@ export const useFilterConfigs = () => {
       hotkeyDisabled: true,
       icon: <FiBarChart />,
       label: translate("common:runId"),
+      supportsAdvancedSearch: true,
       type: FilterTypes.TEXT,
     },
     [SearchParamsKeys.RUN_ID_PATTERN]: {
       hotkeyDisabled: true,
       icon: <FiBarChart />,
       label: translate("common:runId"),
+      supportsAdvancedSearch: true,
       type: FilterTypes.TEXT,
     },
     [SearchParamsKeys.RUN_TYPE]: {
@@ -230,6 +327,13 @@ export const useFilterConfigs = () => {
         value: option.value === "all" ? "" : option.value,
       })),
       type: FilterTypes.SELECT,
+    },
+    [SearchParamsKeys.START_DATE_RANGE]: {
+      endKey: SearchParamsKeys.START_DATE_LTE,
+      icon: <MdDateRange />,
+      label: translate("common:startDate"),
+      startKey: SearchParamsKeys.START_DATE_GTE,
+      type: FilterTypes.DATERANGE,
     },
     [SearchParamsKeys.STATE]: {
       icon: <MdCheckCircle />,
@@ -254,12 +358,14 @@ export const useFilterConfigs = () => {
       hotkeyDisabled: true,
       icon: <TaskIcon />,
       label: translate("common:taskId"),
+      supportsAdvancedSearch: true,
       type: FilterTypes.TEXT,
     },
     [SearchParamsKeys.TASK_ID_PATTERN]: {
       hotkeyDisabled: true,
       icon: <TaskIcon />,
       label: translate("common:taskId"),
+      supportsAdvancedSearch: true,
       type: FilterTypes.TEXT,
     },
     [SearchParamsKeys.TASK_STATE]: {
@@ -280,6 +386,7 @@ export const useFilterConfigs = () => {
       hotkeyDisabled: true,
       icon: <FiUser />,
       label: translate("common:dagRun.triggeringUser"),
+      supportsAdvancedSearch: true,
       type: FilterTypes.TEXT,
     },
     [SearchParamsKeys.TRY_NUMBER]: {
@@ -290,6 +397,7 @@ export const useFilterConfigs = () => {
     [SearchParamsKeys.USER]: {
       icon: <FiUser />,
       label: translate("common:user"),
+      supportsAdvancedSearch: true,
       type: FilterTypes.TEXT,
     },
   };

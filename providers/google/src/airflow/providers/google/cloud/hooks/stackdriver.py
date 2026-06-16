@@ -31,7 +31,7 @@ from google.cloud.monitoring_v3 import AlertPolicy, NotificationChannel
 from google.protobuf.field_mask_pb2 import FieldMask
 from googleapiclient.errors import HttpError
 
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.common.hooks.base_google import PROVIDE_PROJECT_ID, GoogleBaseHook
 
 if TYPE_CHECKING:
@@ -57,12 +57,16 @@ class StackdriverHook(GoogleBaseHook):
 
     def _get_policy_client(self):
         if not self._policy_client:
-            self._policy_client = monitoring_v3.AlertPolicyServiceClient()
+            self._policy_client = monitoring_v3.AlertPolicyServiceClient(
+                client_options=self.get_client_options()
+            )
         return self._policy_client
 
     def _get_channel_client(self):
         if not self._channel_client:
-            self._channel_client = monitoring_v3.NotificationChannelServiceClient()
+            self._channel_client = monitoring_v3.NotificationChannelServiceClient(
+                client_options=self.get_client_options()
+            )
         return self._channel_client
 
     @GoogleBaseHook.fallback_to_default_project_id

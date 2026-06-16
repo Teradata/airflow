@@ -15,13 +15,25 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""
-Example DAG demonstrating the usage of the classic Python operators to execute Python functions natively and
-within a virtual environment.
+"""### Python operators
+
+Example DAG demonstrating classic Python operators.
+
+This DAG shows several ways to execute Python callables in Airflow:
+PythonOperator for regular Python functions, PythonVirtualenvOperator for
+functions that need an isolated virtual environment, and ExternalPythonOperator
+for running a callable with a specific Python binary.
+
+It also demonstrates passing keyword arguments, rendering templated files, and
+using asynchronous Python callables.
+
+See also:
+https://airflow.apache.org/docs/apache-airflow-providers-standard/stable/operators/python.html
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 import time
@@ -47,6 +59,7 @@ with DAG(
     start_date=pendulum.datetime(2021, 1, 1, tz="UTC"),
     catchup=False,
     tags=["example"],
+    doc_md=__doc__,
 ) as dag:
     # [START howto_operator_python]
     def print_context(ds=None, **kwargs):
@@ -87,6 +100,23 @@ with DAG(
 
         run_this >> log_the_sql >> sleeping_task
     # [END howto_operator_python_kwargs]
+
+    # [START howto_async_operator_python_kwargs]
+    # Generate 5 sleeping tasks, sleeping from 0.0 to 0.4 seconds respectively
+    # Asynchronous callables are natively supported since Airflow 3.2+
+    async def my_async_sleeping_function(random_base):
+        """This is a function that will run within the DAG execution"""
+        await asyncio.sleep(random_base)
+
+    for i in range(5):
+        async_sleeping_task = PythonOperator(
+            task_id=f"async_sleep_for_{i}",
+            python_callable=my_async_sleeping_function,
+            op_kwargs={"random_base": i / 10},
+        )
+
+        run_this >> log_the_sql >> async_sleeping_task
+    # [END howto_async_operator_python_kwargs]
 
     # [START howto_operator_python_venv]
     def callable_virtualenv():

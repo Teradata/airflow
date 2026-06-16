@@ -16,9 +16,12 @@
 # under the License.
 from __future__ import annotations
 
+from collections.abc import Sequence
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+from sqlalchemy import delete, select
 
 from airflow.providers.common.compat.sdk import timezone
 from airflow.providers.edge3.models.edge_logs import EdgeLogsModel
@@ -35,7 +38,7 @@ pytestmark = pytest.mark.db_test
 
 DAG_ID = "my_dag"
 TASK_ID = "my_task"
-RUN_ID = "manual__2024-11-24T21:03:01+01:00"
+RUN_ID = "manual__2024-11-24"
 
 
 class TestLogsApiRoutes:
@@ -45,14 +48,14 @@ class TestLogsApiRoutes:
             EmptyOperator(task_id=TASK_ID)
         dag_maker.create_dagrun(run_id=RUN_ID)
 
-        session.query(EdgeLogsModel).delete()
+        session.execute(delete(EdgeLogsModel))
         session.commit()
 
     def test_logfile_path(self, session: Session):
         p: str = logfile_path(dag_id=DAG_ID, task_id=TASK_ID, run_id=RUN_ID, try_number=1, map_index=-1)
         assert p
-        assert f"dag_id={DAG_ID}/run_id={RUN_ID}/task_id={TASK_ID}/attempt=1" in p
-        assert "/-1" not in p
+        assert str(Path(f"dag_id={DAG_ID}") / f"run_id={RUN_ID}" / f"task_id={TASK_ID}" / "attempt=1") in p
+        assert "-1" not in Path(p).parts
 
     def test_push_logs(self, session: Session):
         log_data = PushLogsBody(
@@ -68,7 +71,7 @@ class TestLogsApiRoutes:
                 body=log_data,
                 session=session,
             )
-        logs: list[EdgeLogsModel] = session.query(EdgeLogsModel).all()
+        logs: Sequence[EdgeLogsModel] = session.scalars(select(EdgeLogsModel)).all()
         assert len(logs) == 1
         assert logs[0].dag_id == DAG_ID
         assert logs[0].task_id == TASK_ID

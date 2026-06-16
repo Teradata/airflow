@@ -18,7 +18,7 @@
  */
 import { Box, Flex, Heading, Text } from "@chakra-ui/react";
 import { useTranslation } from "react-i18next";
-import { FiStar } from "react-icons/fi";
+import { MdStarOutline } from "react-icons/md";
 
 import { useDagServiceGetDagsUi } from "openapi/queries";
 
@@ -36,7 +36,7 @@ export const FavoriteDags = () => {
   return (
     <Box>
       <Flex color="fg.muted" my={2}>
-        <FiStar />
+        <MdStarOutline />
         <Heading ml={1} size="xs">
           {translate("favorite.favoriteDags", { count: LIMIT })}
         </Heading>
@@ -47,16 +47,18 @@ export const FavoriteDags = () => {
           {translate("favorite.noFavoriteDags")}
         </Text>
       ) : (
-        <Flex flexWrap="wrap" gap={2}>
-          {favorites.dags.map((dag) => (
-            <FavoriteDagCard
-              dagId={dag.dag_id}
-              dagName={dag.dag_display_name}
-              key={dag.dag_id}
-              latestRuns={dag.latest_dag_runs}
-            />
-          ))}
-        </Flex>
+        <Box overflowX={{ base: "auto", md: "visible" }} pb={{ base: 2, md: 0 }}>
+          <Flex flexWrap={{ base: "nowrap", md: "wrap" }} gap={2} minW={{ base: "min-content", md: "auto" }}>
+            {favorites.dags.map((dag) => (
+              <FavoriteDagCard
+                dagId={dag.dag_id}
+                dagName={dag.dag_display_name}
+                key={dag.dag_id}
+                latestRuns={dag.latest_dag_runs}
+              />
+            ))}
+          </Flex>
+        </Box>
       )}
     </Box>
   );

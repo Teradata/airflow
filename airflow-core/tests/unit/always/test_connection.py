@@ -32,8 +32,6 @@ from airflow.exceptions import AirflowException
 from airflow.models import Connection, crypto
 from airflow.sdk import BaseHook
 
-from tests_common.test_utils.version_compat import SQLALCHEMY_V_1_4, SQLALCHEMY_V_2_0
-
 sqlite = pytest.importorskip("airflow.providers.sqlite.hooks.sqlite")
 
 from tests_common.test_utils.config import conf_vars
@@ -108,6 +106,46 @@ class TestConnection:
 
     def teardown_method(self):
         self.patcher.stop()
+
+    @conf_vars({("core", "fernet_key"): Fernet.generate_key().decode()})
+    def test_password_setter_sets_is_encrypted(self):
+        """Connection's ``set_password`` override must win over FernetFieldsMixin's."""
+        crypto.get_fernet.cache_clear()
+        test_connection = Connection(conn_type="postgres")
+        assert not test_connection.is_encrypted
+
+        test_connection.password = "foo"
+
+        assert test_connection.is_encrypted
+        assert test_connection.password == "foo"
+        assert test_connection._password != "foo"
+
+    @conf_vars({("core", "fernet_key"): Fernet.generate_key().decode()})
+    def test_password_setter_noop_on_falsy_value(self):
+        """Setting password to None/empty must not wipe an already-stored password."""
+        crypto.get_fernet.cache_clear()
+        test_connection = Connection(conn_type="postgres")
+        test_connection.password = "secret"
+        assert test_connection.password == "secret"
+
+        test_connection.password = None
+        assert test_connection.password == "secret"
+
+        test_connection.password = ""
+        assert test_connection.password == "secret"
+
+    @conf_vars({("core", "fernet_key"): Fernet.generate_key().decode()})
+    def test_extra_setter_sets_is_extra_encrypted(self):
+        """Connection's ``set_extra`` override must win over FernetFieldsMixin's."""
+        crypto.get_fernet.cache_clear()
+        test_connection = Connection(conn_type="postgres")
+        assert not test_connection.is_extra_encrypted
+
+        test_connection.extra = '{"k": "v"}'
+
+        assert test_connection.is_extra_encrypted
+        assert test_connection.extra == '{"k": "v"}'
+        assert test_connection._extra != '{"k": "v"}'
 
     @conf_vars({("core", "fernet_key"): ""})
     def test_connection_extra_no_encryption(self):
@@ -346,6 +384,19 @@ class TestConnection:
                 login="login/!@#$%^&*(){}",
             ),
             description="login only",
+        ),
+        UriTestCaseConfig(
+            test_conn_uri="scheme://host/schema?valid_json=%7B%22key%22%3A%22val%22%7D&invalid_json=just_a_string&empty_val=",
+            test_conn_attributes=dict(
+                conn_type="scheme",
+                host="host",
+                schema="schema",
+                login=None,
+                password=None,
+                port=None,
+                extra_dejson={"valid_json": {"key": "val"}, "invalid_json": "just_a_string", "empty_val": ""},
+            ),
+            description="with valid json, invalid json fallback, and empty strings in extras",
         ),
     ]
 
@@ -597,7 +648,8 @@ class TestConnection:
             "AIRFLOW_CONN_TEST_URI": "postgresql://username:password%21@ec2.compute.com:5432/the_database",
         },
     )
-    def test_using_env_var(self):
+    @mock.patch("airflow.sdk.execution_time.context._mask_connection_secrets")
+    def test_using_env_var(self, mock_mask_conn):
         from airflow.providers.sqlite.hooks.sqlite import SqliteHook
 
         conn = SqliteHook.get_connection(conn_id="test_uri")
@@ -607,7 +659,7 @@ class TestConnection:
         assert conn.password == "password!"
         assert conn.port == 5432
 
-        self.mask_secret.assert_has_calls([mock.call("password!"), mock.call(quote("password!"))])
+        mock_mask_conn.assert_called_once()
 
     @mock.patch.dict(
         "os.environ",
@@ -671,7 +723,7 @@ class TestConnection:
         conn = BaseHook.get_connection(conn_id="test_uri")
         hook = conn.get_hook()
 
-        ppg3_mode: bool = SQLALCHEMY_V_2_0 and "psycopg" in hook.get_uri()
+        ppg3_mode: bool = "psycopg" in hook.get_uri()
         if ppg3_mode:
             assert (
                 hook.get_uri() == "postgresql+psycopg://username:password@ec2.compute.com:5432/the_database"
@@ -697,16 +749,13 @@ class TestConnection:
         hook = conn.get_hook()
         engine = hook.get_sqlalchemy_engine()
 
-        if SQLALCHEMY_V_2_0 and "psycopg" in hook.get_uri():
+        if "psycopg" in hook.get_uri():
             expected = "postgresql+psycopg://username:password@ec2.compute.com:5432/the_database"
         else:
             expected = "postgresql://username:password@ec2.compute.com:5432/the_database"
 
         assert isinstance(engine, sqlalchemy.engine.Engine)
-        if SQLALCHEMY_V_1_4:
-            assert str(engine.url) == expected
-        else:
-            assert engine.url.render_as_string(hide_password=False) == expected
+        assert engine.url.render_as_string(hide_password=False) == expected
 
     @mock.patch.dict(
         "os.environ",

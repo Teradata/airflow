@@ -97,28 +97,68 @@ When testing from HEAD of the branch when the tag
 Validating Release Candidate for PMC
 """""""""""""""""""""""""""""""""""""
 
-PMC members can use Breeze to automate verification of release candidates instead of manually
-running multiple verification steps. This command validates SVN files, GPG signatures, SHA512
-checksums, Apache RAT licenses, and reproducible builds.
+PMC members can use Breeze to run an automated verification of release candidates as an optional
+cross-check to the manual verification steps.
+
+See the full manual process in ``dev/README_RELEASE_AIRFLOW.md`` under "Verify the release candidate by PMC members".
+
+If the automation output disagrees with the manual verification, treat the manual verification as
+authoritative and report the discrepancy.
+
+This command validates SVN files, GPG signatures, SHA512 checksums, Apache RAT licenses, and
+reproducible builds.
+
+.. warning::
+
+      **Deprecation notice:** All checks except ``reproducible-build`` will be deprecated upon full
+      migration to Apache Trusted Releases (ATR). After migration, only the reproducible build check
+      will remain as the primary automated verification.
+
+Implementation notes
+^^^^^^^^^^^^^^^^^^^^
+
+* Reproducible build verification checks out the release tag, builds packages using the same
+  breeze commands as documented in README_RELEASE_AIRFLOW.md, and compares with SVN artifacts.
+* The validator performs a fast check for **SVN working copy locks** and fails early rather than
+  hanging on an ``svn`` command.
+
+Supported distributions
+^^^^^^^^^^^^^^^^^^^^^^^
+
+Currently supported:
+
+* ``--distribution airflow``
+
+Other values (``providers``, ``airflowctl``, ``python-client``) exist for future expansion but are not yet implemented.
 
 .. code-block:: bash
 
-    breeze release-management validate-rc-by-pmc --distribution airflow --version 3.1.3rc1 --task-sdk-version 1.1.3rc1 --svn-path ~/asf-dist/dev/airflow
+          breeze release-management verify-rc-by-pmc \
+               --distribution airflow \
+               --version 3.1.3rc1 \
+               --task-sdk-version 1.1.3rc1 \
+               --path-to-airflow-svn ~/asf-dist/dev/airflow
 
 You can run individual checks by specifying the ``--checks`` flag:
 
 .. code-block:: bash
 
-    breeze release-management validate-rc-by-pmc \
+    breeze release-management verify-rc-by-pmc \
       --distribution airflow \
       --version 3.1.3rc1 \
-      --svn-path ~/asf-dist/dev/airflow \
-      --checks svn,signatures,checksums,licenses
+     --task-sdk-version 1.1.3rc1 \
+      --path-to-airflow-svn ~/asf-dist/dev/airflow \
+      --checks reproducible-build,svn,licenses,signatures,checksums
 
-.. image:: ./images/output_release-management_validate-rc-by-pmc.svg
-  :target: https://raw.githubusercontent.com/apache/airflow/main/dev/breeze/doc/images/output_release-management_validate-rc-by-pmc.svg
+.. note::
+
+   This command is covered by Breeze integration tests that validate behavior against historical
+   SVN snapshots (pinned revisions) to keep it stable over time.
+
+.. image:: ./images/output_release-management_verify-rc-by-pmc.svg
+  :target: https://raw.githubusercontent.com/apache/airflow/main/dev/breeze/doc/images/output_release-management_verify-rc-by-pmc.svg
   :width: 100%
-  :alt: Breeze release-management validate-rc-by-pmc
+  :alt: Breeze release-management verify-rc-by-pmc
 
 Start minor branch of Airflow
 """""""""""""""""""""""""""""
@@ -169,7 +209,7 @@ Generating Airflow core Issue
 
 You can use Breeze to generate a Airflow core issue when you release new airflow.
 
-.. image:: ./images/output_release-management_generate-issue-content-providers.svg
+.. image:: ./images/output_release-management_generate-issue-content-core.svg
   :target: https://raw.githubusercontent.com/apache/airflow/main/dev/breeze/doc/images/output_release-management_generate-issue-content-core.svg
   :width: 100%
   :alt: Breeze generate-issue-content-core
@@ -376,7 +416,7 @@ Generating helm chart Issue
 
 You can use Breeze to generate a helm chart issue when you release new helm chart.
 
-.. image:: ./images/output_release-management_generate-issue-content-providers.svg
+.. image:: ./images/output_release-management_generate-issue-content-helm-chart.svg
   :target: https://raw.githubusercontent.com/apache/airflow/main/dev/breeze/doc/images/output_release-management_generate-issue-content-helm-chart.svg
   :width: 100%
   :alt: Breeze generate-issue-content-helm-chart
@@ -411,7 +451,8 @@ Updating provider next version
 """"""""""""""""""""""""""""""
 
 You can use Breeze to update references to other providers automatically to the
-next version of dependent providers, when they are commented with ``# use next version``.
+next version of dependent providers, when they are commented with ``# use next version``
+(or ``#use next version`` without space after ``#``).
 
 The below example perform the upgrade.
 
@@ -460,6 +501,28 @@ You can see all providers available by running this command:
 
 If you pass ``--tag`` fag, the distribution will create a source tarball release along with sdist.
 ``--tag`` flag corresponds to actual tag in git.
+
+.. note::
+
+    Before each provider is built, Breeze runs ``git clean -fdx -e .venv -e .idea -e .vscode``
+    inside the provider's source directory. This removes **all untracked and .gitignored**
+    files under that path — locally generated docs (``docs/_api``), sphinx caches,
+    ``__pycache__``, ``*.egg-info``, and any scratch files an RM produced while iterating.
+    The cleanup is necessary because the flit-based providers ship with explicit
+    ``[tool.flit.sdist]`` include lists that scan directories (``docs/``, ``tests/``,
+    ``src/``) rather than asking git, so any in-tree leftovers would otherwise leak into
+    the sdist/wheel and break reproducibility against the released artifacts on
+    dist.apache.org.
+
+    The top-level ``.venv``, ``.idea`` and ``.vscode`` directories at the **repository
+    root** are unaffected — they live outside any provider directory and are not in any
+    flit include path, so flit would never pick them up regardless. The ``-e .venv``,
+    ``-e .idea`` and ``-e .vscode`` excludes are a safety net for the rare case where
+    someone keeps a per-provider venv or IDE config **inside** the provider directory;
+    in that case the cleanup will still preserve them.
+
+    A dry-run pass (``git clean -ndx ...``) is printed first, so you see the list of
+    files that are about to be removed before the destructive pass runs.
 
 
 .. image:: ./images/output_release-management_prepare-provider-distributions.svg
@@ -853,6 +916,58 @@ If you pass ``--tag`` fag, the distribution will create a source tarball release
   :width: 100%
   :alt: Breeze release-management prepare-airflow-ctl-distributions
 
+Generating airflowctl changelog
+""""""""""""""""""""""""""""""""
+
+You can generate the RST changelog for an airflowctl release and have it automatically prepended to
+``airflow-ctl/RELEASE_NOTES.rst``. The command reads the git log between two refs filtered to the
+``airflow-ctl/`` directory, fetches PR metadata from GitHub, and categorises each PR by title prefix.
+
+.. code-block:: bash
+
+     breeze release-management generate-airflowctl-changelog --previous-release "airflow-ctl/0.1.3" --version "0.1.4"
+
+``--current-release`` defaults to ``HEAD`` so you do not need to create the tag first. Pass
+``--output-file -`` to print to stdout instead of modifying ``RELEASE_NOTES.rst``.
+
+.. image:: ./images/output_release-management_generate-airflowctl-changelog.svg
+  :target: https://raw.githubusercontent.com/apache/airflow/main/dev/breeze/doc/images/output_release-management_generate-airflowctl-changelog.svg
+  :width: 100%
+  :alt: Breeze release-management generate-airflowctl-changelog
+
+Generating airflow-ctl issue
+""""""""""""""""""""""""""""
+
+You can use Breeze to generate an airflow-ctl issue when you release new airflow-ctl.
+
+.. image:: ./images/output_release-management_generate-issue-content-airflow-ctl.svg
+  :target: https://raw.githubusercontent.com/apache/airflow/main/dev/breeze/doc/images/output_release-management_generate-issue-content-airflow-ctl.svg
+  :width: 100%
+  :alt: Breeze release-management generate-issue-content-airflow-ctl
+
+Preparing Apache Airflow Mypy distributions
+""""""""""""""""""""""""""""""""""""""""""""
+
+You can prepare Apache Airflow Mypy distributions using Breeze:
+
+.. code-block:: bash
+
+     breeze release-management prepare-mypy-distributions
+
+This prepares Apache Airflow Mypy .whl package in the dist folder.
+
+You can specify the optional ``--distribution-format`` flag to build selected formats of the Mypy distributions.
+The default is ``wheel``.
+
+.. code-block:: bash
+
+     breeze release-management prepare-mypy-distributions --distribution-format=both
+
+.. image:: ./images/output_release-management_prepare-mypy-distributions.svg
+  :target: https://raw.githubusercontent.com/apache/airflow/main/dev/breeze/doc/images/output_release-management_prepare-mypy-distributions.svg
+  :width: 100%
+  :alt: Breeze release-management prepare-mypy-distributions
+
 Publishing the documentation to S3
 """"""""""""""""""""""""""""""""""
 
@@ -933,6 +1048,10 @@ These are all available flags of ``workflow-run`` command:
 ``--site-env`` specifies the environment to use for the site (e.g., auto, live, staging). the default is auto, based on the ref it decides live or staging.
 ``--refresh-site`` specifies whether to refresh the site after publishing the documentation. This triggers workflow on apache/airflow-site repository to refresh the site.
 ``--skip-write-to-stable-folder`` specifies the documentation packages to skip writing to the stable folder.
+``--ignore-missing-inventories`` when set, the publish workflow will not fail if third-party intersphinx
+inventories cannot be downloaded. By default, the publish workflow fails on missing inventories to ensure
+complete cross-references in published documentation. Use this flag only when you need to publish despite
+temporary third-party inventory outages.
 
 
 These are all available flags of ``workflow-run publish-docs`` command:

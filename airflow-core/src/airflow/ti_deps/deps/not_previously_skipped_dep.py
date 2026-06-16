@@ -43,12 +43,12 @@ class NotPreviouslySkippedDep(BaseTIDep):
     IGNORABLE = True
     IS_TASK_DEP = True
 
-    def _get_dep_statuses(self, ti, session, dep_context):
+    def _get_dep_statuses(self, ti, dep_context, *, session):
         from airflow.utils.state import TaskInstanceState
 
         upstream = ti.task.get_direct_relatives(upstream=True)
 
-        finished_tis = dep_context.ensure_finished_tis(ti.get_dagrun(session), session)
+        finished_tis = dep_context.ensure_finished_tis(ti.get_dagrun(session=session), session=session)
 
         finished_task_ids = {t.task_id for t in finished_tis}
 
@@ -58,8 +58,15 @@ class NotPreviouslySkippedDep(BaseTIDep):
                     # This can happen if the parent task has not yet run.
                     continue
 
+                # Use the parent's map context to look up the XCom. An unmapped parent
+                # (e.g. LatestOnlyOperator) writes XCom with map_index=-1, so we must
+                # query with -1 instead of the child's map_index.
+                xcom_map_index = ti.map_index if parent.is_mapped else -1
                 prev_result = ti.xcom_pull(
-                    task_ids=parent.task_id, key=XCOM_SKIPMIXIN_KEY, session=session, map_indexes=ti.map_index
+                    task_ids=parent.task_id,
+                    key=XCOM_SKIPMIXIN_KEY,
+                    session=session,
+                    map_indexes=xcom_map_index,
                 )
 
                 if prev_result is None:
@@ -93,7 +100,7 @@ class NotPreviouslySkippedDep(BaseTIDep):
                                 reason="Task should be skipped but the past depends are not met"
                             )
                             return
-                    ti.set_state(TaskInstanceState.SKIPPED, session)
+                    ti.set_state(TaskInstanceState.SKIPPED, session=session)
                     yield self._failing_status(
                         reason=f"Skipping because of previous XCom result from parent task {parent.task_id}"
                     )

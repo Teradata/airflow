@@ -16,7 +16,7 @@
 # under the License.
 ---
 default_stages: [pre-commit, pre-push]
-minimum_prek_version: '0.0.28'
+minimum_prek_version: '0.3.4'
 default_language_version:
   python: python3
   node: 22.19.0
@@ -112,7 +112,7 @@ repos:
           ^src/airflow/api_fastapi/auth/managers/simple/ui/
         entry: ../scripts/ci/prek/compile_ui_assets.py
         pass_filenames: false
-        additional_dependencies: ['pnpm@9.7.1']
+        additional_dependencies: ['pnpm@10.25.0']
       - id: compile-ui-assets-dev
         name: Compile ui assets in dev mode (manual)
         language: node
@@ -124,7 +124,7 @@ repos:
           ^src/airflow/api_fastapi/auth/managers/simple/ui/
         entry: ../scripts/ci/prek/compile_ui_assets_dev.py
         pass_filenames: false
-        additional_dependencies: ['pnpm@9.7.1']
+        additional_dependencies: ['pnpm@10.25.0']
       - id: check-tests-in-the-right-folders
         name: Check if tests are in the right folders
         entry: ../scripts/ci/prek/check_tests_in_right_folders.py
@@ -148,16 +148,17 @@ repos:
         language: python
         pass_filenames: true
         files: ^src/airflow/.*\.py$
-      - id: check-significant-newsfragments-are-valid
-        name: Check significant newsfragments are valid
-        # Significant newsfragments follows a special format so that we can group information easily.
+      - id: check-http-exception-import-from-fastapi
+        name: Check HTTPException is imported from fastapi
+        entry: ../scripts/ci/prek/check_http_exception_import_from_fastapi.py
         language: python
-        files: ^newsfragments/.*\.rst$
-        entry: ../scripts/ci/prek/significant_newsfragments_checker.py
-        pass_filenames: false
-        # We sometimes won't have newsfragments in the repo, so always run it so `check-hooks-apply` passes
-        # This is fast, so not too much downside
-        always_run: true
+        pass_filenames: true
+        files: >
+          (?x)
+          ^src/airflow/api_fastapi/.*\.py$|
+          ^src/airflow/utils/serve_logs/.*\.py$|
+          ^tests/unit/api_fastapi/.*\.py$|
+          ^tests/unit/utils/test_serve_logs\.py$
       - id: create-missing-init-py-files-tests
         name: Create missing init.py files in tests
         entry: ../scripts/ci/prek/check_init_in_tests.py
@@ -194,7 +195,9 @@ repos:
         pass_filenames: true
         files: ^src/airflow/migrations/versions/.*\.py$
         exclude:
-          ^src/airflow/migrations/versions/0028_3_0_0_drop_ab_user_id_foreign_key.py$
+          (?x)
+          ^src/airflow/migrations/versions/0000_2_6_2_squashed_migrations\.py$|
+          ^src/airflow/migrations/versions/0028_3_0_0_drop_ab_user_id_foreign_key\.py$
       - id: ts-compile-lint-ui
         name: Compile / format / lint UI
         description: TS types generation / ESLint / Prettier new UI files
@@ -209,7 +212,7 @@ repos:
           ^src/airflow/ui/node-modules/.*|
           ^src/airflow/ui/.pnpm-store
         entry: ../scripts/ci/prek/ts_compile_lint_ui.py
-        additional_dependencies: ['pnpm@9.7.1']
+        additional_dependencies: ['pnpm@10.25.0']
         pass_filenames: true
         require_serial: true
       - id: ts-compile-lint-simple-auth-manager-ui
@@ -226,26 +229,18 @@ repos:
           ^src/airflow/api_fastapi/node-modules/.*|
           ^src/airflow/api_fastapi/.pnpm-store
         entry: ../scripts/ci/prek/ts_compile_lint_simple_auth_manager_ui.py
-        additional_dependencies: ['pnpm@9.7.1']
+        additional_dependencies: ['pnpm@10.25.0']
         pass_filenames: true
         require_serial: true
-        ## ADD MOST PREK HOOK ABOVE THAT LINE
-        # The below prek hooks are those requiring CI image to be built
       - id: mypy-airflow-core
-        stages: ['pre-push']
         name: Run mypy for airflow-core
         language: python
-        entry: ../scripts/ci/prek/mypy.py
-        files: ^.*\.py$
-        require_serial: true
-      - id: mypy-airflow-core
-        stages: ['manual']
-        name: Run mypy for airflow-core (manual)
-        language: python
-        entry: ../scripts/ci/prek/mypy_folder.py airflow-core
+        entry: ../scripts/ci/prek/run_mypy_full_dist_local_venv_or_breeze_in_ci.py airflow-core
         pass_filenames: false
         files: ^.*\.py$
         require_serial: true
+      ## ADD MOST PREK HOOK ABOVE THAT LINE
+      # The below prek hooks are those requiring CI image to be built
       - id: generate-openapi-spec
         name: Generate the FastAPI API spec
         language: python
@@ -272,15 +267,14 @@ repos:
           (?x)
           ^src/airflow/migrations/versions/.*\.py$|
           ^docs/migrations-ref\.rst$
-      - id: update-er-diagram
-        name: Update ER diagram
+      - id: migration-round-trip
+        name: Migration round-trip SQLite FK enforcement
         language: python
-        entry: ../scripts/ci/prek/update_er_diagram.py
+        entry: ../scripts/ci/prek/migration_round_trip.py
         pass_filenames: false
-        files:
-          (?x)
-          ^src/airflow/migrations/versions/.*\.py$|
-          ^docs/migrations-ref\.rst$
+        require_serial: true
+        stages: [manual]
+        files: ^src/airflow/migrations/versions/.*\.py$
       - id: check-default-configuration
         name: Check the default configuration
         entry: ../scripts/ci/prek/check_default_configuration.py
@@ -288,6 +282,16 @@ repos:
         require_serial: true
         pass_filenames: false
         files: ^src/airflow/config_templates/config\.yml$
+      - id: check-security-doc-constants
+        name: Check security docs match config.yml constants
+        entry: ../scripts/ci/prek/check_security_doc_constants.py
+        language: python
+        pass_filenames: false
+        files: >
+          (?x)
+          ^src/airflow/config_templates/config\.yml$|
+          ^docs/security/jwt_token_authentication\.rst$|
+          ^docs/security/security_model\.rst$
       - id: check-airflow-version-checks-in-core
         language: pygrep
         name: No AIRFLOW_V_* imports in airflow-core
@@ -306,7 +310,7 @@ repos:
           ^tests/unit/models/test_variable\.py$
       - id: check-sdk-imports
         name: Check for SDK imports in core files
-        entry: ../scripts/ci/prek/check_sdk_imports.py
+        entry: ../scripts/ci/prek/check_sdk_imports_in_core.py
         language: python
         types: [python]
         files: ^src/airflow/
@@ -330,6 +334,7 @@ repos:
           ^src/airflow/api_fastapi/core_api/services/ui/task_group.py$|
           ^src/airflow/api_fastapi/execution_api/routes/hitl\.py$|
           ^src/airflow/api_fastapi/execution_api/routes/task_instances\.py$|
+          ^src/airflow/api_fastapi/execution_api/versions/v2026_04_06\.py$|
           ^src/airflow/api_fastapi/logging/decorators\.py$|
           ^src/airflow/assets/evaluation\.py$|
           ^src/airflow/assets/manager\.py$|
@@ -338,12 +343,13 @@ repos:
           ^src/airflow/cli/commands/triggerer_command.py$|
           ^src/airflow/configuration\.py$|
           ^src/airflow/dag_processing/collection\.py$|
+          ^src/airflow/dag_processing/dagbag\.py$|
+          ^src/airflow/dag_processing/importers/.*\.py$|
           ^src/airflow/dag_processing/manager\.py$|
           ^src/airflow/dag_processing/processor\.py$|
-          ^src/airflow/dag_processing/dagbag\.py$|
           ^src/airflow/datasets/metadata\.py$|
           ^src/airflow/exceptions\.py$|
-          ^src/airflow/executors/local_executor\.py$|
+          ^src/airflow/executors/base_executor\.py$|
           ^src/airflow/jobs/triggerer_job_runner\.py$|
           ^src/airflow/lineage/hook\.py$|
           ^src/airflow/listeners/spec/asset\.py$|
@@ -368,6 +374,8 @@ repos:
           ^src/airflow/models/taskmap\.py$|
           ^src/airflow/models/taskmixin\.py$|
           ^src/airflow/models/taskreschedule\.py$|
+          ^src/airflow/models/trigger\.py$|
+          ^src/airflow/stats\.py$|
           ^src/airflow/models/variable\.py$|
           ^src/airflow/models/xcom\.py$|
           ^src/airflow/models/xcom_arg\.py$|
@@ -375,7 +383,9 @@ repos:
           ^src/airflow/plugins_manager\.py$|
           ^src/airflow/providers_manager\.py$|
           ^src/airflow/secrets/__init__.py$|
-          ^src/airflow/serialization/definitions/[_a-z]+\.py$|
+          ^src/airflow/serialization/decoders\.py$|
+          ^src/airflow/serialization/definitions/[_/a-z]+\.py$|
+          ^src/airflow/serialization/encoders\.py$|
           ^src/airflow/serialization/enums\.py$|
           ^src/airflow/serialization/helpers\.py$|
           ^src/airflow/serialization/serialized_objects\.py$|
@@ -388,6 +398,7 @@ repos:
           ^src/airflow/timetables/assets\.py$|
           ^src/airflow/timetables/base\.py$|
           ^src/airflow/timetables/simple\.py$|
+          ^src/airflow/triggers/base\.py$|
           ^src/airflow/utils/cli\.py$|
           ^src/airflow/utils/context\.py$|
           ^src/airflow/utils/dag_cycle_tester\.py$|
@@ -402,6 +413,7 @@ repos:
           ^src/airflow/utils/session\.py$|
           ^src/airflow/utils/task_group\.py$|
           ^src/airflow/utils/trigger_rule\.py$|
+          ^src/airflow/utils/json\.py$|
           ^src/airflow/utils/types\.py$
         ## ONLY ADD PREK HOOKS HERE THAT REQUIRE CI IMAGE
       - id: check-schema-defaults

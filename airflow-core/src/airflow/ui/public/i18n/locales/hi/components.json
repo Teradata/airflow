@@ -10,8 +10,12 @@
     "maxRuns": "अधिकतम सक्रिय रन्स",
     "missingAndErroredRuns": "गुम और त्रुटि वाले रन्स",
     "missingRuns": "गुम रन्स",
+    "overrideExistingParams": "मौजूदा रन पर पैरामीटर ओवरराइड करें",
+    "permissionDenied": "ड्राई रन विफल: उपयोगकर्ता के पास बैकफ़िल बनाने की अनुमति नहीं है।",
     "reprocessBehavior": "पुनः प्रक्रिया व्यवहार",
     "run": "बैकफ़िल चलाएं",
+    "scheduleNotBackfillable": "इस Dag का शेड्यूल बैकफिल का समर्थन नहीं करता",
+    "schedulerPriorityHint": "प्रत्येक शेड्यूलर चक्र में बैकफिल Dag रन को गैर-बैकफिल Dag रन के बाद क्रमित किया जाता है। यदि अन्य गैर-बैकफिल रन मौजूद हों तो बैकफिल रन अधिक समय तक कतार में रह सकते हैं।",
     "selectDescription": "तिथियों की रेंज के लिए इस डैग को चलाएं",
     "selectLabel": "बैकफ़िल",
     "title": "बैकफ़िल चलाएं",
@@ -21,7 +25,6 @@
         "title": "बैकफ़िल जेनरेट किया गया"
       }
     },
-    "tooltip": "बैकफ़िल के लिए एक शेड्यूल आवश्यक है",
     "unpause": "ट्रिगर पर {{dag_display_name}} को अनपॉज़ करें",
     "validation": {
       "datesRequired": "डेटा अंतराल प्रारंभ तिथि और समाप्ति तिथि दोनों प्रदान की जानी चाहिए।",
@@ -50,6 +53,13 @@
     "warning_one": "1 चेतावनी",
     "warning_other": "{{count}} चेतावनियां"
   },
+  "dateRangeFilter": {
+    "validation": {
+      "invalidDateFormat": "अमान्य तिथि प्रारूप।",
+      "invalidTimeFormat": "अमान्य समय प्रारूप।",
+      "startBeforeEnd": "प्रारंभ तिथि/समय समाप्ति तिथि/समय से पहले होनी चाहिए"
+    }
+  },
   "durationChart": {
     "duration": "अवधि (सेकंड)",
     "lastDagRun_one": "अंतिम डैग रन",
@@ -65,6 +75,7 @@
     "files_other": "{{count}} फ़ाइलें"
   },
   "flexibleForm": {
+    "durationPlaceholder": "ISO 8601 प्रारूप में अवधि दर्ज करें",
     "placeholder": "मान चुनें",
     "placeholderArray": "प्रत्येक स्ट्रिंग को नई लाइन में दर्ज करें",
     "placeholderExamples": "विकल्प देखने के लिए टाइप करना शुरू करें",
@@ -72,6 +83,7 @@
     "validationErrorArrayNotArray": "मान एक array होना चाहिए।",
     "validationErrorArrayNotNumbers": "Array के सभी तत्व संख्या होने चाहिए।",
     "validationErrorArrayNotObject": "Array के सभी तत्व ऑब्जेक्ट होने चाहिए।",
+    "validationErrorDuration": "अमान्य ISO 8601 अवधि प्रारूप",
     "validationErrorRequired": "यह फ़ील्ड आवश्यक है"
   },
   "graph": {
@@ -85,13 +97,18 @@
     "otherDagRuns": "+अन्य डैग रन्स",
     "taskCount_one": "{{count}} टास्क",
     "taskCount_other": "{{count}} टास्क्स",
-    "taskGroup": "टास्क ग्रुप"
+    "taskGroup": "टास्क ग्रुप",
+    "zoomToTask": "चयनित टास्क पर ज़ूम करें"
   },
   "limitedList": "+{{count}} और",
   "limitedList.allItems": "सभी {{count}} आइटम:",
+  "limitedList.allTags_one": "सभी टैग्स (1)",
+  "limitedList.allTags_other": "सभी टैग्स ({{count}})",
   "limitedList.clickToInteract": "टैग पर क्लिक करके Dags फ़िल्टर करें",
   "limitedList.clickToOpenFull": "\"+{{count}} और\" पर क्लिक करके पूरी सूची खोलें",
   "limitedList.copyPasteText": "आप ऊपर दिए गए पाठ को कॉपी और पेस्ट कर सकते हैं",
+  "limitedList.showingItems_one": "1 आइटम दिखा रहा है",
+  "limitedList.showingItems_other": "{{count}} आइटम दिखा रहा है",
   "logs": {
     "file": "फ़ाइल",
     "location": "{{name}} में लाइन {{line}}"
@@ -101,22 +118,40 @@
   "sortedDescending": "अवरोही क्रम में सॉर्ट किया गया",
   "sortedUnsorted": "अनसॉर्टेड",
   "taskTries": "टास्क प्रयास",
+  "taskTryPlaceholder": "टास्क प्रयास",
+  "team": {
+    "selector": {
+      "helperText": "वैकल्पिक। उपयोग को एक विशिष्ट टीम तक सीमित करें।",
+      "label": "टीम",
+      "placeHolder": "टीम चुनें"
+    }
+  },
   "toggleCardView": "कार्ड व्यू दिखाएं",
   "toggleTableView": "टेबल व्यू दिखाएं",
   "triggerDag": {
     "button": "ट्रिगर करें",
+    "dataInterval": "डेटा अंतराल",
+    "dataIntervalAuto": "तार्किक तिथि और टाइमटेबल से अनुमानित",
+    "dataIntervalManual": "मैन्युअल रूप से निर्दिष्ट करें",
+    "intervalEnd": "अंत",
+    "intervalStart": "प्रारंभ",
     "loading": "डैग जानकारी लोड हो रही है...",
     "loadingFailed": "डैग जानकारी लोड करने में विफल। कृपया पुनः प्रयास करें।",
+    "manualRunDenied": "इस Dag के लिए मैनुअल रन की अनुमति नहीं है",
     "runIdHelp": "वैकल्पिक - प्रदान न किए जाने पर जेनरेट किया जाएगा",
     "selectDescription": "इस डैग का एक रन ट्रिगर करें",
     "selectLabel": "सिंगल रन",
     "title": "डैग ट्रिगर करें",
     "toaster": {
+      "error": {
+        "title": "डैग ट्रिगर करने में विफल"
+      },
       "success": {
         "description": "डैग रन सफलतापूर्वक ट्रिगर किया गया।",
         "title": "डैग रन ट्रिगर किया गया"
       }
     },
+    "triggerAgainWithConfig": "इस कॉन्फ़िग के साथ फिर से ट्रिगर करें",
     "unpause": "ट्रिगर पर {{dagDisplayName}} को अनपॉज़ करें"
   },
   "trimText": {
@@ -132,6 +167,7 @@
     "versionId": "संस्करण ID"
   },
   "versionSelect": {
+    "allVersions": "सभी संस्करण",
     "dagVersion": "डैग संस्करण",
     "versionCode": "v{{versionCode}}"
   }

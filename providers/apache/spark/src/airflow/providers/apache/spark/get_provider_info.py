@@ -40,8 +40,10 @@ def get_provider_info():
                 "integration-name": "Apache Spark",
                 "python-modules": [
                     "airflow.providers.apache.spark.operators.spark_jdbc",
+                    "airflow.providers.apache.spark.operators.spark_pipelines",
                     "airflow.providers.apache.spark.operators.spark_sql",
                     "airflow.providers.apache.spark.operators.spark_submit",
+                    "airflow.providers.apache.spark.operators.spark_pyspark",
                 ],
             }
         ],
@@ -52,6 +54,7 @@ def get_provider_info():
                     "airflow.providers.apache.spark.hooks.spark_connect",
                     "airflow.providers.apache.spark.hooks.spark_jdbc",
                     "airflow.providers.apache.spark.hooks.spark_jdbc_script",
+                    "airflow.providers.apache.spark.hooks.spark_pipelines",
                     "airflow.providers.apache.spark.hooks.spark_sql",
                     "airflow.providers.apache.spark.hooks.spark_submit",
                 ],
@@ -60,19 +63,85 @@ def get_provider_info():
         "connection-types": [
             {
                 "hook-class-name": "airflow.providers.apache.spark.hooks.spark_connect.SparkConnectHook",
+                "hook-name": "Spark Connect",
                 "connection-type": "spark_connect",
+                "ui-field-behaviour": {
+                    "hidden-fields": ["schema"],
+                    "relabeling": {"password": "Token", "login": "User ID"},
+                },
+                "conn-fields": {
+                    "use_ssl": {"label": "Use SSL", "schema": {"type": ["boolean", "null"], "default": False}}
+                },
             },
             {
                 "hook-class-name": "airflow.providers.apache.spark.hooks.spark_jdbc.SparkJDBCHook",
+                "hook-name": "Spark JDBC",
                 "connection-type": "spark_jdbc",
             },
             {
                 "hook-class-name": "airflow.providers.apache.spark.hooks.spark_sql.SparkSqlHook",
+                "hook-name": "Spark SQL",
                 "connection-type": "spark_sql",
+                "ui-field-behaviour": {
+                    "hidden-fields": ["schema", "login", "password", "extra"],
+                    "relabeling": {},
+                },
+                "conn-fields": {
+                    "queue": {
+                        "label": "YARN queue",
+                        "description": "Default YARN queue to use",
+                        "schema": {"type": ["string", "null"]},
+                    }
+                },
             },
             {
                 "hook-class-name": "airflow.providers.apache.spark.hooks.spark_submit.SparkSubmitHook",
+                "hook-name": "Spark",
                 "connection-type": "spark",
+                "ui-field-behaviour": {
+                    "hidden-fields": ["schema", "login", "password", "extra"],
+                    "relabeling": {},
+                    "placeholders": {"keytab": "<base64 encoded Keytab Content>"},
+                },
+                "conn-fields": {
+                    "queue": {
+                        "label": "YARN queue",
+                        "description": "Default YARN queue to use",
+                        "schema": {"type": ["string", "null"]},
+                    },
+                    "deploy-mode": {
+                        "label": "Deploy mode",
+                        "description": "Must be client or cluster",
+                        "schema": {"type": ["string", "null"], "default": "client"},
+                    },
+                    "spark-binary": {
+                        "label": "Spark binary",
+                        "description": "Must be one of: spark-submit, spark2-submit, spark3-submit",
+                        "schema": {"type": ["string", "null"], "default": "spark-submit"},
+                    },
+                    "namespace": {"label": "Kubernetes namespace", "schema": {"type": ["string", "null"]}},
+                    "principal": {"label": "Principal", "schema": {"type": ["string", "null"]}},
+                    "keytab": {
+                        "label": "Keytab",
+                        "description": "Run the command `base64 <your-keytab-path>` and use its output.",
+                        "schema": {"type": ["string", "null"], "format": "password"},
+                    },
+                    "rest-scheme": {
+                        "label": "REST scheme",
+                        "description": "Scheme for the Spark standalone REST API (http or https). Default is http.",
+                        "schema": {"type": ["string", "null"], "default": "http"},
+                    },
+                    "rest-port": {
+                        "label": "REST port",
+                        "description": "Port for the Spark standalone REST API (spark.master.rest.port). Default is 6066.",
+                        "schema": {"type": ["string", "null"], "default": "6066"},
+                    },
+                    "yarn_resourcemanager_webapp_address": {
+                        "label": "YARN ResourceManager webapp address",
+                        "description": "YARN ResourceManager webapp URL (e.g. `http://rm.example.com:8088`), required when `yarn_track_via_rm_api=True` on `SparkSubmitOperator` / `SparkSubmitHook`. Mirrors Hadoop's `yarn.resourcemanager.webapp.address`.\n",
+                        "schema": {"type": ["string", "null"]},
+                    },
+                },
             },
         ],
         "task-decorators": [

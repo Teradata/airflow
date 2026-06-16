@@ -20,14 +20,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from airflow.utils.task_instance_session import set_current_task_instance_session
-
 pytest.importorskip("weaviate")
 
 from airflow.providers.weaviate.operators.weaviate import (
     WeaviateDocumentIngestOperator,
     WeaviateIngestOperator,
 )
+
+from tests_common.test_utils.taskinstance import render_template_fields
 
 
 class TestWeaviateIngestOperator:
@@ -57,8 +57,29 @@ class TestWeaviateIngestOperator:
             data=[{"data": "sample_data"}],
             vector_col="Vector",
             uuid_col="id",
+            tenant=None,
         )
         mock_log.debug.assert_called_once_with("Input data: %s", [{"data": "sample_data"}])
+
+    def test_execute_passes_tenant_to_hook(self):
+        operator = WeaviateIngestOperator(
+            task_id="weaviate_task",
+            conn_id="weaviate_conn",
+            collection_name="my_collection",
+            input_data=[{"data": "sample_data"}],
+            tenant="tenant-a",
+        )
+        operator.hook.batch_data = MagicMock()
+
+        operator.execute(context=None)
+
+        operator.hook.batch_data.assert_called_once_with(
+            collection_name="my_collection",
+            data=[{"data": "sample_data"}],
+            vector_col="Vector",
+            uuid_col="id",
+            tenant="tenant-a",
+        )
 
     @pytest.mark.db_test
     def test_templates(self, create_task_instance_of_operator):
@@ -71,14 +92,13 @@ class TestWeaviateIngestOperator:
             collection_name="my_collection",
             input_data="{{ dag.dag_id }}",
         )
-        ti.render_templates()
-
-        assert dag_id == ti.task.input_data
+        task = ti.render_templates()
+        assert dag_id == task.input_data
 
     @pytest.mark.db_test
     def test_partial_batch_hook_params(self, dag_maker, session):
         with dag_maker(dag_id="test_partial_batch_hook_params", session=session):
-            WeaviateIngestOperator.partial(
+            task = WeaviateIngestOperator.partial(
                 task_id="fake-task-id",
                 conn_id="weaviate_conn",
                 collection_name="FooBar",
@@ -87,10 +107,9 @@ class TestWeaviateIngestOperator:
 
         dr = dag_maker.create_dagrun()
         tis = dr.get_task_instances(session=session)
-        with set_current_task_instance_session(session=session):
-            for ti in tis:
-                ti.render_templates()
-                assert ti.task.hook_params == {"baz": "biz"}
+        for ti in tis:
+            rendered = render_template_fields(ti, task.unmap({"input_data": {}}))
+            assert rendered.hook_params == {"baz": "biz"}
 
 
 class TestWeaviateDocumentIngestOperator:
@@ -131,13 +150,38 @@ class TestWeaviateDocumentIngestOperator:
             uuid_column="id",
             vector_column="vector",
             verbose=False,
+            tenant=None,
         )
         mock_log.debug.assert_called_once_with("Total input objects : %s", len([{"data": "sample_data"}]))
+
+    def test_execute_passes_tenant_to_hook(self):
+        operator = WeaviateDocumentIngestOperator(
+            task_id="weaviate_task",
+            conn_id="weaviate_conn",
+            input_data=[{"data": "sample_data"}],
+            collection_name="my_collection",
+            document_column="docLink",
+            tenant="tenant-a",
+        )
+        operator.hook.create_or_replace_document_objects = MagicMock()
+
+        operator.execute(context=None)
+
+        operator.hook.create_or_replace_document_objects.assert_called_once_with(
+            data=[{"data": "sample_data"}],
+            collection_name="my_collection",
+            document_column="docLink",
+            existing="skip",
+            uuid_column="id",
+            vector_column="Vector",
+            verbose=False,
+            tenant="tenant-a",
+        )
 
     @pytest.mark.db_test
     def test_partial_hook_params(self, dag_maker, session):
         with dag_maker(dag_id="test_partial_hook_params", session=session):
-            WeaviateDocumentIngestOperator.partial(
+            task = WeaviateDocumentIngestOperator.partial(
                 task_id="fake-task-id",
                 conn_id="weaviate_conn",
                 collection_name="FooBar",
@@ -147,7 +191,6 @@ class TestWeaviateDocumentIngestOperator:
 
         dr = dag_maker.create_dagrun()
         tis = dr.get_task_instances(session=session)
-        with set_current_task_instance_session(session=session):
-            for ti in tis:
-                ti.render_templates()
-                assert ti.task.hook_params == {"baz": "biz"}
+        for ti in tis:
+            rendered = render_template_fields(ti, task.unmap({"input_data": {}}))
+            assert rendered.hook_params == {"baz": "biz"}

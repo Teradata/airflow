@@ -19,13 +19,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from airflow.configuration import conf
-from airflow.exceptions import AirflowException
 from airflow.providers.amazon.aws.hooks.redshift_data import RedshiftDataHook
 from airflow.providers.amazon.aws.operators.base_aws import AwsBaseOperator
 from airflow.providers.amazon.aws.triggers.redshift_data import RedshiftDataTrigger
 from airflow.providers.amazon.aws.utils import validate_execute_complete_event
 from airflow.providers.amazon.aws.utils.mixins import aws_template_fields
+from airflow.providers.common.compat.sdk import AirflowException, conf
 
 if TYPE_CHECKING:
     from mypy_boto3_redshift_data.type_defs import (
@@ -33,7 +32,7 @@ if TYPE_CHECKING:
         GetStatementResultResponseTypeDef,
     )
 
-    from airflow.utils.context import Context
+    from airflow.sdk import Context
 
 
 class RedshiftDataOperator(AwsBaseOperator[RedshiftDataHook]):
@@ -121,10 +120,7 @@ class RedshiftDataOperator(AwsBaseOperator[RedshiftDataHook]):
         if poll_interval > 0:
             self.poll_interval = poll_interval
         else:
-            self.log.warning(
-                "Invalid poll_interval:",
-                poll_interval,
-            )
+            self.log.warning("Invalid poll_interval: %s", poll_interval)
         self.return_sql_result = return_sql_result
         self.deferrable = deferrable
         self.session_id = session_id

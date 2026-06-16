@@ -11,8 +11,12 @@
     "maxRuns": "מספר ריצות מקבילות מירבי",
     "missingAndErroredRuns": "הרצות חסרות ושגויות",
     "missingRuns": "הרצות חסרות",
+    "overrideExistingParams": "דרוס פרמטרים בהרצות קיימות",
+    "permissionDenied": "הרצה יבשה (Dry Run) נכשלה: למשתמש אין הרשאה ליצור Backfills.",
     "reprocessBehavior": "התנהגות עיבוד מחדש",
     "run": "הרץ Backfill",
+    "scheduleNotBackfillable": "תזמון ה-Dag הזה אינו תומך בהשלמה למפרע",
+    "schedulerPriorityHint": "הרצות Dag של Backfill מסודרות אחרי הרצות Dag שאינן Backfill בכל מחזור של המתזמן. ייתכן שהרצות Backfill יישארו זמן רב יותר בתור אם קיימות הרצות אחרות שאינן Backfill.",
     "selectDescription": "הרץ Dag זה עבור טווח תאריכים",
     "selectLabel": "Backfill",
     "title": "הרץ Backfill",
@@ -22,7 +26,6 @@
         "title": "Backfill נוצר"
       }
     },
-    "tooltip": "Backfill דורש לוח זמנים",
     "unpause": "הפעל את {{dag_display_name}} בעת הריצה",
     "validation": {
       "datesRequired": "יש להזין גם תאריך התחלה וגם תאריך סיום של מרווח הנתונים.",
@@ -46,12 +49,17 @@
   },
   "dagWarnings": {
     "error_one": "שגיאה",
-    "error_other": "שגיאות",
-    "error_two": "שגיאות",
     "errorAndWarning": "שגיאה אחת ו-{{warningText}}",
     "warning_one": "אזהרה אחת",
     "warning_other": "{{count}} אזהרות",
     "warning_two": "שתי אזהרות"
+  },
+  "dateRangeFilter": {
+    "validation": {
+      "invalidDateFormat": "פורמט התאריך אינו תקין.",
+      "invalidTimeFormat": "פורמט הזמן אינו תקין.",
+      "startBeforeEnd": "תאריך/זמן התחלה חייב להיות לפני תאריך/זמן סיום"
+    }
   },
   "durationChart": {
     "duration": "משך זמן (שניות)",
@@ -71,6 +79,7 @@
     "files_two": "שני קבצים"
   },
   "flexibleForm": {
+    "durationPlaceholder": "הזן משך זמן בפורמט ISO 8601",
     "placeholder": "בחר ערך",
     "placeholderArray": "הכנס כל מחרוזת בשורה חדשה",
     "placeholderExamples": "התחל להקליד כדי לראות אפשרויות",
@@ -78,6 +87,7 @@
     "validationErrorArrayNotArray": "הערך חייב להיות מערך.",
     "validationErrorArrayNotNumbers": "כל האיברים במערך חייבים להיות מספרים.",
     "validationErrorArrayNotObject": "כל האיברים במערך חייבים להיות אובייקטים.",
+    "validationErrorDuration": "פורמט משך הזמן ISO 8601 אינו תקין",
     "validationErrorRequired": "שדה זה הוא חובה"
   },
   "graph": {
@@ -92,7 +102,8 @@
     "taskCount_one": "משימה אחת",
     "taskCount_other": "{{count}} משימות",
     "taskCount_two": "שתי משימות",
-    "taskGroup": "קבוצת משימות"
+    "taskGroup": "קבוצת משימות",
+    "zoomToTask": "התמקד במשימה שנבחרה"
   },
   "limitedList": "+ {{count}} נוספים",
   "limitedList.allItems": "כל {{count}} הפריטים:",
@@ -114,22 +125,40 @@
   "sortedDescending": "ממוין בסדר יורד",
   "sortedUnsorted": "לא ממוין",
   "taskTries": "ניסיונות משימה",
+  "taskTryPlaceholder": "ניסיון משימה",
+  "team": {
+    "selector": {
+      "helperText": "אופציונלי. הגבל שימוש לצוות מסוים.",
+      "label": "צוות",
+      "placeHolder": "בחר צוות"
+    }
+  },
   "toggleCardView": "הצג תצוגת כרטיסים",
   "toggleTableView": "הצג תצוגת טבלה",
   "triggerDag": {
     "button": "הפעל",
+    "dataInterval": "מרווח נתונים",
+    "dataIntervalAuto": "מוסק מתוך התאריך הלוגי וטבלת הזמנים",
+    "dataIntervalManual": "הגדר ידנית",
+    "intervalEnd": "סיום",
+    "intervalStart": "התחלה",
     "loading": "טוען מידע Dag...",
     "loadingFailed": "טעינת מידע ה-Dag נכשלה. אנא נסו שוב.",
+    "manualRunDenied": "הרצות ידניות אינן מותרות עבור Dag זה",
     "runIdHelp": "אופציונלי - ייווצר אוטומטית אם לא יסופק",
     "selectDescription": "הפעל ריצה בודדת של Dag זה",
     "selectLabel": "ריצה בודדת",
     "title": "הפעל Dag",
     "toaster": {
+      "error": {
+        "title": "הפעלת Dag נכשלה"
+      },
       "success": {
         "description": "ריצת ה-Dag הופעלה בהצלחה.",
         "title": "ריצת Dag הופעלה"
       }
     },
+    "triggerAgainWithConfig": "הפעל שוב עם התצורה הזו",
     "unpause": "הפעל את {{dagDisplayName}} בעת ההרצה"
   },
   "trimText": {
@@ -145,6 +174,7 @@
     "versionId": "מזהה גרסה"
   },
   "versionSelect": {
+    "allVersions": "כל הגרסאות",
     "dagVersion": "גרסת Dag",
     "versionCode": "גרסה {{versionCode}}"
   }

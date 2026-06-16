@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Any
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.common.hooks.base_google import GoogleBaseHook
 
 if TYPE_CHECKING:
@@ -76,6 +76,7 @@ class GoogleSearchAdsReportingHook(GoogleBaseHook):
                 self.api_version,
                 credentials=creds,
                 cache_discovery=False,
+                client_options=self.get_client_options(),
             )
         return self._conn
 
@@ -226,5 +227,6 @@ class GoogleSearchAdsHook(GoogleBaseHook):
                 self.api_version,
                 http=http_authorized,
                 cache_discovery=False,
+                client_options=self.get_client_options(),
             )
         return self._conn

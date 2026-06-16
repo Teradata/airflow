@@ -19,7 +19,6 @@
 import { Code, Flex, Heading, useDisclosure, VStack } from "@chakra-ui/react";
 import type { ColumnDef } from "@tanstack/react-table";
 import dayjs from "dayjs";
-import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams, useSearchParams } from "react-router-dom";
 
@@ -32,6 +31,7 @@ import { ExpandCollapseButtons } from "src/components/ExpandCollapseButtons";
 import RenderedJsonField from "src/components/RenderedJsonField";
 import Time from "src/components/Time";
 import { SearchParamsKeys, type SearchParamsKeysType } from "src/constants/searchParams";
+import { useAdvancedSearchArg } from "src/hooks/useAdvancedSearch";
 
 import { EventsFilters } from "./EventsFilters";
 
@@ -78,7 +78,7 @@ const eventsColumn = (
         try {
           const parsed = JSON.parse(original.extra) as Record<string, unknown>;
 
-          return <RenderedJsonField content={parsed} jsonProps={{ collapsed: !open }} />;
+          return <RenderedJsonField collapsed={!open} content={parsed} />;
         } catch {
           return <Code>{original.extra}</Code>;
         }
@@ -159,7 +159,7 @@ const {
 }: SearchParamsKeysType = SearchParamsKeys;
 
 export const Events = () => {
-  const { t: translate } = useTranslation("browse");
+  const { t: translate } = useTranslation(["browse", "common"]);
   const { dagId, runId, taskId } = useParams();
   const [searchParams] = useSearchParams();
   const { setTableURLState, tableURLState } = useTableURLState();
@@ -185,6 +185,37 @@ export const Events = () => {
   const afterDate = afterFilter !== null && dayjs(afterFilter).isValid() ? afterFilter : undefined;
   const beforeDate = beforeFilter !== null && dayjs(beforeFilter).isValid() ? beforeFilter : undefined;
 
+  const dagIdArg = useAdvancedSearchArg({
+    patternApiKey: "dagIdPattern",
+    prefixApiKey: "dagIdPrefixPattern",
+    storageKey: DAG_ID_PARAM,
+    value: dagIdFilter,
+  });
+  const eventArg = useAdvancedSearchArg({
+    patternApiKey: "eventPattern",
+    prefixApiKey: "eventPrefixPattern",
+    storageKey: EVENT_TYPE_PARAM,
+    value: eventTypeFilter,
+  });
+  const ownerArg = useAdvancedSearchArg({
+    patternApiKey: "ownerPattern",
+    prefixApiKey: "ownerPrefixPattern",
+    storageKey: USER_PARAM,
+    value: userFilter,
+  });
+  const runIdArg = useAdvancedSearchArg({
+    patternApiKey: "runIdPattern",
+    prefixApiKey: "runIdPrefixPattern",
+    storageKey: RUN_ID_PARAM,
+    value: runIdFilter,
+  });
+  const taskIdArg = useAdvancedSearchArg({
+    patternApiKey: "taskIdPattern",
+    prefixApiKey: "taskIdPrefixPattern",
+    storageKey: TASK_ID_PARAM,
+    value: taskIdFilter,
+  });
+
   const { data, error, isFetching, isLoading } = useEventLogServiceGetEventLogs(
     {
       after: afterDate,
@@ -192,26 +223,23 @@ export const Events = () => {
       // Use exact match for URL params (dag/run/task context)
       dagId: dagId ?? undefined,
       // Use pattern search for filter inputs (partial matching)
-      dagIdPattern: dagIdFilter ?? undefined,
-      eventPattern: eventTypeFilter ?? undefined,
+      ...dagIdArg,
+      ...eventArg,
       limit: pagination.pageSize,
       mapIndex: mapIndexNumber,
       offset: pagination.pageIndex * pagination.pageSize,
       orderBy,
-      ownerPattern: userFilter ?? undefined,
+      ...ownerArg,
       runId: runId ?? undefined,
-      runIdPattern: runIdFilter ?? undefined,
+      ...runIdArg,
       taskId: taskId ?? undefined,
-      taskIdPattern: taskIdFilter ?? undefined,
+      ...taskIdArg,
       tryNumber: tryNumberNumber,
     },
     undefined,
   );
 
-  const columns = useMemo(
-    () => eventsColumn({ dagId, open, runId, taskId }, translate),
-    [dagId, open, runId, taskId, translate],
-  );
+  const columns = eventsColumn({ dagId, open, runId, taskId }, translate);
 
   return (
     <VStack alignItems="stretch">
@@ -221,8 +249,9 @@ export const Events = () => {
       <Flex alignItems="center" justifyContent="space-between">
         <EventsFilters urlDagId={dagId} urlRunId={runId} urlTaskId={taskId} />
         <ExpandCollapseButtons
-          collapseLabel={translate("auditLog.actions.collapseAllExtra")}
-          expandLabel={translate("auditLog.actions.expandAllExtra")}
+          collapseLabel={translate("common:collapseAllExtra")}
+          expandLabel={translate("common:expandAllExtra")}
+          isExpanded={open}
           onCollapse={onClose}
           onExpand={onOpen}
         />
@@ -236,8 +265,9 @@ export const Events = () => {
         initialState={tableURLState}
         isFetching={isFetching}
         isLoading={isLoading}
-        modelName={translate("auditLog.columns.event")}
+        modelName="browse:auditLog.columns.event"
         onStateChange={setTableURLState}
+        showRowCountHeading={false}
         skeletonCount={undefined}
         total={data?.total_entries ?? 0}
       />

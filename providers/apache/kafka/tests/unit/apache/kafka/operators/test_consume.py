@@ -23,11 +23,11 @@ from unittest import mock
 
 import pytest
 
-from airflow.exceptions import AirflowException
 from airflow.models import Connection
 
 # Import Operator
 from airflow.providers.apache.kafka.operators.consume import VALID_COMMIT_CADENCE, ConsumeFromTopicOperator
+from airflow.providers.common.compat.sdk import AirflowException
 
 log = logging.getLogger(__name__)
 
@@ -128,9 +128,9 @@ class TestConsumeFromTopic:
     @pytest.mark.parametrize(
         ("max_messages", "expected_consumed_messages"),
         [
-            [None, 1001],  # Consume all messages
-            [100, 1000],  # max_messages < max_batch_size -> max_messages is set to default max_batch_size
-            [2000, 1001],  # max_messages > max_batch_size
+            (None, 1001),  # Consume all messages
+            (100, 1000),  # max_messages < max_batch_size -> max_messages is set to default max_batch_size
+            (2000, 1001),  # max_messages > max_batch_size
         ],
     )
     def test_operator_consume(self, max_messages, expected_consumed_messages):

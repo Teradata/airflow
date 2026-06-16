@@ -40,8 +40,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import aiosmtplib
 
-from airflow.exceptions import AirflowException, AirflowNotFoundException
-from airflow.providers.common.compat.sdk import BaseHook
+from airflow.providers.common.compat.sdk import AirflowException, AirflowNotFoundException, BaseHook
 
 if TYPE_CHECKING:
     from airflow.providers.common.compat.sdk import Connection
@@ -127,10 +126,11 @@ class SmtpHook(BaseHook):
                         raise AirflowException("Unable to connect to smtp server")
                 else:
                     if self.smtp_starttls:
-                        self._smtp_client.starttls()
+                        self._smtp_client.starttls(context=self._build_ssl_context())
+                        self._smtp_client.ehlo()
 
                     # choose auth
-                    if self._auth_type == "oauth2":
+                    if self.auth_type == "oauth2":
                         if not self._access_token:
                             self._access_token = self._get_oauth2_token()
                         user_identity = self.smtp_user or self.from_email
@@ -172,18 +172,46 @@ class SmtpHook(BaseHook):
                         raise AirflowException("Unable to connect to smtp server")
                 else:
                     if self.smtp_starttls:
-                        await async_client.starttls()
+                        await async_client.starttls(tls_context=self._build_ssl_context())
+                        await async_client.ehlo()
 
-                    if self.smtp_user and self.smtp_password:
+                    # choose auth
+                    if self.auth_type == "oauth2":
+                        if not self._access_token:
+                            self._access_token = self._get_oauth2_token()
+                        user_identity = self.smtp_user or self.from_email
+                        if user_identity is None:
+                            raise AirflowException(
+                                "smtp_user or from_email must be set for OAuth2 authentication"
+                            )
+                        await async_client.auth_xoauth2(user_identity, self._access_token)
+                    elif self.smtp_user and self.smtp_password:
                         await async_client.auth_login(self.smtp_user, self.smtp_password)
                     break
 
         return self
 
+    def _build_ssl_context(self) -> ssl.SSLContext | None:
+        """
+        Return the SSL context configured via the ``ssl_context`` connection extra.
+
+        The default (unset or ``"default"``) returns
+        :func:`ssl.create_default_context`, which validates the server
+        certificate against the system's trusted CAs. ``"none"`` returns
+        ``None`` so callers that explicitly want to skip validation (for
+        example, against a self-signed SMTP server in a lab environment)
+        can opt out.
+        """
+        valid_contexts = (None, "default", "none")  # Values accepted for ssl_context configuration
+        if self.ssl_context not in valid_contexts:
+            raise RuntimeError(
+                f"The connection extra field `ssl_context` must "
+                f"be set to 'default' or 'none' but it is set to '{self.ssl_context}'."
+            )
+        return None if self.ssl_context == "none" else ssl.create_default_context()
+
     def _build_client_kwargs(self, is_async: bool) -> dict[str, Any]:
         """Build kwargs appropriate for sync or async SMTP client."""
-        valid_contexts = (None, "default", "none")  # Values accepted for ssl_context configuration
-
         kwargs: dict[str, Any] = {"timeout": self.timeout}
 
         if self.port:
@@ -193,15 +221,11 @@ class SmtpHook(BaseHook):
             kwargs["hostname"] = self.host
             kwargs["use_tls"] = self.use_ssl
             kwargs["start_tls"] = self.smtp_starttls if not self.use_ssl else None
+            kwargs["tls_context"] = self._build_ssl_context()
         else:
             kwargs["host"] = self.host
             if self.use_ssl:
-                if self.ssl_context not in valid_contexts:
-                    raise RuntimeError(
-                        f"The connection extra field `ssl_context` must "
-                        f"be set to 'default' or 'none' but it is set to '{self.ssl_context}'."
-                    )
-                kwargs["context"] = None if self.ssl_context == "none" else ssl.create_default_context()
+                kwargs["context"] = self._build_ssl_context()
 
         return kwargs
 
@@ -275,9 +299,10 @@ class SmtpHook(BaseHook):
         """Test SMTP connectivity from UI."""
         try:
             smtp_client = self.get_conn()._smtp_client
-            if smtp_client:
+            if smtp_client is not None:
+                smtp_client = cast("smtplib.SMTP_SSL | smtplib.SMTP", smtp_client)
                 status = smtp_client.noop()
-                if status == 250:
+                if status[0] == 250:
                     return True, "Connection successfully tested"
         except Exception as e:
             return False, str(e)

@@ -25,7 +25,7 @@ from collections.abc import Sequence
 import requests
 from googleapiclient.discovery import build
 
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.common.hooks.base_google import PROVIDE_PROJECT_ID, GoogleBaseHook
 
 # Time to sleep between active checks of the operation results
@@ -77,7 +77,11 @@ class CloudFunctionsHook(GoogleBaseHook):
         if not self._conn:
             http_authorized = self._authorize()
             self._conn = build(
-                "cloudfunctions", self.api_version, http=http_authorized, cache_discovery=False
+                "cloudfunctions",
+                self.api_version,
+                http=http_authorized,
+                cache_discovery=False,
+                client_options=self.get_client_options(),
             )
         return self._conn
 

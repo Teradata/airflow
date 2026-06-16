@@ -17,7 +17,6 @@
  * under the License.
  */
 import { Box, VStack, SimpleGrid, GridItem, Flex, Heading } from "@chakra-ui/react";
-import dayjs from "dayjs";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { PiBooks } from "react-icons/pi";
@@ -25,20 +24,19 @@ import { PiBooks } from "react-icons/pi";
 import { useAssetServiceGetAssetEvents, useDashboardServiceHistoricalMetrics } from "openapi/queries";
 import { AssetEvents } from "src/components/Assets/AssetEvents";
 import { ErrorAlert } from "src/components/ErrorAlert";
-import TimeRangeSelector from "src/components/TimeRangeSelector";
 import { useAutoRefresh } from "src/utils";
 
 import { DagRunMetrics } from "./DagRunMetrics";
 import { MetricSectionSkeleton } from "./MetricSectionSkeleton";
 import { TaskInstanceMetrics } from "./TaskInstanceMetrics";
 
-const defaultHour = "24";
+type HistoricalMetricsProps = {
+  readonly endDate: string;
+  readonly startDate: string;
+};
 
-export const HistoricalMetrics = () => {
+export const HistoricalMetrics = ({ endDate, startDate }: HistoricalMetricsProps) => {
   const { t: translate } = useTranslation("dashboard");
-  const now = dayjs();
-  const [startDate, setStartDate] = useState(now.subtract(Number(defaultHour), "hour").toISOString());
-  const [endDate, setEndDate] = useState(now.toISOString());
   const [assetSortBy, setAssetSortBy] = useState("-timestamp");
 
   const refetchInterval = useAutoRefresh({ checkPendingRuns: true });
@@ -52,14 +50,6 @@ export const HistoricalMetrics = () => {
       refetchInterval,
     },
   );
-
-  const dagRunTotal = data
-    ? Object.values(data.dag_run_states).reduce((partialSum, value) => partialSum + value, 0)
-    : 0;
-
-  const taskRunTotal = data
-    ? Object.values(data.task_instance_states).reduce((partialSum, value) => partialSum + value, 0)
-    : 0;
 
   const { data: assetEventsData, isLoading: isLoadingAssetEvents } = useAssetServiceGetAssetEvents({
     limit: 6,
@@ -78,28 +68,25 @@ export const HistoricalMetrics = () => {
       </Flex>
       <ErrorAlert error={error} />
       <VStack alignItems="left" gap={2}>
-        <TimeRangeSelector
-          defaultValue={defaultHour}
-          endDate={endDate}
-          setEndDate={setEndDate}
-          setStartDate={setStartDate}
-          startDate={startDate}
-        />
-        <SimpleGrid columns={{ base: 10 }} gap={2}>
-          <GridItem colSpan={{ base: 7 }}>
+        <SimpleGrid columns={{ base: 1, lg: 10 }} gap={2}>
+          <GridItem colSpan={{ base: 1, lg: 7 }}>
             {isLoading ? <MetricSectionSkeleton /> : undefined}
             {!isLoading && data !== undefined && (
               <Box>
-                <DagRunMetrics dagRunStates={data.dag_run_states} startDate={startDate} total={dagRunTotal} />
+                <DagRunMetrics
+                  dagRunStates={data.dag_run_states}
+                  startDate={startDate}
+                  stateCountLimit={data.state_count_limit}
+                />
                 <TaskInstanceMetrics
                   startDate={startDate}
+                  stateCountLimit={data.state_count_limit}
                   taskInstanceStates={data.task_instance_states}
-                  total={taskRunTotal}
                 />
               </Box>
             )}
           </GridItem>
-          <GridItem colSpan={{ base: 3 }}>
+          <GridItem colSpan={{ base: 1, lg: 3 }}>
             <AssetEvents
               data={assetEventsData}
               isLoading={isLoadingAssetEvents}

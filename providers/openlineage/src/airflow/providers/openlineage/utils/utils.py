@@ -27,16 +27,30 @@ from importlib import metadata
 from typing import TYPE_CHECKING, Any
 
 import attrs
-from openlineage.client.facet_v2 import parent_run
+from openlineage.client.facet_v2 import (
+    documentation_job,
+    job_dependencies_run,
+    job_type_job,
+    nominal_time_run,
+    ownership_job,
+    parent_run,
+    tags_job,
+)
 from openlineage.client.utils import RedactMixin
+from openlineage.client.uuid import generate_static_uuid
+from sqlalchemy.orm.exc import DetachedInstanceError
 
 from airflow import __version__ as AIRFLOW_VERSION
-
-# TODO: move this maybe to Airflow's logic?
 from airflow.models import DagRun, TaskInstance, TaskReschedule
-from airflow.models.mappedoperator import MappedOperator as SerializedMappedOperator
-from airflow.providers.common.compat.assets import Asset
-from airflow.providers.common.compat.sdk import DAG, BaseOperator, BaseSensorOperator, MappedOperator
+from airflow.providers.common.compat.assets import Asset, AssetAlias
+from airflow.providers.common.compat.module_loading import import_string
+from airflow.providers.common.compat.sdk import (
+    DAG,
+    AirflowOptionalProviderFeatureException,
+    BaseOperator,
+    BaseSensorOperator,
+    MappedOperator,
+)
 from airflow.providers.openlineage import (
     __version__ as OPENLINEAGE_PROVIDER_VERSION,
     conf,
@@ -55,9 +69,19 @@ from airflow.providers.openlineage.utils.selective_enable import (
     is_dag_lineage_enabled,
     is_task_lineage_enabled,
 )
-from airflow.providers.openlineage.version_compat import AIRFLOW_V_3_0_PLUS, get_base_airflow_version_tuple
+from airflow.providers.openlineage.version_compat import (
+    AIRFLOW_V_3_0_PLUS,
+    AIRFLOW_V_3_2_PLUS,
+    get_base_airflow_version_tuple,
+)
 from airflow.serialization.serialized_objects import SerializedBaseOperator, SerializedDAG
-from airflow.utils.module_loading import import_string
+
+try:
+    from airflow.serialization.definitions.mappedoperator import SerializedMappedOperator
+except ImportError:
+    from airflow.models.mappedoperator import (  # type: ignore[attr-defined,no-redef]
+        MappedOperator as SerializedMappedOperator,
+    )
 
 if not AIRFLOW_V_3_0_PLUS:
     from airflow.utils.session import NEW_SESSION, provide_session
@@ -66,8 +90,9 @@ if TYPE_CHECKING:
     from typing import TypeAlias
 
     from openlineage.client.event_v2 import Dataset as OpenLineageDataset
-    from openlineage.client.facet_v2 import RunFacet, processing_engine_run
+    from openlineage.client.facet_v2 import JobFacet, RunFacet, processing_engine_run
 
+    from airflow.models.asset import AssetEvent
     from airflow.sdk.execution_time.secrets_masker import (
         Redactable,
         Redacted,
@@ -104,6 +129,7 @@ else:
 log = logging.getLogger(__name__)
 _NOMINAL_TIME_FORMAT = "%Y-%m-%dT%H:%M:%S.%fZ"
 _MAX_DOC_BYTES = 64 * 1024  # 64 kilobytes
+_PRODUCER = f"https://github.com/apache/airflow/tree/providers-openlineage/{OPENLINEAGE_PROVIDER_VERSION}"
 
 
 def try_import_from_string(string: str) -> Any:
@@ -145,6 +171,185 @@ def get_operator_provider_version(operator: AnyOperator) -> str | None:
 
 def get_job_name(task: TaskInstance | RuntimeTaskInstance) -> str:
     return f"{task.dag_id}.{task.task_id}"
+
+
+def get_task_instance_from_context():
+    """Return the task instance from the currently executing Airflow task context."""
+    try:
+        from airflow.sdk import get_current_context
+    except (ImportError, AttributeError):
+        from airflow.operators.python import get_current_context  # type: ignore[no-redef]
+
+    task_instance = get_current_context().get("task_instance")
+    if task_instance is None:
+        raise RuntimeError(
+            "No Airflow task instance found in the current context. "
+            "Call this function from within a running Airflow task, "
+            "or pass `task_instance=` explicitly."
+        )
+    return task_instance
+
+
+def next_query_counter_from_context() -> str:
+    """
+    Return the next sequential per-task query counter, suitable for use as a job-name suffix.
+
+    The counter is stored under a private key in the Airflow execution context dict. Airflow
+    creates a fresh context per task and discards it when the task ends, so the counter resets
+    automatically per task and per retry — there is no module-level state to leak.
+
+    When no Airflow execution context is available (for example, the helper was called from a
+    script with an explicit ``task_instance=`` outside a running task), a random suffix
+    is returned instead and a warning is logged.
+    """
+    try:
+        from airflow.sdk import get_current_context
+    except (ImportError, AttributeError, ModuleNotFoundError):
+        from airflow.operators.python import get_current_context  # type: ignore[no-redef]
+
+    try:
+        context = get_current_context()
+
+        query_counter_context_key = "_openlineage_manual_query_counter"
+        # `Context` is a TypedDict, so mypy refuses non-literal keys and types `.get()` of an
+        # unknown key as `object`. At runtime `Context` is a regular `dict`, so
+        # both operations below are safe — the type-ignores silence pure type-checker noise.
+        counter = int(context.get(query_counter_context_key, 0)) + 1  # type: ignore[call-overload]
+        context[query_counter_context_key] = counter  # type: ignore[literal-required]
+        return str(counter)
+    except Exception as err:
+        from airflow.utils.strings import get_random_string
+
+        random_suffix = get_random_string()
+        log.info(
+            "OpenLineage encountered an error when retrieving query counter from context: `%s`. "
+            "Returning random suffix `%s`",
+            err,
+            random_suffix,
+        )
+
+        return random_suffix
+
+
+def get_dag_run_dag_and_task_from_ti(task_instance):
+    """
+    Return a ``(dag_run, dag, task)`` tuple for the given task instance.
+
+    On Airflow 3+, ``task_instance.get_template_context()`` exposes all three objects.
+    On Airflow 2, we fall back to the Ti attributes.
+    """
+    if AIRFLOW_V_3_0_PLUS:
+        context = task_instance.get_template_context()
+        return context["dag_run"], context["dag"], context["task"]
+    task = task_instance.task
+    return task_instance.dag_run, task.dag, task
+
+
+def build_task_event_run_facets(
+    *,
+    task_instance,
+    dag_run,
+    dag,
+    task,
+    task_uuid: str,
+    ti_state: TaskInstanceState,
+    parent_run_id: str,
+    parent_job_name: str | None = None,
+    dr_conf: dict | None = None,
+    additional_run_facets: dict[str, RunFacet] | None = None,
+) -> dict[str, RunFacet]:
+    """Build the task-event run-facet dict."""
+    if dr_conf is None:
+        dr_conf = getattr(dag_run, "conf", {}) or {}
+
+    nominal_start = getattr(dag_run, "data_interval_start", None)
+    nominal_end = getattr(dag_run, "data_interval_end", None)
+    if isinstance(nominal_start, datetime.datetime):
+        nominal_start = nominal_start.isoformat()
+    if isinstance(nominal_end, datetime.datetime):
+        nominal_end = nominal_end.isoformat()
+    nominal_time_facet: dict[str, RunFacet] = (
+        {
+            "nominalTime": nominal_time_run.NominalTimeRunFacet(
+                nominalStartTime=nominal_start, nominalEndTime=nominal_end, producer=_PRODUCER
+            )
+        }
+        if nominal_start
+        else {}
+    )
+
+    return {
+        **(additional_run_facets or {}),
+        **get_user_provided_run_facets(task_instance, ti_state),
+        **get_task_parent_run_facet(
+            parent_run_id=parent_run_id,
+            parent_job_name=parent_job_name or dag.dag_id,
+            dr_conf=dr_conf,
+        ),
+        **get_airflow_run_facet(
+            dag_run=dag_run, dag=dag, task_instance=task_instance, task=task, task_uuid=task_uuid
+        ),
+        **get_airflow_debug_facet(),
+        **get_processing_engine_facet(),
+        **nominal_time_facet,
+    }
+
+
+def build_task_event_job_facets(
+    *,
+    task,
+    dag,
+    additional_job_facets: dict[str, JobFacet] | None = None,
+) -> dict[str, JobFacet]:
+    """Build the task-event job-facet dict."""
+    doc, doc_type = get_task_documentation(task)
+    if not doc:
+        doc, doc_type = get_dag_documentation(dag)
+    documentation_facet: dict[str, JobFacet] = (
+        {
+            "documentation": documentation_job.DocumentationJobFacet(
+                description=doc, contentType=doc_type, producer=_PRODUCER
+            )
+        }
+        if doc
+        else {}
+    )
+
+    owner_source = task if getattr(task, "owner", "airflow") != "airflow" else dag
+    owners = [o.strip() for o in getattr(owner_source, "owner", "").split(",") if o.strip()]
+    ownership_facet: dict[str, JobFacet] = (
+        {
+            "ownership": ownership_job.OwnershipJobFacet(
+                owners=[ownership_job.Owner(name=o) for o in sorted(owners)], producer=_PRODUCER
+            )
+        }
+        if owners
+        else {}
+    )
+
+    dag_tags = getattr(dag, "tags", None) or []
+    tags_facet: dict[str, JobFacet] = (
+        {
+            "tags": tags_job.TagsJobFacet(
+                tags=[
+                    tags_job.TagsJobFacetFields(key=t, value=t, source="AIRFLOW") for t in sorted(dag_tags)
+                ],
+                producer=_PRODUCER,
+            )
+        }
+        if dag_tags
+        else {}
+    )
+
+    return {
+        **(additional_job_facets or {}),
+        "jobType": job_type_job.JobTypeJobFacet(
+            jobType="TASK", integration="AIRFLOW", processingType="BATCH", producer=_PRODUCER
+        ),
+        **documentation_facet,
+        **ownership_facet,
+        **tags_facet,
+    }
 
 
 def _get_parent_run_facet(
@@ -530,33 +735,42 @@ def is_selective_lineage_enabled(obj: DAG | SerializedDAG | AnyOperator) -> bool
 if not AIRFLOW_V_3_0_PLUS:
 
     @provide_session
-    def is_ti_rescheduled_already(ti: TaskInstance, session=NEW_SESSION):
-        from sqlalchemy import exists
+    def is_ti_rescheduled_already(ti: TaskInstance, *, session=NEW_SESSION):
+        try:
+            from sqlalchemy import exists, select
+        except ImportError:
+            raise AirflowOptionalProviderFeatureException(
+                "sqlalchemy is required for checking task instance reschedule status. "
+                "Install it with: pip install 'apache-airflow-providers-openlineage[sqlalchemy]'"
+            )
 
         if not isinstance(ti.task, BaseSensorOperator):
             return False
 
         if not ti.task.reschedule:
             return False
-        if AIRFLOW_V_3_0_PLUS:
-            return (
-                session.query(
-                    exists().where(TaskReschedule.ti_id == ti.id, TaskReschedule.try_number == ti.try_number)
-                ).scalar()
-                is True
-            )
         return (
-            session.query(
-                exists().where(
-                    TaskReschedule.dag_id == ti.dag_id,
-                    TaskReschedule.task_id == ti.task_id,
-                    TaskReschedule.run_id == ti.run_id,
-                    TaskReschedule.map_index == ti.map_index,
-                    TaskReschedule.try_number == ti.try_number,
+            session.scalar(
+                select(
+                    exists().where(
+                        TaskReschedule.dag_id == ti.dag_id,
+                        TaskReschedule.task_id == ti.task_id,
+                        TaskReschedule.run_id == ti.run_id,
+                        TaskReschedule.map_index == ti.map_index,
+                        TaskReschedule.try_number == ti.try_number,
+                    )
                 )
-            ).scalar()
+            )
             is True
         )
+
+
+def safe_getattr(obj: Any, attr: str, default: Any = None) -> Any:
+    """Get attribute from object, returning default if DetachedInstanceError is raised."""
+    try:
+        return getattr(obj, attr, default)
+    except DetachedInstanceError:
+        return default
 
 
 class InfoJsonEncodable(dict):
@@ -588,6 +802,7 @@ class InfoJsonEncodable(dict):
         self._cast_fields()
         self._rename_fields()
         self._include_fields()
+        self._extend_fields()
         dict.__init__(
             self,
             **{field: InfoJsonEncodable._cast_basic_types(getattr(self, field)) for field in self._fields},
@@ -603,6 +818,21 @@ class InfoJsonEncodable(dict):
         if isinstance(value, (set, list, tuple)):
             return str(list(value))
         return value
+
+    def _extend_fields(self) -> None:
+        """
+        Subclass hook to register extra fields not sourced from ``self.obj``.
+
+        Use this primarily for values passed into ``__init__`` (e.g. caller-supplied
+        context) or values computed on the subclass itself. For anything derived from
+        ``self.obj``, prefer the declarative ``casts`` / ``renames`` / ``includes``
+        machinery — this hook is for fields that don't fit that model.
+
+        Runs after ``_cast_fields`` / ``_rename_fields`` / ``_include_fields`` and
+        before ``dict.__init__`` freezes ``self`` into its serialized form, so
+        implementations should both set the attribute on ``self`` and append its
+        name to ``self._fields``.
+        """
 
     def _rename_fields(self):
         for field, renamed in self.renames.items():
@@ -662,18 +892,29 @@ class DagInfo(InfoJsonEncodable):
     renames = {"_dag_id": "dag_id"}
 
     @classmethod
-    def timetable_summary(cls, dag: DAG) -> str | None:
+    def timetable_summary(cls, dag: DAG | SerializedDAG) -> str | None:
         """Extract summary from timetable if missing a ``timetable_summary`` property."""
-        if getattr(dag, "timetable_summary", None):
-            return dag.timetable_summary
-        if getattr(dag, "timetable", None):
-            return dag.timetable.summary
+        if summary := getattr(dag, "timetable_summary", None):
+            return summary
+        if (timetable := getattr(dag, "timetable", None)) is None:
+            return None
+        if summary := getattr(timetable, "summary", None):
+            return summary
+        with suppress(ImportError):
+            from airflow.serialization.encoders import coerce_to_core_timetable
+
+            return coerce_to_core_timetable(timetable).summary
         return None
 
     @classmethod
-    def serialize_timetable(cls, dag: DAG) -> dict[str, Any]:
+    def serialize_timetable(cls, dag: DAG | SerializedDAG) -> dict[str, Any]:
         # This is enough for Airflow 2.10+ and has all the information needed
-        serialized = dag.timetable.serialize() or {}
+        try:
+            serialized = dag.timetable.serialize() or {}  # type: ignore[union-attr]
+        except AttributeError:
+            from airflow.serialization.encoders import encode_timetable
+
+            serialized = encode_timetable(dag.timetable)["__var"]
 
         # In Airflow 2.9 when using Dataset scheduling we do not receive datasets in serialized timetable
         # Also for DatasetOrTimeSchedule, we only receive timetable without dataset_condition
@@ -707,26 +948,33 @@ class DagRunInfo(InfoJsonEncodable):
     """Defines encoding DagRun object to JSON."""
 
     includes = [
+        "clear_number",
         "conf",
         "dag_id",
-        "data_interval_start",
         "data_interval_end",
-        "external_trigger",  # Removed in Airflow 3, use run_type instead
+        "data_interval_start",
+        "end_date",
         "execution_date",  # Airflow 2
+        "external_trigger",  # Removed in Airflow 3, use run_type instead
         "logical_date",  # Airflow 3
+        "partition_key",  # Airflow 3.2+
+        "partition_date",  # Airflow 3.2+
         "run_after",  # Airflow 3
         "run_id",
         "run_type",
         "start_date",
-        "end_date",
+        "triggered_by",
+        "triggering_user_name",  # Airflow 3
     ]
 
     casts = {
+        "note": lambda dagrun: safe_getattr(dagrun, "note") if AIRFLOW_V_3_2_PLUS else None,
         "duration": lambda dagrun: DagRunInfo.duration(dagrun),
         "dag_bundle_name": lambda dagrun: DagRunInfo.dag_version_info(dagrun, "bundle_name"),
         "dag_bundle_version": lambda dagrun: DagRunInfo.dag_version_info(dagrun, "bundle_version"),
         "dag_version_id": lambda dagrun: DagRunInfo.dag_version_info(dagrun, "version_id"),
         "dag_version_number": lambda dagrun: DagRunInfo.dag_version_info(dagrun, "version_number"),
+        "deadlines": lambda dagrun: DagRunInfo.deadlines(dagrun),
     }
 
     @classmethod
@@ -738,11 +986,57 @@ class DagRunInfo(InfoJsonEncodable):
         return (dagrun.end_date - dagrun.start_date).total_seconds()
 
     @classmethod
-    def dag_version_info(cls, dagrun: DagRun, key: str) -> str | int | None:
-        # AF2 DagRun and AF3 DagRun SDK model (on worker) do not have this information
-        if not getattr(dagrun, "dag_versions", []):
+    def deadlines(cls, dagrun: DagRun) -> dict[str, Any] | None:
+        """
+        Extract deadline state and alert definitions from a DagRun (on scheduler).
+
+        Returns a dict (not a list) so _cast_basic_types passes it through.
+        """
+        try:
+            # AF2 DagRun and AF3 DagRun SDK model (on worker) do not have this information
+            deadlines = safe_getattr(dagrun, "deadlines")
+            if not deadlines:
+                return None
+        except Exception as err:
+            log.warning("OpenLineage failed to retrieve deadlines. Exception: %s", err)
             return None
-        current_version = dagrun.dag_versions[-1]
+
+        result = []
+        for d in deadlines:
+            try:
+                info: dict[str, Any] = {}
+                if deadline_time := getattr(d, "deadline_time", None):
+                    info["deadline_time"] = deadline_time.isoformat()
+                if (missed := getattr(d, "missed", None)) is not None:
+                    info["missed"] = missed
+                try:
+                    # deadline_alert is a lazy-loaded ORM relationship that may
+                    # trigger a DB query; keep it isolated so a detached-session
+                    # error doesn't discard the rest of the deadline info.
+                    if alert := safe_getattr(d, "deadline_alert"):
+                        info.update(
+                            {
+                                k: v
+                                for k in ("name", "description", "reference", "interval", "callback_def")
+                                if (v := getattr(alert, k, None)) is not None
+                            }
+                        )
+                except Exception as err:
+                    log.warning("OpenLineage could not load deadline_alert relationship for %s", err)
+                if info:
+                    result.append(info)
+            except Exception as err:
+                log.warning("OpenLineage failed to serialize deadline: %s", err)
+        return {"alerts": result} if result else None
+
+    @classmethod
+    def dag_version_info(cls, dagrun: DagRun, key: str) -> str | int | None:
+        """Extract deg version info for given key, sourced from DagRun (on scheduler)."""
+        # AF2 DagRun and AF3 DagRun SDK model (on worker) do not have this information
+        dag_versions = safe_getattr(dagrun, "dag_versions", [])
+        if not dag_versions:
+            return None
+        current_version = dag_versions[-1]
         if key == "bundle_name":
             return current_version.bundle_name
         if key == "bundle_version":
@@ -761,6 +1055,9 @@ class TaskInstanceInfo(InfoJsonEncodable):
     casts = {
         "log_url": lambda ti: getattr(ti, "log_url", None),
         "map_index": lambda ti: ti.map_index if getattr(ti, "map_index", -1) != -1 else None,
+        "rendered_map_index": lambda ti: (
+            getattr(ti, "rendered_map_index", None) if getattr(ti, "map_index", -1) != -1 else None
+        ),
         "dag_bundle_version": lambda ti: (
             ti.bundle_instance.version if hasattr(ti, "bundle_instance") else None
         ),
@@ -769,9 +1066,80 @@ class TaskInstanceInfo(InfoJsonEncodable):
 
 
 class AssetInfo(InfoJsonEncodable):
-    """Defines encoding Airflow Asset object to JSON."""
+    """
+    Defines encoding Airflow Asset object to JSON.
+
+    Output shape: ``{"uri", "extra", "type"[, "source_alias"]}``.
+    ``type`` distinguishes how the asset showed up on the task:
+
+    * ``"asset"`` - statically declared on ``task.outlets`` / ``task.inlets``.
+    * ``"asset_event"`` — emitted dynamically via ``outlet_events[asset].extra``.
+    * ``"asset_event_from_alias"`` — resolved at runtime from an ``AssetAlias``
+      via ``outlet_events[alias].add(asset, ...)``; ``source_alias`` then carries the alias name.
+
+    ``AssetAlias`` are intentionally NOT included - they are just helpers with no URI of their own.
+    """
 
     includes = ["uri", "extra"]
+
+    def __init__(self, obj, asset_type: str = "asset", source_alias: str | None = None):
+        self.type = asset_type
+        self.source_alias = source_alias
+        super().__init__(obj)
+
+    def _extend_fields(self) -> None:
+        if self.type:
+            self._fields.append("type")
+        if self.source_alias:
+            self._fields.append("source_alias")
+
+
+def get_runtime_outlet_assets(task_instance) -> list[tuple[Asset, AssetAlias | None]]:
+    """
+    Return ``(asset, alias)`` pairs for every runtime-attached outlet.
+
+    * ``outlet_events[AssetAlias].add(asset, ...)`` → ``(asset, alias)``.
+    * ``outlet_events[Asset].extra = {...}`` → ``(asset, None)``.
+
+    Empty list on AF2 or when ``task_instance`` is not an AF3 ``RuntimeTaskInstance``
+    (scheduler / API-server path has no usable worker template context).
+    """
+    if not AIRFLOW_V_3_0_PLUS:
+        return []
+    try:
+        from airflow.sdk.execution_time.task_runner import RuntimeTaskInstance
+    except ImportError:
+        return []
+    if not isinstance(task_instance, RuntimeTaskInstance):
+        return []
+    if not hasattr(task_instance, "get_template_context"):
+        return []
+    outlet_events = task_instance.get_template_context().get("outlet_events")
+    if outlet_events is None:
+        return []
+    results: list[tuple[Asset, AssetAlias | None]] = []
+    for key in outlet_events:
+        accessor = outlet_events[key]
+        if isinstance(key, AssetAlias):
+            for event in getattr(accessor, "asset_alias_events", []) or []:
+                # ``dest_asset_extra`` was introduced in Airflow 3.1.4 ; on
+                # earlier versions the alias event carries only ``extra``.
+                dest_asset_extra = getattr(event, "dest_asset_extra", None) or {}
+                results.append(
+                    (
+                        Asset(
+                            name=event.dest_asset_key.name,
+                            uri=event.dest_asset_key.uri,
+                            # Per-event extra wins over asset-level extra.
+                            extra={**dest_asset_extra, **(event.extra or {})},
+                        ),
+                        key,
+                    )
+                )
+        elif isinstance(key, Asset):
+            if extra := (getattr(accessor, "extra", None) or {}):
+                results.append((Asset(name=key.name, uri=key.uri, extra=dict(extra)), None))
+    return results
 
 
 class TaskInfo(InfoJsonEncodable):
@@ -810,6 +1178,7 @@ class TaskInfo(InfoJsonEncodable):
         # Operator-specific useful attributes
         "trigger_dag_id",  # TriggerDagRunOperator
         "trigger_run_id",  # TriggerDagRunOperator
+        "note",  # TriggerDagRunOperator
         "external_dag_id",  # ExternalTaskSensor and ExternalTaskMarker (if run, as it's EmptyOperator)
         "external_task_id",  # ExternalTaskSensor and ExternalTaskMarker (if run, as it's EmptyOperator)
         "external_task_ids",  # ExternalTaskSensor
@@ -817,6 +1186,24 @@ class TaskInfo(InfoJsonEncodable):
         "external_dates_filter",  # ExternalTaskSensor
         "logical_date",  # AF 3 ExternalTaskMarker (if run, as it's EmptyOperator)
         "execution_date",  # AF 2 ExternalTaskMarker (if run, as it's EmptyOperator)
+        "database",  # BaseSQlOperator
+        "parameters",  # SQLCheckOperator, SQLValueCheckOperator and BranchSQLOperator
+        "column_mapping",  # SQLColumnCheckOperator
+        "pass_value",  # SQLValueCheckOperator
+        "tol",  # SQLValueCheckOperator
+        "metrics_thresholds",  # SQLIntervalCheckOperator
+        "ratio_formula",  # SQLIntervalCheckOperator
+        "ignore_zero",  # SQLIntervalCheckOperator
+        "min_threshold",  # SQLThresholdCheckOperator
+        "max_threshold",  # SQLThresholdCheckOperator
+        "follow_task_ids_if_true",  # BranchSQLOperator
+        "follow_task_ids_if_false",  # BranchSQLOperator
+        "follow_branch",  # BranchSQLOperator
+        "preoperator",  # SQLInsertRowsOperator
+        "postoperator",  # SQLInsertRowsOperator
+        "table_name_with_schema",  # SQLInsertRowsOperator
+        "column_names",  # SQLInsertRowsOperator
+        "hitl_summary",  # All HITLOperator based operators
     ]
     casts = {
         "operator_class": lambda task: task.task_type,
@@ -830,6 +1217,25 @@ class TaskInfo(InfoJsonEncodable):
         "outlets": lambda task: [AssetInfo(o) for o in task.outlets if isinstance(o, Asset)],
         "operator_provider_version": lambda task: get_operator_provider_version(task),
     }
+
+    def __init__(self, obj, runtime_assets: list[tuple[Asset, AssetAlias | None]] | None = None):
+        self._runtime_assets = runtime_assets  # Will not be included in final dict, not in self._fields.
+        super().__init__(obj)
+
+    def _extend_fields(self) -> None:
+        if not self._runtime_assets:
+            return
+        if not hasattr(self, "outlets"):  # Should never happen, just in case
+            self.outlets = []
+            self._fields.append("outlets")
+        for asset, alias in self._runtime_assets:
+            # Append runtime-resolved outlets (alias resolutions + dynamic asset events).
+            # Inlets are not touched - Airflow has no dynamic inlets.
+            self.outlets.append(
+                AssetInfo(asset, asset_type="asset_event")
+                if alias is None
+                else AssetInfo(asset, asset_type="asset_event_from_alias", source_alias=alias.name)
+            )
 
 
 class TaskInfoComplete(TaskInfo):
@@ -914,17 +1320,22 @@ def get_airflow_debug_facet() -> dict[str, AirflowDebugRunFacet]:
 
 def get_airflow_run_facet(
     dag_run: DagRun,
-    dag: DAG,
+    dag: DAG | SerializedDAG,
     task_instance: TaskInstance,
     task: BaseOperator,
     task_uuid: str,
 ) -> dict[str, AirflowRunFacet]:
+    runtime_assets = get_runtime_outlet_assets(task_instance)
     return {
         "airflow": AirflowRunFacet(
             dag=DagInfo(dag),
             dagRun=DagRunInfo(dag_run),
             taskInstance=TaskInstanceInfo(task_instance),
-            task=TaskInfoComplete(task) if conf.include_full_task_info() else TaskInfo(task),
+            task=(
+                TaskInfoComplete(task, runtime_assets=runtime_assets)
+                if conf.include_full_task_info()
+                else TaskInfo(task, runtime_assets=runtime_assets)
+            ),
             taskUuid=task_uuid,
         )
     }
@@ -933,13 +1344,19 @@ def get_airflow_run_facet(
 def get_airflow_job_facet(dag_run: DagRun) -> dict[str, AirflowJobFacet]:
     if not dag_run.dag:
         return {}
-    return {
-        "airflow": AirflowJobFacet(
-            taskTree={},  # caused OOM errors, to be removed, see #41587
-            taskGroups=_get_task_groups_details(dag_run.dag),
-            tasks=_get_tasks_details(dag_run.dag),
-        )
-    }
+    try:
+        edge_map = _build_labeled_edge_map(dag_run.dag)
+        return {
+            "airflow": AirflowJobFacet(
+                taskTree={},  # caused OOM errors, to be removed, see #41587
+                taskGroups=_get_task_groups_details(dag=dag_run.dag, edge_map=edge_map),
+                tasks=_get_tasks_details(dag=dag_run.dag, edge_map=edge_map),
+            )
+        }
+    except Exception as e:
+        log.warning("Failed to build AirflowJobFacet for DagRun %s/%s: %s.", dag_run.dag, dag_run.run_id, e)
+        log.debug("Exception details:", exc_info=True)
+        return {}
 
 
 def get_airflow_state_run_facet(
@@ -964,9 +1381,433 @@ def get_airflow_state_run_facet(
     }
 
 
-def _get_tasks_details(dag: DAG | SerializedDAG) -> dict:
-    tasks = {
-        single_task.task_id: {
+def is_dag_run_asset_triggered(
+    dag_run: DagRun,
+):
+    """Return whether the given DAG run was triggered by an asset."""
+    if AIRFLOW_V_3_0_PLUS:
+        from airflow.utils.types import DagRunTriggeredByType
+
+        return dag_run.triggered_by == DagRunTriggeredByType.ASSET
+
+    # AF 2 Path
+    from airflow.models.dagrun import DagRunType
+
+    return dag_run.run_type == DagRunType.DATASET_TRIGGERED  # type: ignore[attr-defined]  # This attr is available on AF2, but mypy can't see it
+
+
+def build_task_instance_ol_run_id(
+    dag_id: str,
+    task_id: str,
+    try_number: int,
+    logical_date: datetime.datetime,
+    map_index: int,
+):
+    """
+    Generate a deterministic OpenLineage run ID for a task instance.
+
+    Args:
+        dag_id: The DAG identifier.
+        task_id: The task identifier.
+        try_number: The task try number.
+        logical_date: The logical execution date from dagrun.
+        map_index: The task map index.
+
+    Returns:
+        A deterministic OpenLineage run ID for the task instance.
+    """
+    return str(
+        generate_static_uuid(
+            instant=logical_date,
+            data=f"{conf.namespace()}.{dag_id}.{task_id}.{try_number}.{map_index}".encode(),
+        )
+    )
+
+
+def is_valid_uuid(uuid_string: str | None) -> bool:
+    """Validate that a string is a valid UUID format."""
+    if uuid_string is None:
+        return False
+    try:
+        from uuid import UUID
+
+        UUID(uuid_string)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def build_dag_run_ol_run_id(dag_id: str, logical_date: datetime.datetime, clear_number: int) -> str:
+    """
+    Generate a deterministic OpenLineage run ID for a DAG run.
+
+    Args:
+        dag_id: The DAG identifier.
+        logical_date: The logical execution date.
+        clear_number: The DAG run clear number.
+
+    Returns:
+        A deterministic OpenLineage run ID for the DAG run.
+    """
+    return str(
+        generate_static_uuid(
+            instant=logical_date,
+            data=f"{conf.namespace()}.{dag_id}.{clear_number}".encode(),
+        )
+    )
+
+
+def _get_eagerly_loaded_dagrun_consumed_asset_events(dag_id: str, dag_run_id: str) -> list[AssetEvent]:
+    """
+    Retrieve consumed asset events for a DagRun with relationships eagerly loaded.
+
+    Downstream code accesses source_task_instance, source_dag_run, and asset on each AssetEvent.
+    These relationships are lazy-loaded by default, which could cause N+1 query problem
+    (2 + 3*N queries for N events). Using `joinedload` fetches everything in a single query.
+    The returned AssetEvent objects have all needed relationships pre-populated in memory,
+    so they can be safely used after the session is closed.
+
+    Returns:
+        AssetEvent objects with populated relationships, or empty list if DagRun not found.
+    """
+    # This should only be used on scheduler, so DB access is allowed
+    from sqlalchemy import select
+    from sqlalchemy.orm import joinedload
+
+    from airflow.utils.session import create_session
+
+    if AIRFLOW_V_3_0_PLUS:
+        from airflow.models.asset import AssetEvent
+
+        options = (
+            joinedload(DagRun.consumed_asset_events).joinedload(AssetEvent.source_dag_run),
+            joinedload(DagRun.consumed_asset_events).joinedload(AssetEvent.source_task_instance),
+            joinedload(DagRun.consumed_asset_events).joinedload(AssetEvent.asset),
+        )
+
+    else:  # AF2 path
+        from airflow.models.dataset import DatasetEvent
+
+        options = (
+            joinedload(DagRun.consumed_dataset_events).joinedload(DatasetEvent.source_dag_run),
+            joinedload(DagRun.consumed_dataset_events).joinedload(DatasetEvent.source_task_instance),
+            joinedload(DagRun.consumed_dataset_events).joinedload(DatasetEvent.dataset),
+        )
+
+    with create_session() as session:
+        dag_run_with_events = session.scalar(
+            select(DagRun).where(DagRun.dag_id == dag_id).where(DagRun.run_id == dag_run_id).options(*options)
+        )
+
+    if not dag_run_with_events:
+        return []
+
+    if AIRFLOW_V_3_0_PLUS:
+        events = dag_run_with_events.consumed_asset_events
+    else:  # AF2 path
+        events = dag_run_with_events.consumed_dataset_events
+
+    return events
+
+
+def _extract_ol_info_from_asset_event(asset_event: AssetEvent) -> dict[str, str] | None:
+    """
+    Extract OpenLineage job information from an AssetEvent.
+
+    Information is gathered from multiple potential sources, checked in priority
+    order:
+    1. TaskInstance (primary): Provides the most complete and reliable context.
+    2. AssetEvent source fields (fallback): Offers basic `dag_id.task_id` metadata.
+    3. `asset_event.extra["openlineage"]` (last resort): May include user provided OpenLineage details.
+
+    Args:
+        asset_event: The AssetEvent from which to extract job information.
+
+    Returns:
+        A dictionary containing `job_name`, `job_namespace`, and optionally
+        `run_id`, or `None` if insufficient information is available.
+    """
+    # First check for TaskInstance
+    if ti := asset_event.source_task_instance:
+        result = {
+            "job_name": get_job_name(ti),
+            "job_namespace": conf.namespace(),
+        }
+        source_dr = asset_event.source_dag_run
+        if source_dr:
+            logical_date = source_dr.logical_date  # Get logical date from DagRun for OL run_id generation
+            if AIRFLOW_V_3_0_PLUS and logical_date is None:
+                logical_date = source_dr.run_after
+            if logical_date is not None:
+                result["run_id"] = build_task_instance_ol_run_id(
+                    dag_id=ti.dag_id,
+                    task_id=ti.task_id,
+                    try_number=ti.try_number,
+                    logical_date=logical_date,
+                    map_index=ti.map_index,
+                )
+        return result
+
+    # Then, check AssetEvent source_* fields
+    if asset_event.source_dag_id and asset_event.source_task_id:
+        return {
+            "job_name": f"{asset_event.source_dag_id}.{asset_event.source_task_id}",
+            "job_namespace": conf.namespace(),
+            # run_id cannot be constructed from these fields alone
+        }
+
+    # Lastly, check asset_event.extra["openlineage"]
+    if asset_event.extra:
+        ol_info_from_extra = asset_event.extra.get("openlineage")
+        if isinstance(ol_info_from_extra, dict):
+            job_name = ol_info_from_extra.get("parentJobName")
+            job_namespace = ol_info_from_extra.get("parentJobNamespace")
+            run_id = ol_info_from_extra.get("parentRunId")
+
+            if job_name and job_namespace:
+                result = {
+                    "job_name": str(job_name),
+                    "job_namespace": str(job_namespace),
+                }
+                if run_id:
+                    if not is_valid_uuid(str(run_id)):
+                        log.warning(
+                            "Invalid runId in AssetEvent.extra; ignoring value. event_id=%s, run_id=%s",
+                            asset_event.id,
+                            run_id,
+                        )
+                    else:
+                        result["run_id"] = str(run_id)
+                return result
+    return None
+
+
+def _get_ol_job_dependencies_from_asset_events(events: list[AssetEvent]) -> list[dict[str, Any]]:
+    """
+    Extract and deduplicate OpenLineage job dependencies from asset events.
+
+    This function processes a list of asset events, extracts OpenLineage dependency information
+    from all relevant sources, and deduplicates the results based on the tuple (job_namespace, job_name, run_id)
+    to prevent emitting duplicate dependencies. Multiple asset events from the same job but different
+    source runs/assets are aggregated into a single dependency entry with all source information preserved.
+
+    Args:
+        events: List of AssetEvent objects to process.
+
+    Returns:
+        A list of deduplicated dictionaries containing OpenLineage job dependency information.
+        Each dictionary includes job_name, job_namespace, optional run_id, and an asset_events
+        list containing source information from all aggregated events.
+    """
+    # Use a dictionary keyed by (namespace, job_name, run_id) to deduplicate
+    # Multiple asset events from the same task instance should only create one dependency
+    deduplicated_jobs: dict[tuple[str, str, str | None], dict[str, Any]] = {}
+
+    for asset_event in events:
+        # Extract OpenLineage information
+        ol_info = _extract_ol_info_from_asset_event(asset_event)
+
+        # Skip if we don't have minimum required info (job_name and namespace)
+        if not ol_info:
+            log.debug(
+                "Insufficient OpenLineage information, skipping asset event: %s",
+                str(asset_event),
+            )
+            continue
+
+        # Create deduplication key: (namespace, job_name, run_id)
+        # We deduplicate on job identity (namespace + name + run_id), not on source dag_run_id
+        # Multiple asset events from the same job but different source runs/assets are aggregated
+        dedup_key = (
+            ol_info["job_namespace"],
+            ol_info["job_name"],
+            ol_info.get("run_id"),
+        )
+
+        # Collect source information for this asset event
+        source_info = {
+            "dag_run_id": asset_event.source_run_id,
+            "asset_event_id": asset_event.id,
+            "asset_event_extra": asset_event.extra or None,
+            "asset_id": asset_event.asset_id if AIRFLOW_V_3_0_PLUS else asset_event.dataset_id,
+            "asset_uri": asset_event.uri,
+            "partition_key": getattr(asset_event, "partition_key", None),
+        }
+
+        if dedup_key not in deduplicated_jobs:
+            # First occurrence: create the job entry with initial source info
+            deduplicated_jobs[dedup_key] = {**ol_info, "asset_events": [source_info]}
+        else:
+            # Already seen: append source info to existing entry
+            deduplicated_jobs[dedup_key]["asset_events"].append(source_info)
+
+    result = list(deduplicated_jobs.values())
+    return result
+
+
+def _build_job_dependency_facet(
+    dag_id: str, dag_run_id: str
+) -> dict[str, job_dependencies_run.JobDependenciesRunFacet]:
+    """
+    Build the JobDependenciesRunFacet for a DagRun.
+
+    Args:
+        dag_id: The DAG identifier.
+        dag_run_id: The DagRun identifier.
+
+    Returns:
+        A dictionary containing the JobDependenciesRunFacet, or an empty dictionary.
+    """
+    log.info(
+        "Building OpenLineage JobDependenciesRunFacet for DagRun(dag_id=%s, run_id=%s).",
+        dag_id,
+        dag_run_id,
+    )
+    events = _get_eagerly_loaded_dagrun_consumed_asset_events(dag_id, dag_run_id)
+
+    if not events:
+        log.info("DagRun %s/%s has no consumed asset events", dag_id, dag_run_id)
+        return {}
+
+    ol_dependencies = _get_ol_job_dependencies_from_asset_events(events=events)
+
+    if not ol_dependencies:
+        log.info(
+            "No OpenLineage job dependencies generated from asset events consumed by DagRun %s/%s.",
+            dag_id,
+            dag_run_id,
+        )
+        return {}
+
+    upstream_dependencies = []
+    for job in ol_dependencies:
+        job_identifier = job_dependencies_run.JobIdentifier(
+            namespace=job["job_namespace"],
+            name=job["job_name"],
+        )
+
+        run_identifier = None
+        if job.get("run_id"):
+            run_identifier = job_dependencies_run.RunIdentifier(runId=job["run_id"])
+
+        job_dependency = job_dependencies_run.JobDependency(
+            job=job_identifier,
+            run=run_identifier,
+            dependency_type="IMPLICIT_ASSET_DEPENDENCY",
+        ).with_additional_properties(airflow={"asset_events": job.get("asset_events")})  # type: ignore[arg-type]  # Fixed in OL client 1.42, waiting for release
+
+        upstream_dependencies.append(job_dependency)
+
+    return {
+        "jobDependencies": job_dependencies_run.JobDependenciesRunFacet(
+            upstream=upstream_dependencies,
+        )
+    }
+
+
+def get_dag_job_dependency_facet(
+    dag_id: str, dag_run_id: str
+) -> dict[str, job_dependencies_run.JobDependenciesRunFacet]:
+    """
+    Safely retrieve the asset-triggered job dependency facet for a DagRun.
+
+    This function collects information about the asset events that triggered the specified DagRun,
+    including details about the originating DAG runs and task instances. If the DagRun was not triggered
+    by assets, or if any error occurs during lookup or processing, the function logs the error and returns
+    an empty dictionary. This guarantees that facet generation never raises exceptions and does not
+    interfere with event emission processes.
+
+    Args:
+        dag_id: The DAG identifier.
+        dag_run_id: The DagRun identifier.
+
+    Returns:
+        A dictionary with JobDependenciesRunFacet, or an empty dictionary
+        if the DagRun was not asset-triggered or if an error occurs.
+    """
+    try:
+        return _build_job_dependency_facet(dag_id=dag_id, dag_run_id=dag_run_id)
+    except Exception as e:
+        log.warning("Failed to build JobDependenciesRunFacet for DagRun %s/%s: %s.", dag_id, dag_run_id, e)
+        log.debug("Exception details:", exc_info=True)
+        return {}
+
+
+def _build_labeled_edge_map(dag: DAG | SerializedDAG) -> dict[str, tuple[dict, dict]]:
+    """
+    Build a mapping of classified labeled edges for every task and group in the DAG.
+
+    Translates Airflow's internal ``dag.edge_info`` (which uses virtual
+    ``downstream_join_id`` / ``upstream_join_id`` keys) into a clean mapping
+    keyed by real ``task_id`` or ``group_id``.  Each value is a tuple of
+    ``(downstream_task_edges, downstream_group_edges)`` sorted dicts.
+
+    ``downstream_task_edges``
+        Target is a **specific task**.  Keyed by ``task_id``, regardless of
+        whether source and target are in the same group, different groups,
+        or at root level.
+
+    ``downstream_group_edges``
+        Target is a **TaskGroup as a whole**.  Keyed by ``group_id``.
+        Only produced by ``task >> TaskGroup`` or ``TaskGroup >> TaskGroup``.
+
+    **How to read the result (for OL event consumers)**
+
+    Look up ``edge_map.get(task_id)`` or ``edge_map.get(group_id)``.
+    Missing keys mean no labeled edges from that source.  Unlabeled edges
+    are not included — use ``downstream_task_ids`` for the full dependency
+    graph.
+
+    Key points:
+
+    - Cross-group task-to-task labels (e.g. ``step_2 >> Label >> final``
+      where the tasks are in different groups) appear under the **source
+      group's** key, not the originating task's key, because Airflow promotes
+      labels to the group boundary.
+    - ``task >> TaskGroup`` produces entries in **both** dicts: per-root-task
+      entries in ``downstream_task_edges`` and a group-level entry in
+      ``downstream_group_edges``, all with the same label.
+
+    See ``test_get_tasks_details_with_edge_labels`` for a comprehensive example
+    covering all edge patterns (same-group, cross-group, task-to-TaskGroup,
+    TaskGroup-to-TaskGroup, nested groups, etc.).
+    """
+    edge_info = dag.edge_info or {}
+    if not edge_info:
+        return {}
+
+    upstream_join_id_to_group_id: dict[str, str] = {}
+    downstream_join_id_to_group_id: dict[str, str] = {}
+
+    for tg_id, tg in dag.task_group_dict.items():
+        upstream_join_id_to_group_id[tg.upstream_join_id] = tg_id
+        downstream_join_id_to_group_id[tg.downstream_join_id] = tg_id
+
+    result: dict[str, tuple[dict, dict]] = {}
+    for source_id, edges in edge_info.items():
+        # Resolve downstream_join_id sources to their owning group_id
+        group_id = downstream_join_id_to_group_id.get(source_id)
+        logical_key = group_id if group_id is not None else source_id
+
+        task_edges: dict = {}
+        group_edges: dict = {}
+        for target_id, info in sorted(edges.items()):
+            resolved_group = upstream_join_id_to_group_id.get(target_id)
+            if resolved_group is not None:  # If target is a group, classify as group edge
+                group_edges[resolved_group] = info
+            else:
+                task_edges[target_id] = info
+
+        result[logical_key] = (task_edges, group_edges)
+
+    return result
+
+
+def _get_tasks_details(dag: DAG | SerializedDAG, edge_map: dict[str, tuple[dict, dict]]) -> dict:
+    tasks = {}
+    for single_task in sorted(dag.tasks, key=lambda x: x.task_id):
+        task_edges, group_edges = edge_map.get(single_task.task_id, ({}, {}))
+        tasks[single_task.task_id] = {
             "operator": get_fully_qualified_class_name(single_task),
             "task_group": single_task.task_group.group_id if single_task.task_group else None,
             "emits_ol_events": _emits_ol_events(single_task),
@@ -976,23 +1817,25 @@ def _get_tasks_details(dag: DAG | SerializedDAG) -> dict:
             "is_setup": single_task.is_setup,
             "is_teardown": single_task.is_teardown,
             "downstream_task_ids": sorted(single_task.downstream_task_ids),
+            "downstream_task_edges": task_edges,
+            "downstream_group_edges": group_edges,
         }
-        for single_task in sorted(dag.tasks, key=lambda x: x.task_id)
-    }
-
     return tasks
 
 
-def _get_task_groups_details(dag: DAG | SerializedDAG) -> dict:
-    return {
-        tg_id: {
-            "parent_group": tg.parent_group.group_id,
+def _get_task_groups_details(dag: DAG | SerializedDAG, edge_map: dict[str, tuple[dict, dict]]) -> dict:
+    result = {}
+    for tg_id, tg in dag.task_group_dict.items():
+        task_edges, group_edges = edge_map.get(tg_id, ({}, {}))
+        result[tg_id] = {
+            "parent_group": tg.parent_group.group_id if tg.parent_group else None,
             "ui_color": tg.ui_color,
             "ui_fgcolor": tg.ui_fgcolor,
             "ui_label": tg.label,
+            "downstream_task_edges": task_edges,
+            "downstream_group_edges": group_edges,
         }
-        for tg_id, tg in dag.task_group_dict.items()
-    }
+    return result
 
 
 def _emits_ol_events(task: AnyOperator) -> bool:
@@ -1189,6 +2032,28 @@ def should_use_external_connection(hook) -> bool:
     return True
 
 
+def _get_providers_manager_instance():
+    """
+    Return the ProvidersManager instance to use for OpenLineage converter lookup.
+
+    Picks the task-runtime-safe entry point on Airflow 3.2+ and falls back to the legacy
+    ``airflow.providers_manager.ProvidersManager``.
+
+    Kept as a module-level function so tests can patch this single seam with a plain
+    ``mock.patch(..., return_value=fake_pm)`` instead of juggling ``sys.modules`` or
+    dotted paths that may not exist on the target Airflow version.
+    """
+    try:
+        # Task-runtime-safe entry point — only available in Airflow 3.2+.
+        from airflow.sdk.plugins_manager import ProvidersManagerTaskRuntime
+
+        return ProvidersManagerTaskRuntime()
+    except (ImportError, ModuleNotFoundError, AttributeError):
+        from airflow.providers_manager import ProvidersManager
+
+        return ProvidersManager()
+
+
 def translate_airflow_asset(asset: Asset, lineage_context) -> OpenLineageDataset | None:
     """
     Convert an Asset with an AIP-60 compliant URI to an OpenLineageDataset.
@@ -1202,26 +2067,35 @@ def translate_airflow_asset(asset: Asset, lineage_context) -> OpenLineageDataset
         try:
             from airflow.datasets import _get_normalized_scheme  # type: ignore[no-redef]
         except ImportError:
+            log.debug("Could not import objects required for asset translation.")
             return None
 
-    try:
-        from airflow.providers_manager import ProvidersManager
-
-        ol_converters = getattr(ProvidersManager(), "asset_to_openlineage_converters", None)
-        if not ol_converters:
-            ol_converters = ProvidersManager().dataset_to_openlineage_converters  # type: ignore[attr-defined]
-
-        normalized_uri = asset.normalized_uri
-    except (ImportError, AttributeError):
+    providers_manager = _get_providers_manager_instance()
+    if providers_manager is None:
+        log.debug("Could not resolve a ProvidersManager instance for asset translation.")
         return None
 
-    if normalized_uri is None:
+    ol_converters = getattr(providers_manager, "asset_to_openlineage_converters", None)
+    if not ol_converters:
+        ol_converters = getattr(providers_manager, "dataset_to_openlineage_converters", None)
+    if not ol_converters:
+        log.debug("Could not retrieve openlineage converters.")
+        return None
+
+    if not (normalized_uri := getattr(asset, "normalized_uri", None)):
+        log.debug("Normalized uri is not accessible or empty.")
         return None
 
     if not (normalized_scheme := _get_normalized_scheme(normalized_uri)):
+        log.debug("Normalized scheme is empty for URI `%s`.", normalized_uri)
         return None
 
     if (airflow_to_ol_converter := ol_converters.get(normalized_scheme)) is None:
+        log.debug("No converter found for scheme `%s`.", normalized_scheme)
         return None
 
-    return airflow_to_ol_converter(Asset(uri=normalized_uri, extra=asset.extra), lineage_context)
+    try:
+        return airflow_to_ol_converter(Asset(uri=normalized_uri, extra=asset.extra), lineage_context)
+    except Exception as err:
+        log.debug("Airflow asset `%s` conversion to OL Dataset failed with err `%s`", normalized_uri, err)
+        return None

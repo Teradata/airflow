@@ -16,43 +16,46 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { createListCollection, type SelectValueChangeDetails } from "@chakra-ui/react";
 import { useTranslation } from "react-i18next";
+import { MdStar, MdStarOutline } from "react-icons/md";
 
-import { Select } from "src/components/ui";
+import { ButtonGroupToggle } from "src/components/ui/ButtonGroupToggle";
+
+type FavoriteValue = "all" | "false" | "true";
 
 type Props = {
-  readonly onFavoriteChange: (details: SelectValueChangeDetails<string>) => void;
-  readonly showFavorites: string | null;
+  readonly onChange: (value: FavoriteValue) => void;
+  readonly value: FavoriteValue;
 };
 
-export const FavoriteFilter = ({ onFavoriteChange, showFavorites }: Props) => {
+export const FavoriteFilter = ({ onChange, value }: Props) => {
   const { t: translate } = useTranslation("dags");
 
-  const enabledOptions = createListCollection({
-    items: [
-      { label: translate("filters.favorite.all"), value: "all" },
-      { label: translate("filters.favorite.favorite"), value: "true" },
-      { label: translate("filters.favorite.unfavorite"), value: "false" },
-    ],
-  });
-
   return (
-    <Select.Root
-      collection={enabledOptions}
-      onValueChange={onFavoriteChange}
-      value={[showFavorites ?? "all"]}
-    >
-      <Select.Trigger colorPalette="brand" isActive={Boolean(showFavorites)}>
-        <Select.ValueText width={20} />
-      </Select.Trigger>
-      <Select.Content>
-        {enabledOptions.items.map((option) => (
-          <Select.Item item={option} key={option.label}>
-            {option.label}
-          </Select.Item>
-        ))}
-      </Select.Content>
-    </Select.Root>
+    <ButtonGroupToggle<FavoriteValue>
+      onChange={onChange}
+      options={[
+        { label: translate("filters.favorite.all"), value: "all" },
+        {
+          label: (
+            <>
+              <MdStar />
+              {translate("filters.favorite.favorite")}
+            </>
+          ),
+          value: "true",
+        },
+        {
+          label: (
+            <>
+              <MdStarOutline />
+              {translate("filters.favorite.unfavorite")}
+            </>
+          ),
+          value: "false",
+        },
+      ]}
+      value={value}
+    />
   );
 };

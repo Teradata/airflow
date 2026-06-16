@@ -43,7 +43,11 @@ function install_airflow_and_providers_from_docker_context_files(){
     fi
 
     # This is needed to get distribution names for local context distributions
-    ${PACKAGING_TOOL_CMD} install ${EXTRA_INSTALL_FLAGS} ${ADDITIONAL_PIP_INSTALL_FLAGS} --constraint ${HOME}/constraints.txt packaging
+    if [[ -f "${HOME}/constraints.txt" ]]; then
+        ${PACKAGING_TOOL_CMD} install ${EXTRA_INSTALL_FLAGS} ${ADDITIONAL_PIP_INSTALL_FLAGS} --constraint ${HOME}/constraints.txt packaging
+    else
+        ${PACKAGING_TOOL_CMD} install ${EXTRA_INSTALL_FLAGS} ${ADDITIONAL_PIP_INSTALL_FLAGS} packaging
+    fi
 
     if [[ -n ${AIRFLOW_EXTRAS=} ]]; then
         AIRFLOW_EXTRAS_TO_INSTALL="[${AIRFLOW_EXTRAS}]"
@@ -81,8 +85,11 @@ function install_airflow_and_providers_from_docker_context_files(){
         install_airflow_core_distribution=("apache-airflow-core==${AIRFLOW_VERSION}")
     fi
 
-    # Find Provider/TaskSDK/CTL distributions in docker-context files
-    readarray -t airflow_distributions< <(python /scripts/docker/get_distribution_specs.py /docker-context-files/apache?airflow?{providers,task?sdk,airflowctl}*.{whl,tar.gz} 2>/dev/null || true)
+    # Find Provider/TaskSDK/CTL distributions in docker-context files.
+    # NOTE: the ctl wheel is named ``apache_airflow_ctl-*.whl`` (distribution
+    # ``apache-airflow-ctl``), not ``apache_airflow_airflowctl-*.whl`` — the
+    # glob must say ``ctl``, not ``airflowctl``.
+    readarray -t airflow_distributions< <(python /scripts/docker/get_distribution_specs.py /docker-context-files/apache?airflow?{providers,task?sdk,ctl}*.{whl,tar.gz} 2>/dev/null || true)
     echo
     echo "${COLOR_BLUE}Found provider distributions in docker-context-files folder: ${airflow_distributions[*]}${COLOR_RESET}"
     echo
@@ -116,12 +123,31 @@ function install_airflow_and_providers_from_docker_context_files(){
     fi
 
     set -x
-    ${PACKAGING_TOOL_CMD} install ${EXTRA_INSTALL_FLAGS} \
+    if ! ${PACKAGING_TOOL_CMD} install ${EXTRA_INSTALL_FLAGS} \
         ${ADDITIONAL_PIP_INSTALL_FLAGS} \
         "${flags[@]}" \
-        "${install_airflow_distribution[@]}" "${install_airflow_core_distribution[@]}" "${airflow_distributions[@]}"
+        "${install_airflow_distribution[@]}" "${install_airflow_core_distribution[@]}" "${airflow_distributions[@]}"; then
+        set +x
+        if [[ ${AIRFLOW_FALLBACK_NO_CONSTRAINTS_INSTALLATION} != "true" ]]; then
+            echo
+            echo "${COLOR_RED}Failing because constraints installation failed and fallback is disabled.${COLOR_RESET}"
+            echo
+            exit 1
+        fi
+        echo
+        echo "${COLOR_YELLOW}Likely there are new dependencies conflicting with constraints.${COLOR_RESET}"
+        echo
+        echo "${COLOR_BLUE}Falling back to no-constraints installation.${COLOR_RESET}"
+        echo
+        set -x
+        ${PACKAGING_TOOL_CMD} install ${EXTRA_INSTALL_FLAGS} \
+                ${ADDITIONAL_PIP_INSTALL_FLAGS} \
+                "${install_airflow_distribution[@]}" "${install_airflow_core_distribution[@]}" \
+                "${airflow_distributions[@]}"
+    fi
     set +x
     common::install_packaging_tools
+    # We use pip check here to make sure that whatever `uv` installs, is also "correct" according to `pip`
     pip check
 }
 

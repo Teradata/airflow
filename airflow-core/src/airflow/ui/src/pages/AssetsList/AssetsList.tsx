@@ -16,33 +16,39 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { Box, Heading, Link, VStack } from "@chakra-ui/react";
+import { Flex, Heading, useDisclosure, VStack } from "@chakra-ui/react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { useSearchParams, Link as RouterLink } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 
 import { useAssetServiceGetAssets } from "openapi/queries";
 import type { AssetResponse } from "openapi/requests/types.gen";
 import { DataTable } from "src/components/DataTable";
 import { useTableURLState } from "src/components/DataTable/useTableUrlState";
 import { ErrorAlert } from "src/components/ErrorAlert";
+import { ExpandCollapseButtons } from "src/components/ExpandCollapseButtons";
+import RenderedJsonField from "src/components/RenderedJsonField";
 import { SearchBar } from "src/components/SearchBar";
 import Time from "src/components/Time";
-import { SearchParamsKeys } from "src/constants/searchParams";
+import { RouterLink } from "src/components/ui";
+import { SearchParamsKeys, type SearchParamsKeysType } from "src/constants/searchParams";
+import { useAdvancedSearch } from "src/hooks/useAdvancedSearch";
 import { CreateAssetEvent } from "src/pages/Asset/CreateAssetEvent";
 
 import { DependencyPopover } from "./DependencyPopover";
 
 type AssetRow = { row: { original: AssetResponse } };
 
-const createColumns = (translate: (key: string) => string): Array<ColumnDef<AssetResponse>> => [
+const createColumns = (
+  translate: (key: string) => string,
+  open?: boolean,
+): Array<ColumnDef<AssetResponse>> => [
   {
     accessorKey: "name",
     cell: ({ row: { original } }: AssetRow) => (
-      <Link asChild color="fg.info" fontWeight="bold">
-        <RouterLink to={`/assets/${original.id}`}>{original.name}</RouterLink>
-      </Link>
+      <RouterLink fontWeight="bold" to={`/assets/${original.id}`}>
+        {original.name}
+      </RouterLink>
     ),
     header: () => translate("name"),
   },
@@ -86,33 +92,51 @@ const createColumns = (translate: (key: string) => string): Array<ColumnDef<Asse
   },
   {
     accessorKey: "trigger",
-    cell: ({ row }) => <CreateAssetEvent asset={row.original} withText={false} />,
+    cell: ({ row }) => <CreateAssetEvent asset={row.original} />,
     enableSorting: false,
     header: "",
   },
+  {
+    accessorKey: "extra",
+    cell: ({ row: { original } }) => {
+      if (original.extra !== null) {
+        return <RenderedJsonField collapsed={!open} content={original.extra ?? {}} />;
+      }
+
+      return undefined;
+    },
+    enableSorting: false,
+    header: translate("extra"),
+    meta: {
+      skeletonWidth: 200,
+    },
+  },
 ];
 
-const NAME_PATTERN_PARAM = SearchParamsKeys.NAME_PATTERN;
+const { NAME_PATTERN, OFFSET }: SearchParamsKeysType = SearchParamsKeys;
 
 export const AssetsList = () => {
   const { t: translate } = useTranslation(["assets", "common"]);
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const namePattern = searchParams.get(NAME_PATTERN_PARAM) ?? "";
+  const namePattern = searchParams.get(NAME_PATTERN) ?? "";
+  const advancedSearch = useAdvancedSearch("assets");
 
   const { setTableURLState, tableURLState } = useTableURLState();
   const { pagination, sorting } = tableURLState;
   const [sort] = sorting;
   const orderBy = sort ? [`${sort.desc ? "-" : ""}${sort.id}`] : undefined;
 
+  const { onClose, onOpen, open } = useDisclosure();
+
   const { data, error, isLoading } = useAssetServiceGetAssets({
     limit: pagination.pageSize,
-    namePattern,
+    ...(advancedSearch.enabled ? { namePattern } : { namePrefixPattern: namePattern }),
     offset: pagination.pageIndex * pagination.pageSize,
     orderBy,
   });
 
-  const columns = useMemo(() => createColumns(translate), [translate]);
+  const columns = createColumns(translate, open);
 
   const handleSearchChange = (value: string) => {
     setTableURLState({
@@ -120,10 +144,11 @@ export const AssetsList = () => {
       sorting,
     });
     if (value) {
-      searchParams.set(NAME_PATTERN_PARAM, value);
+      searchParams.set(NAME_PATTERN, value);
     } else {
-      searchParams.delete(NAME_PATTERN_PARAM);
+      searchParams.delete(NAME_PATTERN);
     }
+    searchParams.delete(OFFSET);
     setSearchParams(searchParams);
   };
 
@@ -131,28 +156,36 @@ export const AssetsList = () => {
     <>
       <VStack alignItems="none">
         <SearchBar
-          buttonProps={{ disabled: true }}
+          advancedSearch={advancedSearch}
           defaultValue={namePattern}
           onChange={handleSearchChange}
-          placeHolder={translate("searchPlaceholder")}
+          placeholder={translate("searchPlaceholder")}
         />
 
-        <Heading py={3} size="md">
-          {data?.total_entries} {translate("common:asset", { count: data?.total_entries })}
-        </Heading>
+        <Flex alignItems="center" justifyContent="space-between">
+          <Heading py={3} size="md">
+            {data?.total_entries} {translate("common:asset", { count: data?.total_entries })}
+          </Heading>
+          <ExpandCollapseButtons
+            collapseLabel={translate("common:collapseAllExtra")}
+            expandLabel={translate("common:expandAllExtra")}
+            isExpanded={open}
+            onCollapse={onClose}
+            onExpand={onOpen}
+          />
+        </Flex>
       </VStack>
-      <Box overflow="auto">
-        <DataTable
-          columns={columns}
-          data={data?.assets ?? []}
-          errorMessage={<ErrorAlert error={error} />}
-          initialState={tableURLState}
-          isLoading={isLoading}
-          modelName={translate("common:asset_one")}
-          onStateChange={setTableURLState}
-          total={data?.total_entries}
-        />
-      </Box>
+      <DataTable
+        columns={columns}
+        data={data?.assets ?? []}
+        errorMessage={<ErrorAlert error={error} />}
+        initialState={tableURLState}
+        isLoading={isLoading}
+        modelName="common:asset"
+        onStateChange={setTableURLState}
+        showRowCountHeading={false}
+        total={data?.total_entries}
+      />
     </>
   );
 };

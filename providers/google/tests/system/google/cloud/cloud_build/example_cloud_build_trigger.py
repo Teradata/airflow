@@ -35,9 +35,9 @@ if AIRFLOW_V_3_0_PLUS:
 else:
     # Airflow 2 path
     from airflow.decorators import task  # type: ignore[attr-defined,no-redef]
-from airflow.exceptions import AirflowException
 from airflow.models.dag import DAG
 from airflow.models.xcom_arg import XComArg
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.cloud.operators.cloud_build import (
     CloudBuildCreateBuildTriggerOperator,
     CloudBuildDeleteBuildTriggerOperator,
@@ -200,5 +200,5 @@ with DAG(
 
 from tests_common.test_utils.system_tests import get_test_run  # noqa: E402
 
-# Needed to run the example DAG with pytest (see: tests/system/README.md#run_via_pytest)
+# Needed to run the example DAG with pytest (see: contributing-docs/testing/system_tests.rst)
 test_run = get_test_run(dag)

@@ -16,44 +16,45 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { Box, type ButtonProps, useDisclosure } from "@chakra-ui/react";
+import { useDisclosure } from "@chakra-ui/react";
 import { useTranslation } from "react-i18next";
 import { FiTrash2 } from "react-icons/fi";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import DeleteDialog from "src/components/DeleteDialog";
-import ActionButton from "src/components/ui/ActionButton";
+import { IconButton } from "src/components/ui";
 import { useDeleteDag } from "src/queries/useDeleteDag";
 
 type DeleteDagButtonProps = {
   readonly dagDisplayName: string;
   readonly dagId: string;
-  readonly withText?: boolean;
-} & ButtonProps;
+};
 
-const DeleteDagButton = ({ dagDisplayName, dagId, width, withText = true }: DeleteDagButtonProps) => {
+export const DeleteDagButton = ({ dagDisplayName, dagId }: DeleteDagButtonProps) => {
   const { onClose, onOpen, open } = useDisclosure();
   const navigate = useNavigate();
+  const location = useLocation();
   const { t: translate } = useTranslation("dags");
+
+  const isOnDagDetailPage = location.pathname.includes(`/dags/${dagId}`);
+
   const { isPending, mutate: deleteDag } = useDeleteDag({
     dagId,
     onSuccessConfirm: () => {
       onClose();
-      navigate("/dags");
+      if (isOnDagDetailPage) {
+        void Promise.resolve(navigate("/dags"));
+      }
     },
   });
 
+  const label = translate("dagActions.delete.button");
+
   return (
-    <Box width={width}>
-      <ActionButton
-        actionName={translate("dagActions.delete.button")}
-        colorPalette="danger"
-        icon={<FiTrash2 />}
-        onClick={onOpen}
-        text={translate("dagActions.delete.button")}
-        width={width}
-        withText={withText}
-      />
+    <>
+      <IconButton colorPalette="danger" label={label} onClick={onOpen}>
+        <FiTrash2 />
+      </IconButton>
 
       <DeleteDialog
         isDeleting={isPending}
@@ -61,11 +62,9 @@ const DeleteDagButton = ({ dagDisplayName, dagId, width, withText = true }: Dele
         onDelete={() => deleteDag({ dagId })}
         open={open}
         resourceName={dagDisplayName}
-        title={translate("dagActions.delete.button")}
+        title={label}
         warningText={translate("dagActions.delete.warning")}
       />
-    </Box>
+    </>
   );
 };
-
-export default DeleteDagButton;

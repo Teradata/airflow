@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, Any, cast
 import attrs
 
 from airflow.providers.standard.operators.python import PythonOperator
-from airflow.sdk.definitions.asset import Asset, AssetRef, BaseAsset
+from airflow.sdk.definitions.asset import Asset, AssetAll, BaseAsset
 from airflow.sdk.exceptions import AirflowRuntimeError
 
 if TYPE_CHECKING:
@@ -32,13 +32,14 @@ if TYPE_CHECKING:
     from pydantic.types import JsonValue
     from typing_extensions import Self
 
-    from airflow.sdk import DAG, AssetAlias, ObjectStoragePath
+    from airflow.sdk import DAG, ObjectStoragePath
     from airflow.sdk.bases.decorator import _TaskDecorator
-    from airflow.sdk.definitions.asset import AssetUniqueKey
     from airflow.sdk.definitions.dag import DagStateChangeCallback, ScheduleArg
     from airflow.sdk.definitions.param import ParamsDict
-    from airflow.serialization.dag_dependency import DagDependency
     from airflow.triggers.base import BaseTrigger
+
+
+_INVALID_INLET_ASSET_NAMES = ("self", "context", "outlet_events")
 
 
 def _validate_asset_function_arguments(f: Callable) -> None:
@@ -64,9 +65,10 @@ class _AssetMainOperator(PythonOperator):
             inlets=[
                 Asset.ref(name=inlet_asset_name)
                 for inlet_asset_name, param in inspect.signature(definition._function).parameters.items()
-                if inlet_asset_name not in ("self", "context") and param.default is inspect.Parameter.empty
+                if inlet_asset_name not in _INVALID_INLET_ASSET_NAMES
+                and param.default is inspect.Parameter.empty
             ],
-            outlets=[v for _, v in definition.iter_assets()],
+            outlets=list(definition.iter_outlets()),
             python_callable=definition._function,
             definition_name=definition.name,
         )
@@ -91,6 +93,8 @@ class _AssetMainOperator(PythonOperator):
                 value = _fetch_asset(self._definition_name)
             elif key == "context":
                 value = context
+            elif key == "outlet_events":
+                value = context["outlet_events"]
             else:
                 value = _fetch_asset(key)
             yield key, value
@@ -105,7 +109,7 @@ def _instantiate_task(definition: AssetDefinition | MultiAssetDefinition) -> Non
         if "outlets" in decorated_operator.kwargs:
             raise TypeError("@task decorator with 'outlets' argument is not supported in @asset")
 
-        decorated_operator.kwargs["outlets"] = [v for _, v in definition.iter_assets()]
+        decorated_operator.kwargs["outlets"] = list(definition.iter_outlets())
         decorated_operator()
     else:
         _AssetMainOperator.from_definition(definition)
@@ -126,9 +130,12 @@ class AssetDefinition(Asset):
         with self._source.create_dag(default_dag_id=self.name):
             _instantiate_task(self)
 
+    def iter_outlets(self) -> Iterator[BaseAsset]:
+        yield self
+
 
 @attrs.define(kw_only=True)
-class MultiAssetDefinition(BaseAsset):
+class MultiAssetDefinition(AssetAll):
     """
     Representation from decorating a function with ``@asset.multi``.
 
@@ -144,28 +151,12 @@ class MultiAssetDefinition(BaseAsset):
     _source: asset.multi
 
     def __attrs_post_init__(self) -> None:
+        self.objects = self._source.outlets
         with self._source.create_dag(default_dag_id=self._function.__name__):
             _instantiate_task(self)
 
-    def iter_assets(self) -> Iterator[tuple[AssetUniqueKey, Asset]]:
-        for o in self._source.outlets:
-            yield from o.iter_assets()
-
-    def iter_asset_aliases(self) -> Iterator[tuple[str, AssetAlias]]:
-        for o in self._source.outlets:
-            yield from o.iter_asset_aliases()
-
-    def iter_asset_refs(self) -> Iterator[AssetRef]:
-        for o in self._source.outlets:
-            yield from o.iter_asset_refs()
-
-    def iter_dag_dependencies(self, *, source: str, target: str) -> Iterator[DagDependency]:
-        for obj in self._source.outlets:
-            yield from obj.iter_dag_dependencies(source=source, target=target)
-
     def iter_outlets(self) -> Iterator[BaseAsset]:
-        """For asset evaluation in the scheduler."""
-        return iter(self._source.outlets)
+        yield from self.objects
 
 
 @attrs.define(kw_only=True)

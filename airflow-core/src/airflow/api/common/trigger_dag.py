@@ -15,7 +15,7 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-"""Triggering DAG runs APIs."""
+"""Triggering Dag runs APIs."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ from airflow._shared.timezones import timezone
 from airflow.exceptions import DagNotFound, DagRunAlreadyExists
 from airflow.models import DagModel, DagRun
 from airflow.models.dagbag import DBDagBag
+from airflow.serialization.definitions.notset import NOTSET, ArgNotSet, is_arg_set
 from airflow.utils.session import NEW_SESSION, provide_session
 from airflow.utils.state import DagRunState
 from airflow.utils.types import DagRunTriggeredByType, DagRunType
@@ -38,26 +39,38 @@ if TYPE_CHECKING:
     from airflow.timetables.base import DataInterval
 
 
+def _normalize_conf(conf: dict | str | None) -> dict | None:
+    if isinstance(conf, str):
+        conf = json.loads(conf)
+    if conf is not None and not isinstance(conf, dict):
+        raise ValueError("DagRun conf must be a JSON object or null")
+    return conf
+
+
 @provide_session
 def _trigger_dag(
     dag_id: str,
     dag_bag: DBDagBag,
     *,
     triggered_by: DagRunTriggeredByType,
+    run_type: DagRunType = DagRunType.MANUAL,
     triggering_user_name: str | None = None,
     run_after: datetime | None = None,
     run_id: str | None = None,
-    conf: dict | str | None = None,
+    conf: dict | str | None | ArgNotSet = NOTSET,
     logical_date: datetime | None = None,
     replace_microseconds: bool = True,
+    note: str | None = None,
+    partition_key: str | None = None,
     session: Session = NEW_SESSION,
 ) -> DagRun | None:
     """
-    Triggers DAG run.
+    Triggers Dag run.
 
-    :param dag_id: DAG ID
-    :param dag_bag: DAG Bag model
+    :param dag_id: Dag ID
+    :param dag_bag: Dag Bag model
     :param triggered_by: the entity which triggers the dag_run
+    :param run_type: the type of dag run (default: MANUAL)
     :param triggering_user_name: the user name who triggers the dag_run
     :param run_after: the datetime before which dag cannot run
     :param run_id: ID of the run
@@ -83,7 +96,7 @@ def _trigger_dag(
             if min_dag_start_date and logical_date < min_dag_start_date:
                 raise ValueError(
                     f"Logical date [{logical_date.isoformat()}] should be >= start_date "
-                    f"[{min_dag_start_date.isoformat()}] from DAG's default_args"
+                    f"[{min_dag_start_date.isoformat()}] from Dag's default_args"
                 )
         coerced_logical_date = timezone.coerce_datetime(logical_date)
         data_interval: DataInterval | None = dag.timetable.infer_manual_data_interval(
@@ -93,7 +106,7 @@ def _trigger_dag(
         data_interval = None
 
     run_id = run_id or dag.timetable.generate_run_id(
-        run_type=DagRunType.MANUAL,
+        run_type=run_type,
         run_after=timezone.coerce_datetime(run_after),
         data_interval=data_interval,
     )
@@ -106,18 +119,20 @@ def _trigger_dag(
         raise DagRunAlreadyExists(dag_run)
 
     run_conf = None
-    if conf:
-        run_conf = conf if isinstance(conf, dict) else json.loads(conf)
+    if is_arg_set(conf):
+        run_conf = _normalize_conf(conf)
     dag_run = dag.create_dagrun(
         run_id=run_id,
         logical_date=coerced_logical_date,
         data_interval=data_interval,
         run_after=run_after,
         conf=run_conf,
-        run_type=DagRunType.MANUAL,
+        run_type=run_type,
         triggered_by=triggered_by,
         triggering_user_name=triggering_user_name,
+        note=note,
         state=DagRunState.QUEUED,
+        partition_key=partition_key,
         session=session,
     )
 
@@ -129,19 +144,23 @@ def trigger_dag(
     dag_id: str,
     *,
     triggered_by: DagRunTriggeredByType,
+    run_type: DagRunType = DagRunType.MANUAL,
     triggering_user_name: str | None = None,
     run_after: datetime | None = None,
     run_id: str | None = None,
-    conf: dict | str | None = None,
+    conf: dict | str | None | ArgNotSet = NOTSET,
     logical_date: datetime | None = None,
     replace_microseconds: bool = True,
+    note: str | None = None,
+    partition_key: str | None = None,
     session: Session = NEW_SESSION,
 ) -> DagRun | None:
     """
-    Triggers execution of DAG specified by dag_id.
+    Triggers execution of Dag specified by dag_id.
 
-    :param dag_id: DAG ID
+    :param dag_id: Dag ID
     :param triggered_by: the entity which triggers the dag_run
+    :param run_type: the type of dag run (default: MANUAL)
     :param triggering_user_name: the user name who triggers the dag_run
     :param run_after: the datetime before which dag won't run
     :param run_id: ID of the dag_run
@@ -155,17 +174,23 @@ def trigger_dag(
     if dag_model is None:
         raise DagNotFound(f"Dag id {dag_id} not found in DagModel")
 
+    if dag_model.allowed_run_types is not None and run_type not in dag_model.allowed_run_types:
+        raise ValueError(f"Dag with dag_id: '{dag_id}' does not allow {run_type} runs")
+
     dagbag = DBDagBag()
     dr = _trigger_dag(
         dag_id=dag_id,
         dag_bag=dagbag,
         run_id=run_id,
+        run_type=run_type,
         run_after=run_after or timezone.utcnow(),
         conf=conf,
         logical_date=logical_date,
         replace_microseconds=replace_microseconds,
         triggered_by=triggered_by,
         triggering_user_name=triggering_user_name,
+        note=note,
+        partition_key=partition_key,
         session=session,
     )
 

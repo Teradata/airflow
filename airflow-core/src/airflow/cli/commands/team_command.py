@@ -19,10 +19,13 @@
 
 from __future__ import annotations
 
+import re
+
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
 from airflow.cli.simple_table import AirflowConsole
+from airflow.dag_processing.bundles.manager import DagBundlesManager
 from airflow.models.connection import Connection
 from airflow.models.pool import Pool
 from airflow.models.team import Team, dag_bundle_team_association_table
@@ -40,7 +43,6 @@ def _show_teams(teams, output):
         data=teams,
         output=output,
         mapper=lambda x: {
-            "id": str(x.id),
             "name": x.name,
         },
     )
@@ -51,14 +53,16 @@ def _extract_team_name(args):
     team_name = args.name.strip()
     if not team_name:
         raise SystemExit("Team name cannot be empty")
+    if not re.match(r"^[a-zA-Z0-9_-]{3,50}$", team_name):
+        raise SystemExit("Invalid team name: must match regex ^[a-zA-Z0-9_-]{3,50}$")
     return team_name
 
 
 @cli_utils.action_cli
 @providers_configuration_loaded
 @provide_session
-def team_create(args, session=NEW_SESSION):
-    """Create a new team."""
+def team_create(args, *, session=NEW_SESSION):
+    """Create a new team. Team names must be 3-50 characters long and contain only alphanumeric characters, hyphens, and underscores."""
     team_name = _extract_team_name(args)
 
     # Check if team with this name already exists
@@ -71,7 +75,7 @@ def team_create(args, session=NEW_SESSION):
     try:
         session.add(new_team)
         session.commit()
-        print(f"Team '{team_name}' created successfully with ID: {new_team.id}")
+        print(f"Team '{team_name}' created successfully.")
     except IntegrityError as e:
         session.rollback()
         raise SystemExit(f"Failed to create team '{team_name}': {e}")
@@ -80,7 +84,7 @@ def team_create(args, session=NEW_SESSION):
 @cli_utils.action_cli
 @providers_configuration_loaded
 @provide_session
-def team_delete(args, session=NEW_SESSION):
+def team_delete(args, *, session=NEW_SESSION):
     """Delete a team after checking for associations."""
     team_name = _extract_team_name(args)
 
@@ -96,23 +100,25 @@ def team_delete(args, session=NEW_SESSION):
     dag_bundle_count = session.scalar(
         select(func.count())
         .select_from(dag_bundle_team_association_table)
-        .where(dag_bundle_team_association_table.c.team_id == team.id)
+        .where(dag_bundle_team_association_table.c.team_name == team.name)
     )
     if dag_bundle_count:
         associations.append(f"{dag_bundle_count} DAG bundle(s)")
 
     # Check connection associations
     if connection_count := session.scalar(
-        select(func.count(Connection.id)).where(Connection.team_id == team.id)
+        select(func.count(Connection.id)).where(Connection.team_name == team.name)
     ):
         associations.append(f"{connection_count} connection(s)")
 
     # Check variable associations
-    if variable_count := session.scalar(select(func.count(Variable.id)).where(Variable.team_id == team.id)):
+    if variable_count := session.scalar(
+        select(func.count(Variable.id)).where(Variable.team_name == team.name)
+    ):
         associations.append(f"{variable_count} variable(s)")
 
     # Check pool associations
-    if pool_count := session.scalar(select(func.count(Pool.id)).where(Pool.team_id == team.id)):
+    if pool_count := session.scalar(select(func.count(Pool.id)).where(Pool.team_name == team.name)):
         associations.append(f"{pool_count} pool(s)")
 
     # If there are associations, prevent deletion
@@ -143,10 +149,37 @@ def team_delete(args, session=NEW_SESSION):
 @cli_utils.action_cli
 @providers_configuration_loaded
 @provide_session
-def team_list(args, session=NEW_SESSION):
+def team_list(args, *, session=NEW_SESSION):
     """List all teams."""
     teams = session.scalars(select(Team).order_by(Team.name)).all()
     if not teams:
         print(NO_TEAMS_LIST_MSG)
     else:
         _show_teams(teams=teams, output=args.output)
+
+
+@cli_utils.action_cli
+@providers_configuration_loaded
+@provide_session
+def team_sync(args, *, session=NEW_SESSION):
+    """Sync missing teams from the dag bundle config."""
+    dag_bundle_teams = {
+        bundle.team_name
+        for bundle in DagBundlesManager()._bundle_config.values()
+        if bundle.team_name is not None
+    }
+
+    teams_added = 0
+
+    try:
+        for team_name in dag_bundle_teams - Team.get_all_team_names(session=session):
+            team = Team(name=team_name)
+            session.add(team)
+            teams_added += 1
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        raise SystemExit(f"Failed to sync teams: {e}")
+
+    if teams_added > 0:
+        print(f"{teams_added} teams added.")

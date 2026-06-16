@@ -36,7 +36,7 @@ if os.getenv("PYTEST_VERSION"):
     cache = decorator
 else:
     from functools import cache
-from airflow.configuration import conf
+from airflow.providers.common.compat.sdk import conf
 
 _CONFIG_SECTION = "openlineage"
 
@@ -52,6 +52,12 @@ def config_path(check_legacy_env_var: bool = True) -> str:
     if check_legacy_env_var and not option:
         option = os.getenv("OPENLINEAGE_CONFIG", "")
     return option
+
+
+@cache
+def config_conn_id() -> str:
+    """[openlineage] config_conn_id."""
+    return conf.get(_CONFIG_SECTION, "config_conn_id", fallback="")
 
 
 @cache
@@ -136,6 +142,8 @@ def is_disabled() -> bool:
     if _is_true(os.getenv("OPENLINEAGE_DISABLED", "")):  # Check legacy variable
         return True
 
+    if config_conn_id():  # Check if config connection is present
+        return False
     if transport():  # Check if transport is present
         return False
     if config_path(True):  # Check if config file is present

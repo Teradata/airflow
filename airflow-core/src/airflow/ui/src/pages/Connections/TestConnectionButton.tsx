@@ -21,7 +21,7 @@ import { useTranslation } from "react-i18next";
 import { FiActivity, FiWifi, FiWifiOff } from "react-icons/fi";
 
 import type { ConnectionResponse, ConnectionBody } from "openapi/requests/types.gen";
-import ActionButton from "src/components/ui/ActionButton";
+import { IconButton } from "src/components/ui";
 import { useConfig } from "src/queries/useConfig";
 import { useTestConnection } from "src/queries/useTestConnection";
 
@@ -70,21 +70,20 @@ const TestConnectionButton = ({ connection }: Props) => {
     }
   });
 
+  const label = option === "Enabled" ? translate("connections.test") : translate("connections.testDisabled");
+
   return (
-    <ActionButton
-      actionName={
-        option === "Enabled" ? translate("connections.test") : translate("connections.testDisabled")
-      }
+    <IconButton
       disabled={option === "Disabled"}
       display={option === "Hidden" ? "none" : "flex"}
-      icon={icon}
+      label={label}
       loading={isPending}
       onClick={() => {
         mutate({ requestBody: connectionBody });
       }}
-      text={translate("connections.test")}
-      withText={false}
-    />
+    >
+      {icon}
+    </IconButton>
   );
 };
 

@@ -41,7 +41,7 @@ if AIRFLOW_VERSION.major == 3:
     schedule = AssetOrTimeSchedule(
         timetable=CronTriggerTimetable("21 13 29 2 4", timezone="UTC"),
         assets=(
-            (Asset(uri="s3://bucket/file.txt", extra={"a": 1}) | Asset(uri="s3://bucket2/file.txt"))
+            (Asset(uri="s3://bucket/file.txt", extra={"a": 1}) | Asset(uri="s3://bucket2/file.txt"))  # type: ignore[arg-type]
             & (Asset(uri="s3://bucket3/file.txt") | Asset(uri="s3://bucket4/file.txt", extra={"b": 2}))
         ),
     )
@@ -74,5 +74,5 @@ with DAG(
 
 from tests_common.test_utils.system_tests import get_test_run  # noqa: E402
 
-# Needed to run the example DAG with pytest (see: tests/system/README.md#run_via_pytest)
+# Needed to run the example DAG with pytest (see: contributing-docs/testing/system_tests.rst)
 test_run = get_test_run(dag)

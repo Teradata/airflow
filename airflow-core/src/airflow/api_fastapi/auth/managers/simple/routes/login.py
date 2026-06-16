@@ -18,8 +18,9 @@
 from __future__ import annotations
 
 from fastapi import Depends, Request, status
-from starlette.responses import RedirectResponse
+from fastapi.responses import RedirectResponse
 
+from airflow.api_fastapi.app import get_cookie_path
 from airflow.api_fastapi.auth.managers.base_auth_manager import COOKIE_NAME_JWT_TOKEN
 from airflow.api_fastapi.auth.managers.simple.datamodels.login import LoginBody, LoginResponse
 from airflow.api_fastapi.auth.managers.simple.services.login import SimpleAuthManagerLogin
@@ -27,6 +28,7 @@ from airflow.api_fastapi.auth.managers.simple.utils import parse_login_body
 from airflow.api_fastapi.common.router import AirflowRouter
 from airflow.api_fastapi.common.types import Mimetype
 from airflow.api_fastapi.core_api.openapi.exceptions import create_openapi_http_exception_doc
+from airflow.api_fastapi.core_api.security import is_safe_url
 from airflow.configuration import conf
 
 login_router = AirflowRouter(tags=["SimpleAuthManagerLogin"])
@@ -84,7 +86,10 @@ def create_token_all_admins() -> LoginResponse:
 )
 def login_all_admins(request: Request) -> RedirectResponse:
     """Login the user with no credentials."""
-    response = RedirectResponse(url=conf.get("api", "base_url", fallback="/"))
+    fallback_url = conf.get("api", "base_url", fallback="/")
+    next_url = request.query_params.get("next")
+    redirect_url = next_url if next_url and is_safe_url(next_url, request=request) else fallback_url
+    response = RedirectResponse(url=redirect_url)
 
     # The default config has this as an empty string, so we can't use `has_option`.
     # And look at the request info (needs `--proxy-headers` flag to api-server)
@@ -93,8 +98,10 @@ def login_all_admins(request: Request) -> RedirectResponse:
     response.set_cookie(
         COOKIE_NAME_JWT_TOKEN,
         SimpleAuthManagerLogin.create_token_all_admins(),
+        path=get_cookie_path(),
         secure=secure,
         httponly=True,
+        samesite="lax",
     )
     return response
 

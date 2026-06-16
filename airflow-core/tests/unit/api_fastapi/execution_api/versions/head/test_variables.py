@@ -23,6 +23,7 @@ from unittest import mock
 import pytest
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.routing import Mount
+from sqlalchemy import select
 
 from airflow.models.variable import Variable
 
@@ -40,15 +41,15 @@ def setup_method():
 
 @pytest.fixture
 def access_denied(client):
-    from airflow.api_fastapi.execution_api.deps import JWTBearerDep
     from airflow.api_fastapi.execution_api.routes.variables import has_variable_access
+    from airflow.api_fastapi.execution_api.security import CurrentTIToken
 
     last_route = client.app.routes[-1]
     assert isinstance(last_route, Mount)
     assert isinstance(last_route.app, FastAPI)
     exec_app = last_route.app
 
-    async def _(request: Request, variable_key: str, token=JWTBearerDep):
+    async def _(request: Request, variable_key: str, token=CurrentTIToken):
         await has_variable_access(request, variable_key, token)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -150,7 +151,7 @@ class TestPutVariable:
         assert response.status_code == 201, response.json()
         assert response.json()["message"] == "Variable successfully set"
 
-        var_from_db = session.query(Variable).where(Variable.key == key).first()
+        var_from_db = session.scalars(select(Variable).where(Variable.key == key)).first()
         assert var_from_db is not None
         assert var_from_db.key == key
         assert var_from_db.val == payload["value"]
@@ -158,20 +159,22 @@ class TestPutVariable:
             assert var_from_db.description == payload["description"]
 
     @pytest.mark.parametrize(
-        ("key", "status_code", "payload"),
+        ("key", "payload", "error_type"),
         [
-            pytest.param("", 404, {"value": "{}", "description": "description"}, id="missing-key"),
-            pytest.param("var_create", 422, {"description": "description"}, id="missing-value"),
+            pytest.param(
+                "", {"value": "{}", "description": "description"}, "string_too_short", id="missing-key"
+            ),
+            pytest.param("var_create", {"description": "description"}, "missing", id="missing-value"),
         ],
     )
-    def test_variable_missing_mandatory_fields(self, client, key, status_code, payload, session):
+    def test_variable_missing_mandatory_fields(self, client, key, payload, error_type, session):
         response = client.put(
             f"/execution/variables/{key}",
             json=payload,
         )
-        assert response.status_code == status_code
-        if response.status_code == 422:
-            assert response.json()["detail"][0]["type"] == "missing"
+        assert response.status_code == 422
+        assert response.json()["detail"][0]["type"] == error_type
+        if error_type == "missing":
             assert response.json()["detail"][0]["msg"] == "Field required"
 
     @pytest.mark.parametrize(
@@ -216,7 +219,7 @@ class TestPutVariable:
         assert response.status_code == 201
         assert response.json()["message"] == "Variable successfully set"
         # variable should have been updated to the new value
-        var_from_db = session.query(Variable).where(Variable.key == key).first()
+        var_from_db = session.scalars(select(Variable).where(Variable.key == key)).first()
         assert var_from_db is not None
         assert var_from_db.key == key
         assert var_from_db.val == payload["value"]
@@ -241,6 +244,70 @@ class TestPutVariable:
         assert any(msg.startswith("Checking write access for task instance") for msg in caplog.messages)
 
 
+class TestGetVariableKeys:
+    @pytest.mark.parametrize(
+        ("prefix", "expected_keys"),
+        [
+            pytest.param(
+                None,
+                {"prod_db_url", "prod_api_key", "dev_debug", "prodXdb", "50%off", "50abc"},
+                id="no-prefix",
+            ),
+            pytest.param("prod_", {"prod_db_url", "prod_api_key"}, id="underscore-is-literal"),
+            pytest.param("50%", {"50%off"}, id="percent-is-literal"),
+            pytest.param("staging_", set(), id="no-match"),
+        ],
+    )
+    def test_get_variable_keys(self, client, session, prefix, expected_keys):
+        Variable.set(key="prod_db_url", value="postgres://...", session=session)
+        Variable.set(key="prod_api_key", value="secret", session=session)
+        Variable.set(key="dev_debug", value="true", session=session)
+        Variable.set(key="prodXdb", value="x", session=session)
+        Variable.set(key="50%off", value="x", session=session)
+        Variable.set(key="50abc", value="x", session=session)
+        session.commit()
+
+        params = {"prefix": prefix} if prefix is not None else {}
+        response = client.get("/execution/variables/keys", params=params)
+
+        assert response.status_code == 200
+        body = response.json()
+        assert set(body["keys"]) == expected_keys
+        assert body["total_entries"] == len(expected_keys)
+
+    def test_get_variable_keys_empty_db(self, client):
+        response = client.get("/execution/variables/keys")
+
+        assert response.status_code == 200
+        assert response.json() == {"keys": [], "total_entries": 0}
+
+    def test_get_variable_keys_paginates_with_limit_and_offset(self, client, session):
+        for i in range(5):
+            Variable.set(key=f"k{i}", value=str(i), session=session)
+        session.commit()
+
+        first = client.get("/execution/variables/keys", params={"limit": 2, "offset": 0})
+        second = client.get("/execution/variables/keys", params={"limit": 2, "offset": 2})
+        third = client.get("/execution/variables/keys", params={"limit": 2, "offset": 4})
+
+        # Order is stable (sorted by key) so pagination is deterministic.
+        assert first.json() == {"keys": ["k0", "k1"], "total_entries": 5}
+        assert second.json() == {"keys": ["k2", "k3"], "total_entries": 5}
+        assert third.json() == {"keys": ["k4"], "total_entries": 5}
+
+    @pytest.mark.parametrize(
+        ("params", "expected_status"),
+        [
+            pytest.param({"limit": 0}, 422, id="limit-below-min"),
+            pytest.param({"limit": 10_001}, 422, id="limit-above-max"),
+            pytest.param({"offset": -1}, 422, id="offset-negative"),
+        ],
+    )
+    def test_get_variable_keys_validates_pagination_bounds(self, client, params, expected_status):
+        response = client.get("/execution/variables/keys", params=params)
+        assert response.status_code == expected_status
+
+
 class TestDeleteVariable:
     @pytest.mark.parametrize(
         ("keys_to_create", "key_to_delete"),
@@ -253,25 +320,25 @@ class TestDeleteVariable:
         for i, key in enumerate(keys_to_create, 1):
             Variable.set(key=key, value=str(i))
 
-        vars = session.query(Variable).all()
+        vars = session.scalars(select(Variable)).all()
         assert len(vars) == len(keys_to_create)
 
         response = client.delete(f"/execution/variables/{key_to_delete}")
 
         assert response.status_code == 204
 
-        vars = session.query(Variable).all()
+        vars = session.scalars(select(Variable)).all()
         assert len(vars) == len(keys_to_create) - 1
 
     def test_should_not_delete_variable(self, client, session):
         Variable.set(key="key", value="value")
 
-        vars = session.query(Variable).all()
+        vars = session.scalars(select(Variable)).all()
         assert len(vars) == 1
 
         response = client.delete("/execution/variables/non_existent_key")
 
         assert response.status_code == 204
 
-        vars = session.query(Variable).all()
+        vars = session.scalars(select(Variable)).all()
         assert len(vars) == 1

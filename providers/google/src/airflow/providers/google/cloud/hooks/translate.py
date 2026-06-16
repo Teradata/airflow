@@ -32,7 +32,7 @@ from google.cloud.translate_v2 import Client
 from google.cloud.translate_v3 import TranslationServiceClient
 from google.cloud.translate_v3.types.translation_service import GlossaryInputConfig
 
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.common.consts import CLIENT_INFO
 from airflow.providers.google.common.hooks.base_google import PROVIDE_PROJECT_ID, GoogleBaseHook
 from airflow.providers.google.common.hooks.operation_helpers import OperationHelper
@@ -99,7 +99,11 @@ class CloudTranslateHook(GoogleBaseHook):
         :return: Google Cloud Translate client object.
         """
         if not self._client:
-            self._client = Client(credentials=self.get_credentials(), client_info=CLIENT_INFO)
+            self._client = Client(
+                credentials=self.get_credentials(),
+                client_info=CLIENT_INFO,
+                client_options=self.get_client_options(),
+            )
         return self._client
 
     @GoogleBaseHook.quota_retry()
@@ -182,7 +186,9 @@ class TranslateHook(GoogleBaseHook, OperationHelper):
         """
         if self._client is None:
             self._client = TranslationServiceClient(
-                credentials=self.get_credentials(), client_info=CLIENT_INFO
+                credentials=self.get_credentials(),
+                client_info=CLIENT_INFO,
+                client_options=self.get_client_options(),
             )
         return self._client
 

@@ -26,9 +26,7 @@ from typing import TYPE_CHECKING, Any
 from google.cloud import pubsub_v1
 from google.cloud.pubsub_v1.types import ReceivedMessage
 
-from airflow.configuration import conf
-from airflow.exceptions import AirflowException
-from airflow.providers.common.compat.sdk import BaseSensorOperator
+from airflow.providers.common.compat.sdk import AirflowException, BaseSensorOperator, conf
 from airflow.providers.google.cloud.hooks.pubsub import PubSubHook
 from airflow.providers.google.cloud.triggers.pubsub import PubsubPullTrigger
 
@@ -36,7 +34,7 @@ if TYPE_CHECKING:
     from airflow.providers.common.compat.sdk import Context
 
 
-class PubSubMessageTransformException(AirflowException):
+class PubSubMessageTransformException(Exception):
     """Raise when messages failed to convert pubsub received format."""
 
 
@@ -202,7 +200,7 @@ class PubSubPullSensor(BaseSensorOperator):
         except Exception as e:
             raise PubSubMessageTransformException(
                 f"Error converting triggerer event message back to received message format: {e}"
-            )
+            ) from e
 
     def _default_message_callback(
         self,

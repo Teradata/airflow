@@ -31,7 +31,7 @@ import pytest
 from google.auth.environment_vars import CREDENTIALS
 from google.auth.exceptions import DefaultCredentialsError
 
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.cloud.utils.credentials_provider import (
     _DEFAULT_SCOPES,
     AIRFLOW_CONN_GOOGLE_CLOUD_DEFAULT,
@@ -516,6 +516,15 @@ class TestGetGcpCredentialsAndProjectId:
                 client_id=CLIENT_ID,
                 client_secret=CLIENT_SECRET,
             )
+
+    @mock.patch("google.auth.default")
+    def test_get_credentials_and_project_id_with_default_auth_no_project_id(self, mock_auth_default):
+        mock_credentials = mock.MagicMock()
+        mock_auth_default.return_value = (mock_credentials, None)
+
+        result = get_credentials_and_project_id()
+        mock_auth_default.assert_called_once_with(scopes=None)
+        assert result == (mock_credentials, "")
 
 
 class TestGetScopes:

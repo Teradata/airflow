@@ -21,14 +21,19 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 import pyathena
-from sqlalchemy.engine.url import URL
 
-from airflow.exceptions import AirflowException, AirflowNotFoundException
+try:
+    from sqlalchemy.engine.url import URL
+except ImportError:
+    URL = None  # type: ignore[assignment,misc]
+
 from airflow.providers.amazon.aws.hooks.base_aws import AwsBaseHook
 from airflow.providers.amazon.aws.utils.connection_wrapper import AwsConnectionWrapper
+from airflow.providers.common.compat.sdk import AirflowException, AirflowNotFoundException
 from airflow.providers.common.sql.hooks.sql import DbApiHook
 
 if TYPE_CHECKING:
+    from botocore.config import Config
     from pyathena.connection import Connection as AthenaConnection
 
 
@@ -65,8 +70,30 @@ class AthenaSQLHook(AwsBaseHook, DbApiHook):
     hook_name = "Amazon Athena"
     supports_autocommit = True
 
-    def __init__(self, athena_conn_id: str = default_conn_name, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
+    def __init__(
+        self,
+        athena_conn_id: str = default_conn_name,
+        aws_conn_id: str | None = AwsBaseHook.default_conn_name,
+        verify: bool | str | None = None,
+        region_name: str | None = None,
+        client_type: str | None = None,
+        resource_type: str | None = None,
+        config: Config | dict[str, Any] | None = None,
+        **kwargs,
+    ) -> None:
+        # AwsGenericHook.__init__() only accepts the params declared above.
+        # Connection extras like s3_staging_dir and work_group are not
+        # constructor params — they are read later from the connection in
+        # get_conn(). BaseSQLOperator.get_hook() passes all connection extras
+        # as kwargs, so we absorb them here via **kwargs and discard them.
+        super().__init__(
+            aws_conn_id=aws_conn_id,
+            verify=verify,
+            region_name=region_name,
+            client_type=client_type,
+            resource_type=resource_type,
+            config=config,
+        )
         self.athena_conn_id = athena_conn_id
 
     @classmethod
@@ -79,8 +106,8 @@ class AthenaSQLHook(AwsBaseHook, DbApiHook):
                 "password": "AWS Secret Access Key",
             },
             "placeholders": {
-                "login": "AKIAIOSFODNN7EXAMPLE",
-                "password": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+                "login": "YOUR_AWS_ACCESS_KEY_ID",
+                "password": "YOUR_AWS_SECRET_ACCESS_KEY",
                 "extra": json.dumps(
                     {
                         "aws_domain": "amazonaws.com",
@@ -93,7 +120,7 @@ class AthenaSQLHook(AwsBaseHook, DbApiHook):
                         "role_arn": "arn:aws:iam::123456789098:role/role-name",
                         "assume_role_method": "assume_role",
                         "assume_role_kwargs": {"RoleSessionName": "airflow"},
-                        "aws_session_token": "AQoDYXdzEJr...EXAMPLETOKEN",
+                        "aws_session_token": "YOUR_AWS_SESSION_TOKEN",
                         "endpoint_url": "http://localhost:4566",
                     },
                     indent=2,
@@ -150,11 +177,48 @@ class AthenaSQLHook(AwsBaseHook, DbApiHook):
             aws_domain=self.conn.extra_dejson.get("aws_domain", "amazonaws.com"),
         )
 
+    def get_openlineage_database_info(self, connection):
+        """Return Amazon Athena specific information for OpenLineage."""
+        from airflow.providers.openlineage.sqlparser import DatabaseInfo
+
+        region_name = self.region_name or connection.extra_dejson.get("region_name")
+        aws_domain = connection.extra_dejson.get("aws_domain", "amazonaws.com")
+        authority = f"athena.{region_name}.{aws_domain}" if region_name else f"athena.{aws_domain}"
+
+        return DatabaseInfo(
+            scheme="awsathena",
+            authority=authority,
+            information_schema_columns=[
+                "table_schema",
+                "table_name",
+                "column_name",
+                "ordinal_position",
+                "data_type",
+                "table_catalog",
+            ],
+            database=connection.extra_dejson.get("catalog", "AwsDataCatalog"),
+            is_information_schema_cross_db=True,
+        )
+
+    def get_openlineage_database_dialect(self, _) -> str:
+        """Return Athena dialect. Athena uses Trino SQL engine."""
+        return "trino"
+
+    def get_openlineage_default_schema(self) -> str | None:
+        """Return Athena default schema."""
+        return self.conn.schema or "default"
+
     def get_uri(self) -> str:
         """Overridden to use the Athena dialect as driver name."""
+        from airflow.providers.common.compat.sdk import AirflowOptionalProviderFeatureException
+
+        if URL is None:
+            raise AirflowOptionalProviderFeatureException(
+                "sqlalchemy is required to generate the connection URI. "
+                "Install it with: pip install 'apache-airflow-providers-amazon[sqlalchemy]'"
+            )
         conn_params = self._get_conn_params()
         creds = self.get_credentials(region_name=conn_params["region_name"])
-
         return URL.create(
             f"awsathena+{conn_params['driver']}",
             username=creds.access_key,

@@ -18,10 +18,10 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from unittest import mock
 
 import pytest
-from aioresponses import aioresponses
 
 from airflow.models import Connection
 from airflow.providers.discord.hooks.discord_webhook import (
@@ -30,14 +30,7 @@ from airflow.providers.discord.hooks.discord_webhook import (
     DiscordWebhookHook,
 )
 
-
-@pytest.fixture
-def aioresponse():
-    """
-    Creates mock async API response.
-    """
-    with aioresponses() as async_response:
-        yield async_response
+from tests_common.test_utils.aiohttp import MockAiohttpClientResponse
 
 
 class TestDiscordCommonHandler:
@@ -87,6 +80,76 @@ class TestDiscordCommonHandler:
         payload = handler.build_discord_payload(**self._config)
         assert self.expected_payload == payload
 
+    def test_build_discord_payload_with_embed(self):
+        config = self._config.copy()
+        embed = {
+            "title": "This is a title",
+            "type": "rich",
+            "description": "A test description",
+            "url": "https://example.com",
+        }
+        config["embed"] = embed
+        expected_payload = self.expected_payload_dict.copy()
+        expected_payload["embeds"] = [embed]
+        handler = DiscordCommonHandler()
+        payload = handler.build_discord_payload(**config)
+        assert json.dumps(expected_payload) == payload
+
+    @pytest.mark.parametrize(
+        ("embed", "expectation"),
+        [
+            pytest.param(
+                {
+                    "title": "This is a title",
+                    "type": "rich",
+                    "description": "A test description",
+                    "url": "https://example.com",
+                },
+                nullcontext(),
+                id="valid-embed",
+            ),
+            pytest.param(
+                {"title": "t" * 257},
+                pytest.raises(ValueError, match="Discord embed title must be 256 or fewer characters"),
+                id="fail-on-title",
+            ),
+            pytest.param(
+                {"description": "t" * 4097},
+                pytest.raises(ValueError, match="Discord embed description must be 4096 or fewer characters"),
+                id="fail-on-description",
+            ),
+            pytest.param(
+                {"fields": [[] for _ in range(26)]},
+                pytest.raises(ValueError, match="Discord embed fields must be 25 or fewer items"),
+                id="fail-on-fields",
+            ),
+            pytest.param(
+                {"title": "This is a title", "author": {"name": "t" * 2049}},
+                pytest.raises(ValueError, match="Discord embed author name must be 256 or fewer characters"),
+                id="fail-on-author-name",
+            ),
+            pytest.param(
+                {"title": "This is a title", "footer": {"text": "t" * 2049}},
+                pytest.raises(ValueError, match="Discord embed footer text must be 2048 or fewer characters"),
+                id="fail-on-footer-text",
+            ),
+            pytest.param(
+                {"title": "This is a title", "fields": [{"name": "t" * 257, "value": "test"}]},
+                pytest.raises(ValueError, match="Discord embed field name must be 256 or fewer characters"),
+                id="fail-on-field-name",
+            ),
+            pytest.param(
+                {"title": "This is a title", "fields": [{"name": "test", "value": "t" * 1025}]},
+                pytest.raises(ValueError, match="Discord embed field value must be 1024 or fewer characters"),
+                id="fail-on-field-value",
+            ),
+        ],
+    )
+    def test_build_embed(self, embed, expectation):
+        handler = DiscordCommonHandler()
+        with expectation:
+            handler.validate_embed(embed=embed)
+
     def test_build_discord_payload_message_length(self):
         # Given
         config = self._config.copy()
@@ -132,6 +195,12 @@ class TestDiscordWebhookHook:
 
         # Then
         assert webhook_endpoint == expected_webhook_endpoint
+
+    def test_get_conn_does_not_leak_webhook_endpoint_as_header(self):
+        """webhook_endpoint in connection extra must not be sent as an HTTP header to Discord."""
+        hook = DiscordWebhookHook(http_conn_id="default-discord-webhook")
+        session = hook.get_conn()
+        assert "webhook_endpoint" not in session.headers
 
 
 class TestDiscordWebhookAsyncHook:
@@ -198,7 +267,7 @@ class TestDiscordWebhookAsyncHook:
             assert mocked_function.call_args.kwargs.get("data") == json.dumps(expected_payload_dict)
 
     @pytest.mark.asyncio
-    async def test_execute_with_success(self, aioresponse):
+    async def test_execute_with_success(self):
         conn_id = "default-discord-webhook"
         hook = DiscordWebhookAsyncHook(
             http_conn_id=conn_id,
@@ -207,5 +276,10 @@ class TestDiscordWebhookAsyncHook:
             avatar_url="https://static-cdn.avatars.com/my-avatar-path",
             tts=False,
         )
-        aioresponse.post("https://discordapp.com/api/webhooks/00000/some-discord-token_000", status=200)
-        await hook.execute()
+        with mock.patch("aiohttp.ClientSession.post", new_callable=mock.AsyncMock) as mocked_post:
+            mocked_post.return_value = MockAiohttpClientResponse(
+                status=200,
+                method="POST",
+                url="https://discordapp.com/api/webhooks/00000/some-discord-token_000",
+            )
+            await hook.execute()

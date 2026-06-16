@@ -24,7 +24,7 @@ import threading
 import time
 from datetime import timedelta
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 import pytest
 import time_machine
@@ -33,6 +33,7 @@ from airflow._shared.timezones import timezone as tz
 from airflow.dag_processing.bundles.base import (
     BaseDagBundle,
     BundleUsageTrackingManager,
+    BundleVersion,
     BundleVersionLock,
     get_bundle_storage_root_path,
 )
@@ -202,6 +203,32 @@ class TestBundleVersionLock:
         assert b.lock_file_path is None
         assert b.lock_file is None
 
+    def test_log_exc_formats_message_correctly(self):
+        """Test that _log_exc correctly formats the log message with all parameters."""
+        from airflow.dag_processing.bundles.base import log as bundle_log
+
+        bundle_name = "test_bundle"
+        bundle_version = "v1.0.0"
+        lock = BundleVersionLock(
+            bundle_name=bundle_name,
+            bundle_version=bundle_version,
+        )
+
+        test_msg = "error when attempting to acquire lock"
+
+        with patch.object(bundle_log, "exception") as mock_exception:
+            lock._log_exc(test_msg)
+
+            assert mock_exception.mock_calls == [
+                call(
+                    "%s name=%s version=%s lock_file=%s",
+                    test_msg,
+                    bundle_name,
+                    bundle_version,
+                    lock.lock_file_path,
+                )
+            ]
+
 
 class FakeBundle(BaseDagBundle):
     @property
@@ -268,3 +295,31 @@ class TestBundleUsageTrackingManager:
                 assert len(lock_files) == expected_remaining
                 bundle_folders = list(b.versions_dir.iterdir())
                 assert len(bundle_folders) == expected_remaining
+
+
+class TestBundleVersion:
+    def test_bundle_version_with_version_only(self):
+        bv = BundleVersion(version="abc123")
+        assert bv.version == "abc123"
+        assert bv.data is None
+
+    def test_bundle_version_with_data(self):
+        data = {"schema_version": 1, "files": {"dag.py": "v1"}}
+        bv = BundleVersion(version="sha256hex", data=data)
+        assert bv.version == "sha256hex"
+        assert bv.data == data
+
+    def test_bundle_version_is_frozen(self):
+        bv = BundleVersion(version="abc")
+        with pytest.raises(AttributeError):
+            bv.version = "xyz"
+
+    def test_bundle_version_equality(self):
+        bv1 = BundleVersion(version="abc", data={"key": "val"})
+        bv2 = BundleVersion(version="abc", data={"key": "val"})
+        assert bv1 == bv2
+
+    def test_bundle_version_inequality(self):
+        bv1 = BundleVersion(version="abc", data={"key": "val"})
+        bv2 = BundleVersion(version="abc", data={"key": "other"})
+        assert bv1 != bv2

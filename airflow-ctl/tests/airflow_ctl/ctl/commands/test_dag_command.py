@@ -41,6 +41,8 @@ class TestDagCommands:
         description="description",
         timetable_summary="timetable_summary",
         timetable_description="timetable_description",
+        timetable_partitioned=False,
+        timetable_periodic=True,
         tags=[],
         max_active_tasks=1,
         max_active_runs=1,
@@ -52,6 +54,7 @@ class TestDagCommands:
         next_dagrun_data_interval_end=datetime.datetime(2025, 1, 1, 0, 0, 0),
         next_dagrun_run_after=datetime.datetime(2025, 1, 1, 0, 0, 0),
         owners=["apache-airflow"],
+        is_backfillable=True,
         file_token="file_token",
         bundle_name="bundle_name",
         is_stale=False,
@@ -68,6 +71,8 @@ class TestDagCommands:
         description="description",
         timetable_summary="timetable_summary",
         timetable_description="timetable_description",
+        timetable_partitioned=False,
+        timetable_periodic=True,
         tags=[],
         max_active_tasks=1,
         max_active_runs=1,
@@ -79,6 +84,37 @@ class TestDagCommands:
         next_dagrun_data_interval_end=datetime.datetime(2025, 1, 1, 0, 0, 0),
         next_dagrun_run_after=datetime.datetime(2025, 1, 1, 0, 0, 0),
         owners=["apache-airflow"],
+        is_backfillable=True,
+        file_token="file_token",
+        bundle_name="bundle_name",
+        is_stale=False,
+    )
+
+    dag_response_no_schedule = DAGResponse(
+        dag_id=dag_id,
+        dag_display_name=dag_display_name,
+        is_paused=True,
+        last_parsed_time=datetime.datetime(2024, 12, 31, 23, 59, 59),
+        last_expired=datetime.datetime(2025, 1, 1, 0, 0, 0),
+        fileloc="fileloc",
+        relative_fileloc="relative_fileloc",
+        description="description",
+        timetable_summary=None,
+        timetable_description=None,
+        timetable_partitioned=False,
+        timetable_periodic=False,
+        tags=[],
+        max_active_tasks=1,
+        max_active_runs=1,
+        max_consecutive_failed_dag_runs=1,
+        has_task_concurrency_limits=False,
+        has_import_errors=False,
+        next_dagrun_logical_date=None,
+        next_dagrun_data_interval_start=None,
+        next_dagrun_data_interval_end=None,
+        next_dagrun_run_after=None,
+        owners=["apache-airflow"],
+        is_backfillable=False,
         file_token="file_token",
         bundle_name="bundle_name",
         is_stale=False,
@@ -93,7 +129,7 @@ class TestDagCommands:
         )
         assert self.dag_response_paused.is_paused is False
         dag_response_dict = dag_command.pause(
-            self.parser.parse_args(["dags", "pause", "--dag-id", self.dag_id]),
+            self.parser.parse_args(["dags", "pause", self.dag_id]),
             api_client=api_client,
         )
         assert dag_response_dict["is_paused"] is False
@@ -107,7 +143,7 @@ class TestDagCommands:
         )
         with pytest.raises(SystemExit):
             dag_command.pause(
-                self.parser.parse_args(["dags", "pause", "--dag-id", self.dag_id]),
+                self.parser.parse_args(["dags", "pause", self.dag_id]),
                 api_client=api_client,
             )
 
@@ -120,7 +156,7 @@ class TestDagCommands:
         )
         assert self.dag_response_unpaused.is_paused is True
         dag_response_dict = dag_command.unpause(
-            self.parser.parse_args(["dags", "unpause", "--dag-id", self.dag_id]),
+            self.parser.parse_args(["dags", "unpause", self.dag_id]),
             api_client=api_client,
         )
         assert dag_response_dict["is_paused"] is True
@@ -134,6 +170,48 @@ class TestDagCommands:
         )
         with pytest.raises(SystemExit):
             dag_command.unpause(
-                self.parser.parse_args(["dags", "unpause", "--dag-id", self.dag_id]),
+                self.parser.parse_args(["dags", "unpause", self.dag_id]),
+                api_client=api_client,
+            )
+
+    def test_next_execution(self, api_client_maker):
+        api_client = api_client_maker(
+            path=f"/api/v2/dags/{self.dag_id}",
+            response_json=self.dag_response_paused.model_dump(mode="json"),
+            expected_http_status_code=200,
+            kind=ClientKind.CLI,
+        )
+        result = dag_command.next_execution(
+            self.parser.parse_args(["dags", "next-execution", self.dag_id]),
+            api_client=api_client,
+        )
+        assert result["next_dagrun_logical_date"] == datetime.datetime(2025, 1, 1, 0, 0, 0)
+        assert result["next_dagrun_data_interval_start"] == datetime.datetime(2025, 1, 1, 0, 0, 0)
+        assert result["next_dagrun_data_interval_end"] == datetime.datetime(2025, 1, 1, 0, 0, 0)
+        assert result["next_dagrun_run_after"] == datetime.datetime(2025, 1, 1, 0, 0, 0)
+
+    def test_next_execution_no_schedule(self, api_client_maker):
+        api_client = api_client_maker(
+            path=f"/api/v2/dags/{self.dag_id}",
+            response_json=self.dag_response_no_schedule.model_dump(mode="json"),
+            expected_http_status_code=200,
+            kind=ClientKind.CLI,
+        )
+        result = dag_command.next_execution(
+            self.parser.parse_args(["dags", "next-execution", self.dag_id]),
+            api_client=api_client,
+        )
+        assert result is None
+
+    def test_next_execution_fail(self, api_client_maker):
+        api_client = api_client_maker(
+            path=f"/api/v2/dags/{self.dag_id}",
+            response_json={"detail": "DAG not found"},
+            expected_http_status_code=404,
+            kind=ClientKind.CLI,
+        )
+        with pytest.raises(SystemExit):
+            dag_command.next_execution(
+                self.parser.parse_args(["dags", "next-execution", self.dag_id]),
                 api_client=api_client,
             )

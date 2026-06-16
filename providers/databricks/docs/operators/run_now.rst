@@ -21,14 +21,14 @@ DatabricksRunNowOperator
 ========================
 
 Use the :class:`~airflow.providers.databricks.operators.DatabricksRunNowOperator` to trigger a run of an existing Databricks job
-via `api/2.1/jobs/run-now <https://docs.databricks.com/dev-tools/api/latest/jobs.html#operation/JobsRunNow>`_ API endpoint.
+via `api/2.2/jobs/run-now <https://docs.databricks.com/dev-tools/api/latest/jobs.html#operation/JobsRunNow>`_ API endpoint.
 
 
 Using the Operator
 ^^^^^^^^^^^^^^^^^^
 
 There are two ways to instantiate this operator. In the first way, you can take the JSON payload that you typically use
-to call the ``api/2.1/jobs/run-now`` endpoint and pass it directly to our ``DatabricksRunNowOperator`` through the ``json`` parameter.
+to call the ``api/2.2/jobs/run-now`` endpoint and pass it directly to our ``DatabricksRunNowOperator`` through the ``json`` parameter.
 
 Another way to accomplish the same thing is to use the named parameters of the ``DatabricksRunNowOperator`` directly.
 Note that there is exactly one named parameter for each top level parameter in the ``jobs/run-now`` endpoint.
@@ -48,6 +48,31 @@ All other parameters are optional and described in documentation for ``Databrick
 * ``idempotency_token``
 * ``repair_run``
 * ``cancel_previous_runs``
+
+Forwarding Airflow Dag params as Databricks job parameters
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The Databricks ``api/2.2/jobs/run-now`` endpoint accepts a top-level `job_parameters
+<https://docs.databricks.com/api/workspace/jobs/runnow#job_parameters>`_ field — a plain
+``Dict[str, str]`` mapping parameter name to value — that overrides the job's defaults
+for this run.
+
+If ``job_parameters`` is not set in ``json`` and the operator's ``params`` dict is
+non-empty, ``params`` is forwarded as ``job_parameters`` as-is, so Airflow Dag params can
+be passed dynamically to a run without hardcoding them in ``json``. If ``json`` already
+contains ``job_parameters``, it is left untouched.
+
+.. code-block:: python
+
+  run_now = DatabricksRunNowOperator(
+      task_id="run_now",
+      job_id=123,
+      params={"env": "staging", "batch_size": "42"},
+  )
+  # The triggered run receives:
+  #   job_parameters={"env": "staging", "batch_size": "42"}
+  # i.e. the same dict, passed straight through to the run-now request body.
+
 
 DatabricksRunNowDeferrableOperator
 ==================================

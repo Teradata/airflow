@@ -21,19 +21,28 @@ from airflow.sdk.api.datamodels._generated import (
     TriggerRule as TriggerRule,
     WeightRule as WeightRule,
 )
+from airflow.sdk.bases.branch import (
+    BaseBranchOperator as BaseBranchOperator,
+    BranchMixIn as BranchMixIn,
+)
 from airflow.sdk.bases.hook import BaseHook as BaseHook
 from airflow.sdk.bases.notifier import BaseNotifier as BaseNotifier
 from airflow.sdk.bases.operator import (
+    BaseAsyncOperator as BaseAsyncOperator,
     BaseOperator as BaseOperator,
     chain as chain,
     chain_linear as chain_linear,
     cross_downstream as cross_downstream,
 )
 from airflow.sdk.bases.operatorlink import BaseOperatorLink as BaseOperatorLink
+from airflow.sdk.bases.resumablejobmixin import ResumableJobMixin as ResumableJobMixin
 from airflow.sdk.bases.sensor import (
     BaseSensorOperator as BaseSensorOperator,
     PokeReturnValue as PokeReturnValue,
 )
+from airflow.sdk.bases.skipmixin import SkipMixin as SkipMixin
+from airflow.sdk.bases.xcom import BaseXCom as BaseXCom
+from airflow.sdk.configuration import AirflowSDKConfigParser
 from airflow.sdk.definitions.asset import (
     Asset as Asset,
     AssetAlias as AssetAlias,
@@ -41,6 +50,7 @@ from airflow.sdk.definitions.asset import (
     AssetAny as AssetAny,
     AssetWatcher as AssetWatcher,
 )
+from airflow.sdk.definitions.asset.access_control import AssetAccessControl as AssetAccessControl
 from airflow.sdk.definitions.asset.decorators import asset as asset
 from airflow.sdk.definitions.asset.metadata import Metadata as Metadata
 from airflow.sdk.definitions.connection import Connection as Connection
@@ -54,42 +64,145 @@ from airflow.sdk.definitions.decorators import setup as setup, task as task, tea
 from airflow.sdk.definitions.decorators.task_group import task_group as task_group
 from airflow.sdk.definitions.edges import EdgeModifier as EdgeModifier, Label as Label
 from airflow.sdk.definitions.param import Param as Param
+from airflow.sdk.definitions.partition_mappers.allowed_key import AllowedKeyMapper
+from airflow.sdk.definitions.partition_mappers.base import PartitionMapper, RollupMapper
+from airflow.sdk.definitions.partition_mappers.chain import ChainMapper
+from airflow.sdk.definitions.partition_mappers.fixed_key import FixedKeyMapper
+from airflow.sdk.definitions.partition_mappers.identity import IdentityMapper
+from airflow.sdk.definitions.partition_mappers.product import ProductMapper
+from airflow.sdk.definitions.partition_mappers.temporal import (
+    FanOutMapper,
+    StartOfDayMapper,
+    StartOfHourMapper,
+    StartOfMonthMapper,
+    StartOfQuarterMapper,
+    StartOfWeekMapper,
+    StartOfYearMapper,
+)
+from airflow.sdk.definitions.partition_mappers.wait_policy import (
+    MinimumCount,
+    WaitForAll,
+    WaitPolicy,
+)
+from airflow.sdk.definitions.partition_mappers.window import (
+    DayWindow,
+    HourWindow,
+    MonthWindow,
+    QuarterWindow,
+    SegmentWindow,
+    WeekWindow,
+    Window,
+    YearWindow,
+)
+from airflow.sdk.definitions.retry_policy import (
+    ExceptionRetryPolicy as ExceptionRetryPolicy,
+    RetryAction as RetryAction,
+    RetryDecision as RetryDecision,
+    RetryPolicy as RetryPolicy,
+    RetryRule as RetryRule,
+)
 from airflow.sdk.definitions.taskgroup import TaskGroup as TaskGroup
 from airflow.sdk.definitions.template import literal as literal
+from airflow.sdk.definitions.timetables.assets import (
+    AssetOrTimeSchedule,
+    PartitionAtRuntime,
+    PartitionedAssetTimetable,
+)
+from airflow.sdk.definitions.timetables.events import EventsTimetable
+from airflow.sdk.definitions.timetables.interval import (
+    CronDataIntervalTimetable,
+    DeltaDataIntervalTimetable,
+)
+from airflow.sdk.definitions.timetables.trigger import (
+    CronPartitionTimetable,
+    CronTriggerTimetable,
+    DeltaTriggerTimetable,
+    MultipleCronTriggerTimetable,
+)
 from airflow.sdk.definitions.variable import Variable as Variable
 from airflow.sdk.definitions.xcom_arg import XComArg as XComArg
+from airflow.sdk.execution_time import macros as macros
 from airflow.sdk.execution_time.cache import SecretCache as SecretCache
 from airflow.sdk.io.path import ObjectStoragePath as ObjectStoragePath
 
+conf: AirflowSDKConfigParser
+
 __all__ = [
     "__version__",
+    "AllowedKeyMapper",
     "Asset",
+    "AssetAccessControl",
     "AssetAlias",
     "AssetAll",
     "AssetAny",
+    "AssetOrTimeSchedule",
     "AssetWatcher",
+    "BaseAsyncOperator",
+    "BaseBranchOperator",
     "BaseHook",
     "BaseNotifier",
     "BaseOperator",
     "BaseOperatorLink",
     "BaseSensorOperator",
+    "BaseXCom",
+    "BranchMixIn",
+    "ChainMapper",
     "Connection",
     "Context",
+    "CronDataIntervalTimetable",
+    "CronTriggerTimetable",
+    "CronPartitionTimetable",
     "DAG",
     "DagRunState",
+    "DayWindow",
+    "DeltaDataIntervalTimetable",
+    "DeltaTriggerTimetable",
     "EdgeModifier",
+    "EventsTimetable",
+    "ExceptionRetryPolicy",
+    "FanOutMapper",
+    "FixedKeyMapper",
+    "HourWindow",
+    "IdentityMapper",
     "Label",
     "Metadata",
+    "MinimumCount",
+    "MonthWindow",
+    "MultipleCronTriggerTimetable",
     "ObjectStoragePath",
     "Param",
     "PokeReturnValue",
+    "PartitionAtRuntime",
+    "PartitionedAssetTimetable",
+    "PartitionMapper",
+    "ProductMapper",
+    "QuarterWindow",
+    "RetryAction",
+    "RetryDecision",
+    "RetryPolicy",
+    "RetryRule",
+    "ResumableJobMixin",
+    "RollupMapper",
     "SecretCache",
+    "SegmentWindow",
+    "SkipMixin",
+    "StartOfDayMapper",
+    "StartOfHourMapper",
+    "StartOfMonthMapper",
+    "StartOfQuarterMapper",
+    "StartOfWeekMapper",
+    "StartOfYearMapper",
     "TaskGroup",
     "TaskInstanceState",
     "TriggerRule",
     "Variable",
-    "XComArg",
+    "WaitForAll",
+    "WaitPolicy",
+    "WeekWindow",
     "WeightRule",
+    "Window",
+    "XComArg",
+    "YearWindow",
     "asset",
     "chain",
     "chain_linear",
@@ -98,10 +211,12 @@ __all__ = [
     "get_current_context",
     "get_parsing_context",
     "literal",
+    "macros",
     "setup",
     "task",
     "task_group",
     "teardown",
+    "conf",
 ]
 
 __version__: str

@@ -64,6 +64,15 @@ RELEASE_AIRFLOW_CTL_COMMANDS: dict[str, str | list[str]] = {
     "name": "airflowctl release commands",
     "commands": [
         "prepare-airflow-ctl-distributions",
+        "generate-issue-content-airflow-ctl",
+        "generate-airflowctl-changelog",
+    ],
+}
+
+RELEASE_MYPY_COMMANDS: dict[str, str | list[str]] = {
+    "name": "Apache Airflow Mypy release commands",
+    "commands": [
+        "prepare-mypy-distributions",
     ],
 }
 
@@ -76,7 +85,7 @@ RELEASE_OTHER_COMMANDS: dict[str, str | list[str]] = {
         "generate-constraints",
         "update-constraints",
         "publish-docs-to-s3",
-        "validate-rc-by-pmc",
+        "verify-rc-by-pmc",
         "check-release-files",
     ],
 }
@@ -118,6 +127,16 @@ RELEASE_MANAGEMENT_PARAMETERS: dict[str, list[dict[str, str | list[str]]]] = {
             ],
         }
     ],
+    "breeze release-management prepare-mypy-distributions": [
+        {
+            "name": "Package flags",
+            "options": [
+                "--distribution-format",
+                "--version-suffix",
+                "--use-local-hatch",
+            ],
+        }
+    ],
     "breeze release-management prepare-helm-chart-tarball": [
         {
             "name": "Package flags",
@@ -136,7 +155,6 @@ RELEASE_MANAGEMENT_PARAMETERS: dict[str, list[dict[str, str | list[str]]]] = {
             "name": "Package flags",
             "options": [
                 "--sign-email",
-                "--version-suffix",
             ],
         }
     ],
@@ -373,6 +391,31 @@ RELEASE_MANAGEMENT_PARAMETERS: dict[str, list[dict[str, str | list[str]]]] = {
             ],
         }
     ],
+    "breeze release-management generate-issue-content-airflow-ctl": [
+        {
+            "name": "Generate issue flags",
+            "options": [
+                "--github-token",
+                "--previous-release",
+                "--current-release",
+                "--excluded-pr-list",
+                "--limit-pr-count",
+            ],
+        }
+    ],
+    "breeze release-management generate-airflowctl-changelog": [
+        {
+            "name": "Generate changelog flags",
+            "options": [
+                "--github-token",
+                "--previous-release",
+                "--current-release",
+                "--version",
+                "--excluded-pr-list",
+                "--output-file",
+            ],
+        }
+    ],
     "breeze release-management publish-docs": [
         {
             "name": "Publish Docs",
@@ -414,6 +457,7 @@ RELEASE_MANAGEMENT_PARAMETERS: dict[str, list[dict[str, str | list[str]]]] = {
                 "--excluded-pr-list",
                 "--github-token",
                 "--only-available-in-dist",
+                "--output-file",
             ],
         }
     ],
@@ -457,7 +501,7 @@ RELEASE_MANAGEMENT_PARAMETERS: dict[str, list[dict[str, str | list[str]]]] = {
     "breeze release-management start-release": [
         {
             "name": "Start release flags",
-            "options": ["--release-candidate", "--previous-release", "--task-sdk-release-candidate"],
+            "options": ["--version", "--task-sdk-version"],
         }
     ],
     "breeze release-management update-constraints": [
@@ -516,6 +560,7 @@ RELEASE_MANAGEMENT_PARAMETERS: dict[str, list[dict[str, str | list[str]]]] = {
                 "--diff-mode",
                 "--package",
                 "--explain-why",
+                "--cooldown-days",
             ],
         },
         {
@@ -525,15 +570,17 @@ RELEASE_MANAGEMENT_PARAMETERS: dict[str, list[dict[str, str | list[str]]]] = {
             ],
         },
     ],
-    "breeze release-management validate-rc-by-pmc": [
+    "breeze release-management verify-rc-by-pmc": [
         {
-            "name": "Validation options",
+            "name": "Verification options",
             "options": [
                 "--distribution",
                 "--version",
                 "--task-sdk-version",
                 "--path-to-airflow-svn",
                 "--checks",
+                "--download-gpg-keys",
+                "--update-svn",
             ],
         },
     ],

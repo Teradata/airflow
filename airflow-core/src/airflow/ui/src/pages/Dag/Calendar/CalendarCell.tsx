@@ -17,9 +17,8 @@
  * under the License.
  */
 import { Box } from "@chakra-ui/react";
-import type React from "react";
 
-import { HoverTooltip } from "src/components/HoverTooltip";
+import { BasicTooltip } from "src/components/BasicTooltip";
 
 import { CalendarTooltip } from "./CalendarTooltip";
 import type { CalendarCellData, CalendarColorMode } from "./types";
@@ -38,12 +37,6 @@ type Props = {
   readonly viewMode?: CalendarColorMode;
 };
 
-const renderTooltip =
-  (cellData: CalendarCellData | undefined, viewMode: CalendarColorMode) =>
-  (triggerRef: React.RefObject<HTMLElement>) => (
-    <CalendarTooltip cellData={cellData} triggerRef={triggerRef} viewMode={viewMode} />
-  );
-
 export const CalendarCell = ({
   backgroundColor,
   cellData,
@@ -58,6 +51,18 @@ export const CalendarCell = ({
   const hasData = Boolean(cellData && relevantCount > 0);
   const hasTooltip = Boolean(cellData);
 
+  // States present in this cell, computed with the same view-mode-aware logic the
+  // tooltip uses (see CalendarTooltip). Exposed as a `data-states` attribute so e2e
+  // tests can read run states from the DOM instead of hovering — the tooltip does
+  // not open reliably under synthetic pointer events in headless Firefox.
+  const runStates = cellData
+    ? Object.entries(cellData.counts)
+        .filter(
+          ([key, value]) => key !== "total" && value > 0 && (viewMode === "failed" ? key === "failed" : true),
+        )
+        .map(([key]) => key)
+    : [];
+
   const isMixedState =
     typeof backgroundColor === "object" && "planned" in backgroundColor && "actual" in backgroundColor;
 
@@ -66,6 +71,10 @@ export const CalendarCell = ({
       _hover={hasData ? { transform: "scale(1.1)" } : {}}
       borderRadius="2px"
       cursor={hasData ? "pointer" : "default"}
+      data-has-data={hasData ? "true" : "false"}
+      data-states={runStates.join(" ")}
+      data-testid="calendar-cell"
+      data-view-mode={viewMode}
       height="14px"
       marginRight={computedMarginRight}
       overflow="hidden"
@@ -93,6 +102,10 @@ export const CalendarCell = ({
       bg={backgroundColor}
       borderRadius="2px"
       cursor={hasData ? "pointer" : "default"}
+      data-has-data={hasData ? "true" : "false"}
+      data-states={runStates.join(" ")}
+      data-testid="calendar-cell"
+      data-view-mode={viewMode}
       height="14px"
       marginRight={computedMarginRight}
       width="14px"
@@ -103,5 +116,9 @@ export const CalendarCell = ({
     return cellBox;
   }
 
-  return <HoverTooltip tooltip={renderTooltip(cellData, viewMode)}>{cellBox}</HoverTooltip>;
+  return (
+    <BasicTooltip content={<CalendarTooltip cellData={cellData} viewMode={viewMode} />}>
+      {cellBox}
+    </BasicTooltip>
+  );
 };

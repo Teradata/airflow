@@ -26,12 +26,15 @@ from typing import TYPE_CHECKING, Any
 
 from paramiko.sftp import SFTP_NO_SUCH_FILE
 
-from airflow.configuration import conf
-from airflow.exceptions import AirflowException
-from airflow.providers.common.compat.sdk import BaseSensorOperator, PokeReturnValue
+from airflow.providers.common.compat.sdk import (
+    AirflowException,
+    BaseSensorOperator,
+    PokeReturnValue,
+    conf,
+    timezone,
+)
 from airflow.providers.sftp.hooks.sftp import SFTPHook
 from airflow.providers.sftp.triggers.sftp import SFTPTrigger
-from airflow.utils.timezone import convert_to_utc, parse
 
 if TYPE_CHECKING:
     from airflow.providers.common.compat.sdk import Context
@@ -45,6 +48,15 @@ class SFTPSensor(BaseSensorOperator):
     :param file_pattern: The pattern that will be used to match the file (fnmatch format)
     :param sftp_conn_id: The connection to run the sensor against
     :param newer_than: DateTime for which the file or file path should be newer than, comparison is inclusive
+    :param python_callable: Optional callable that will be called after files are found. The callable
+        will receive the found files list in ``op_kwargs['files_found']`` if ``op_kwargs`` is provided
+        and not empty. The return value of the callable will be stored in XCom along with the
+        files_found list.
+    :param op_args: A list of positional arguments that will get unpacked when calling your callable
+        (templated). Only used when ``python_callable`` is provided.
+    :param op_kwargs: A dictionary of keyword arguments that will get unpacked in your callable
+        (templated). If provided and not empty, the ``files_found`` list will be automatically added
+        to this dictionary. Only used when ``python_callable`` is provided.
     :param deferrable: If waiting for completion, whether to defer the task until done, default is ``False``.
     """
 
@@ -112,9 +124,9 @@ class SFTPSensor(BaseSensorOperator):
                     continue
 
                 if isinstance(self.newer_than, str):
-                    self.newer_than = parse(self.newer_than)
-                _mod_time = convert_to_utc(datetime.strptime(mod_time, "%Y%m%d%H%M%S"))
-                _newer_than = convert_to_utc(self.newer_than)
+                    self.newer_than = timezone.parse(self.newer_than)
+                _mod_time = timezone.convert_to_utc(datetime.strptime(mod_time, "%Y%m%d%H%M%S"))
+                _newer_than = timezone.convert_to_utc(self.newer_than)
                 if _newer_than <= _mod_time:
                     files_found.append(actual_file_present)
                     self.log.info(

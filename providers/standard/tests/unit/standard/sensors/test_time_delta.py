@@ -24,8 +24,9 @@ import pendulum
 import pytest
 import time_machine
 
-from airflow.exceptions import AirflowProviderDeprecationWarning, TaskDeferred
+from airflow.exceptions import AirflowProviderDeprecationWarning
 from airflow.models.dag import DAG
+from airflow.providers.common.compat.sdk import TaskDeferred
 from airflow.providers.standard.sensors.time_delta import (
     TimeDeltaSensor,
     TimeDeltaSensorAsync,
@@ -35,7 +36,12 @@ from airflow.providers.standard.triggers.temporal import DateTimeTrigger
 from airflow.utils.types import DagRunType
 
 from tests_common.test_utils import db
-from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS, AIRFLOW_V_3_2_PLUS, timezone
+from tests_common.test_utils.version_compat import (
+    AIRFLOW_V_3_0_PLUS,
+    AIRFLOW_V_3_2_PLUS,
+    AIRFLOW_V_3_3_PLUS,
+    timezone,
+)
 
 if AIRFLOW_V_3_2_PLUS:
     from airflow.dag_processing.dagbag import DagBag
@@ -62,7 +68,10 @@ def clear_db():
 
 class TestTimedeltaSensor:
     def setup_method(self):
-        self.dagbag = DagBag(dag_folder=DEV_NULL, include_examples=False)
+        if AIRFLOW_V_3_3_PLUS:
+            self.dagbag = DagBag(dag_folder=DEV_NULL)
+        else:
+            self.dagbag = DagBag(dag_folder=DEV_NULL, include_examples=False)  # type: ignore[call-arg]
         self.dag = DAG(TEST_DAG_ID, schedule=timedelta(days=1), start_date=DEFAULT_DATE)
 
     def test_timedelta_sensor(self, mocker):
@@ -160,7 +169,10 @@ def test_timedelta_sensor_deferrable_run_after_vs_interval(run_after, interval_e
 
 class TestTimeDeltaSensorAsync:
     def setup_method(self):
-        self.dagbag = DagBag(dag_folder=DEV_NULL, include_examples=True)
+        if AIRFLOW_V_3_3_PLUS:
+            self.dagbag = DagBag(dag_folder=DEV_NULL)
+        else:
+            self.dagbag = DagBag(dag_folder=DEV_NULL, include_examples=True)
         self.args = {"owner": "airflow", "start_date": DEFAULT_DATE}
         self.dag = DAG(TEST_DAG_ID, schedule=timedelta(days=1), default_args=self.args)
 

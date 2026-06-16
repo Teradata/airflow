@@ -87,14 +87,18 @@ jobs:
     steps:
       - name: "Cleanup repo"
         shell: bash
-        run: docker run -v "${GITHUB_WORKSPACE}:/workspace" -u 0:0 bash -c "rm -rf /workspace/*"
+        run: sudo rm -rf ${GITHUB_WORKSPACE}/*
       - name: "Checkout ${{ github.ref }} ( ${{ github.sha }} )"
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
           persist-credentials: false
-      - name: "Free up disk space"
-        shell: bash
-        run: ./scripts/tools/free_up_disk_space.sh
+      - name: "Install prek"
+        uses: ./.github/actions/install-prek
+        id: prek
+        with:
+          python-version: ${{ inputs.default-python-version }}
+          platform: ${{ inputs.platform }}
+          save-cache: false
       - name: "Prepare breeze & CI image: ${{ inputs.default-python-version }}"
         uses: ./.github/actions/prepare_breeze_and_image
         with:
@@ -123,6 +127,10 @@ jobs:
       - name: "Prepare task-sdk package: ${{ matrix.package-format }}"
         run: >
           breeze release-management prepare-task-sdk-distributions
+          --distribution-format ${{ matrix.package-format }}
+      - name: "Prepare airflow-ctl package: ${{ matrix.package-format }}"
+        run: >
+          breeze release-management prepare-airflow-ctl-distributions
           --distribution-format ${{ matrix.package-format }}
       - name: "Verify ${{ matrix.package-format }} packages with twine"
         run: |
@@ -189,14 +197,18 @@ jobs:
     steps:
       - name: "Cleanup repo"
         shell: bash
-        run: docker run -v "${GITHUB_WORKSPACE}:/workspace" -u 0:0 bash -c "rm -rf /workspace/*"
+        run: sudo rm -rf ${GITHUB_WORKSPACE}/*
       - name: "Checkout ${{ github.ref }} ( ${{ github.sha }} )"
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
           persist-credentials: false
-      - name: "Free up disk space"
-        shell: bash
-        run: ./scripts/tools/free_up_disk_space.sh
+      - name: "Install prek"
+        uses: ./.github/actions/install-prek
+        id: prek
+        with:
+          python-version: ${{ matrix.compat.python-version }}
+          platform: ${{ inputs.platform }}
+          save-cache: false
       - name: "Prepare breeze & CI image: ${{ matrix.compat.python-version }}"
         uses: ./.github/actions/prepare_breeze_and_image
         with:

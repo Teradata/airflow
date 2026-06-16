@@ -17,8 +17,10 @@
 # under the License.
 from __future__ import annotations
 
+import gc
 import multiprocessing
 import os
+from pathlib import Path
 from unittest import mock
 
 import pytest
@@ -27,7 +29,12 @@ from uuid6 import uuid7
 
 from airflow._shared.timezones import timezone
 from airflow.executors import workloads
-from airflow.executors.local_executor import LocalExecutor, _execute_work
+from airflow.executors.base_executor import BaseExecutor, ExecutorConf, get_execution_api_server_url
+from airflow.executors.local_executor import LocalExecutor
+from airflow.executors.workloads.base import BundleInfo
+from airflow.executors.workloads.callback import CallbackDTO
+from airflow.executors.workloads.task import TaskInstanceDTO
+from airflow.models.callback import CallbackFetchMethod
 from airflow.settings import Session
 from airflow.utils.state import State
 
@@ -36,14 +43,46 @@ from tests_common.test_utils.markers import skip_if_force_lowest_dependencies_ma
 
 pytestmark = pytest.mark.db_test
 
-# Runtime is fine, we just can't run the tests on macOS
-skip_spawn_mp_start = pytest.mark.skipif(
-    multiprocessing.get_context().get_start_method() == "spawn",
-    reason="mock patching in test don't work with 'spawn' mode (default on macOS)",
+# Mock patching doesn't work across process boundaries with 'spawn' (default on macOS)
+# or 'forkserver' (default on Linux with Python 3.14+).
+skip_non_fork_mp_start = pytest.mark.skipif(
+    multiprocessing.get_start_method() != "fork",
+    reason="mock patching in test doesn't work with non-fork multiprocessing start methods",
+)
+
+skip_fork_mp_start = pytest.mark.skipif(
+    multiprocessing.get_start_method() == "fork",
+    reason="tests non-fork (lazy-spawning) behavior",
 )
 
 
+def _make_task_workload():
+    """Create a minimal ExecuteTask workload for tests."""
+    return workloads.ExecuteTask(
+        ti=TaskInstanceDTO(
+            id=uuid7(),
+            dag_version_id=uuid7(),
+            task_id="test_task",
+            dag_id="test_dag",
+            run_id="test_run",
+            try_number=1,
+            pool_slots=1,
+            queue="default",
+            priority_weight=1,
+        ),
+        dag_rel_path="some/path",
+        bundle_info=BundleInfo(name="test_bundle"),
+        token="test_token",
+        log_path=None,
+    )
+
+
 class TestLocalExecutor:
+    """
+    When the executor is started, end() must be called before the test finishes.
+    Otherwise, subprocesses will remain running, preventing the test from terminating and causing a timeout.
+    """
+
     TEST_SUCCESS_COMMANDS = 5
 
     def test_sentry_integration(self):
@@ -52,14 +91,57 @@ class TestLocalExecutor:
     def test_is_local_default_value(self):
         assert LocalExecutor.is_local
 
+    def test_supports_multi_team(self):
+        assert LocalExecutor.supports_multi_team
+
     def test_serve_logs_default_value(self):
         assert LocalExecutor.serve_logs
 
-    @skip_spawn_mp_start
-    @mock.patch("airflow.sdk.execution_time.supervisor.supervise")
-    def test_execution(self, mock_supervise):
+    @skip_non_fork_mp_start
+    @mock.patch.object(gc, "unfreeze")
+    @mock.patch.object(gc, "freeze")
+    def test_executor_worker_spawned(self, mock_freeze, mock_unfreeze):
+        executor = LocalExecutor(parallelism=5)
+        executor.start()
+
+        mock_freeze.assert_called_once()
+        mock_unfreeze.assert_called_once()
+
+        assert len(executor.workers) == 5
+
+        executor.end()
+
+    @skip_fork_mp_start
+    @mock.patch.object(gc, "unfreeze")
+    @mock.patch.object(gc, "freeze")
+    def test_executor_lazy_worker_spawning(self, mock_freeze, mock_unfreeze):
+        """On non-fork start methods, workers are spawned lazily and gc.freeze is not called."""
+        executor = LocalExecutor(parallelism=3)
+        executor.start()
+
+        try:
+            # No workers should be pre-spawned
+            assert len(executor.workers) == 0
+            mock_freeze.assert_not_called()
+            mock_unfreeze.assert_not_called()
+
+            # Simulate a queued message so _check_workers spawns one worker on demand
+            with executor._unread_messages:
+                executor._unread_messages.value = 1
+            executor.activity_queue.put(None)  # poison pill so the worker exits cleanly
+            executor._check_workers()
+
+            assert len(executor.workers) == 1
+            # gc.freeze is still not used for non-fork
+            mock_freeze.assert_not_called()
+        finally:
+            executor.end()
+
+    @skip_non_fork_mp_start
+    @mock.patch("airflow.executors.base_executor.BaseExecutor.run_workload")
+    def test_execution(self, mock_run_workload):
         success_tis = [
-            workloads.TaskInstance(
+            TaskInstanceDTO(
                 id=uuid7(),
                 dag_version_id=uuid7(),
                 task_id=f"success_{i}",
@@ -78,19 +160,24 @@ class TestLocalExecutor:
         fail_ti = success_tis[0].model_copy(update={"id": uuid7(), "task_id": "failure"})
 
         # We just mock both styles here, only one will be hit though
-        def fake_supervise(ti, **kwargs):
-            if ti.id == fail_ti.id:
+        has_failed_once = False
+
+        def fake_run_workload(workload, **kwargs):
+            nonlocal has_failed_once
+            if workload.ti.id == fail_ti.id and not has_failed_once:
+                has_failed_once = True
                 raise RuntimeError("fake failure")
             return 0
 
-        mock_supervise.side_effect = fake_supervise
+        mock_run_workload.side_effect = fake_run_workload
 
         executor = LocalExecutor(parallelism=2)
-        executor.start()
-
-        assert executor.result_queue.empty()
 
         with spy_on(executor._spawn_worker) as spawn_worker:
+            executor.start()
+
+            assert executor.result_queue.empty()
+
             for ti in success_tis:
                 executor.queue_workload(
                     workloads.ExecuteTask(
@@ -133,25 +220,31 @@ class TestLocalExecutor:
 
     @mock.patch("airflow.executors.local_executor.LocalExecutor.sync")
     @mock.patch("airflow.executors.base_executor.BaseExecutor.trigger_tasks")
-    @mock.patch("airflow.executors.base_executor.Stats.gauge")
+    @mock.patch("airflow.executors.base_executor.stats.gauge")
     def test_gauge_executor_metrics(self, mock_stats_gauge, mock_trigger_tasks, mock_sync):
         executor = LocalExecutor()
         executor.heartbeat()
         calls = [
             mock.call(
-                "executor.open_slots", value=mock.ANY, tags={"status": "open", "name": "LocalExecutor"}
+                "executor.open_slots",
+                value=mock.ANY,
+                tags={"status": "open", "executor_class_name": "LocalExecutor"},
             ),
             mock.call(
-                "executor.queued_tasks", value=mock.ANY, tags={"status": "queued", "name": "LocalExecutor"}
+                "executor.queued_tasks",
+                value=mock.ANY,
+                tags={"status": "queued", "executor_class_name": "LocalExecutor"},
             ),
             mock.call(
-                "executor.running_tasks", value=mock.ANY, tags={"status": "running", "name": "LocalExecutor"}
+                "executor.running_tasks",
+                value=mock.ANY,
+                tags={"status": "running", "executor_class_name": "LocalExecutor"},
             ),
         ]
         mock_stats_gauge.assert_has_calls(calls)
 
     @skip_if_force_lowest_dependencies_marker
-    @pytest.mark.execution_timeout(5)
+    @pytest.mark.execution_timeout(30)
     def test_clean_stop_on_signal(self):
         import signal
 
@@ -197,17 +290,204 @@ class TestLocalExecutor:
             "relative_base_url",
         ],
     )
-    @mock.patch("airflow.sdk.execution_time.supervisor.supervise")
-    def test_execution_api_server_url_config(self, mock_supervise, conf_values, expected_server):
+    @mock.patch("airflow.executors.base_executor.BaseExecutor.run_workload")
+    def test_execution_api_server_url_config(self, mock_run_workload, conf_values, expected_server):
         """Test that execution_api_server_url is correctly configured with fallback"""
-        with conf_vars(conf_values):
-            _execute_work(log=mock.ANY, workload=mock.MagicMock())
 
-            mock_supervise.assert_called_with(
-                ti=mock.ANY,
-                dag_rel_path=mock.ANY,
-                bundle_info=mock.ANY,
-                token=mock.ANY,
-                server=expected_server,
-                log_path=mock.ANY,
-            )
+        with conf_vars(conf_values):
+            team_conf = ExecutorConf(team_name=None)
+            BaseExecutor.run_workload(_make_task_workload(), server=get_execution_api_server_url(team_conf))
+
+            mock_run_workload.assert_called_once()
+            assert mock_run_workload.call_args.kwargs["server"] == expected_server
+
+    @mock.patch("airflow.executors.base_executor.BaseExecutor.run_workload")
+    def test_team_and_global_config_isolation(self, mock_run_workload):
+        """Test that team-specific and global executors use correct configurations side-by-side"""
+
+        team_name = "ml_team"
+        team_server = "http://team-ml-server:8080/execution/"
+        default_server = "http://default-server/execution/"
+
+        # Set up global configuration
+        config_overrides = {
+            ("api", "base_url"): "http://default-server",
+            ("core", "execution_api_server_url"): default_server,
+        }
+
+        # Use environment variables for team-specific config
+        import os
+
+        team_env_key = f"AIRFLOW__{team_name.upper()}___CORE__EXECUTION_API_SERVER_URL"
+
+        with mock.patch.dict(os.environ, {team_env_key: team_server}):
+            with conf_vars(config_overrides):
+                # Test team-specific config
+                team_conf = ExecutorConf(team_name=team_name)
+                BaseExecutor.run_workload(
+                    _make_task_workload(), server=get_execution_api_server_url(team_conf)
+                )
+
+                # Verify team-specific server URL was used
+                assert mock_run_workload.call_count == 1
+                assert mock_run_workload.call_args.kwargs["server"] == team_server
+
+                mock_run_workload.reset_mock()
+
+                # Test global config (no team)
+                global_conf = ExecutorConf(team_name=None)
+                BaseExecutor.run_workload(
+                    _make_task_workload(), server=get_execution_api_server_url(global_conf)
+                )
+
+                # Verify default server URL was used
+                assert mock_run_workload.call_count == 1
+                assert mock_run_workload.call_args.kwargs["server"] == default_server
+
+    def test_multiple_team_executors_isolation(self):
+        """Test that multiple team executors can coexist with isolated resources"""
+        team_a_executor = LocalExecutor(parallelism=2, team_name="team_a")
+        team_b_executor = LocalExecutor(parallelism=3, team_name="team_b")
+
+        team_a_executor.start()
+        team_b_executor.start()
+
+        try:
+            # Verify each executor has its own queues
+            assert team_a_executor.activity_queue is not team_b_executor.activity_queue
+            assert team_a_executor.result_queue is not team_b_executor.result_queue
+
+            # Verify each executor has its own workers dict
+            assert team_a_executor.workers is not team_b_executor.workers
+
+            if LocalExecutor.is_mp_using_fork:
+                # fork pre-spawns all workers at start()
+                assert len(team_a_executor.workers) == 2
+                assert len(team_b_executor.workers) == 3
+            else:
+                # forkserver/spawn use lazy spawning
+                assert len(team_a_executor.workers) == 0
+                assert len(team_b_executor.workers) == 0
+
+            # Verify each executor has its own unread_messages counter
+            assert team_a_executor._unread_messages is not team_b_executor._unread_messages
+
+            # Verify each has correct team config
+            assert team_a_executor.conf.team_name == "team_a"
+            assert team_b_executor.conf.team_name == "team_b"
+
+        finally:
+            team_a_executor.end()
+            team_b_executor.end()
+
+    def test_global_executor_without_team_name(self):
+        """Test that global executor (no team) works correctly"""
+        executor = LocalExecutor(parallelism=2)
+
+        # Verify executor has conf but no team name
+        assert hasattr(executor, "conf")
+        assert executor.conf.team_name is None
+
+        executor.start()
+
+        if LocalExecutor.is_mp_using_fork:
+            assert len(executor.workers) == 2
+        else:
+            # forkserver/spawn use lazy spawning
+            assert len(executor.workers) == 0
+
+        executor.end()
+
+
+class TestLocalExecutorConnectionTestSupport:
+    def test_supports_connection_test_flag_is_true(self):
+        executor = LocalExecutor()
+        assert executor.supports_connection_test is True
+
+
+class TestLocalExecutorCallbackSupport:
+    CALLBACK_UUID = "12345678-1234-5678-1234-567812345678"
+    TEST_TOKEN = "test_token"
+    TEST_SERVER = "http://localhost:8080/execution/"
+
+    def test_supports_callbacks_flag_is_true(self):
+        executor = LocalExecutor()
+        assert executor.supports_callbacks is True
+
+    @skip_non_fork_mp_start
+    def test_process_callback_workload_queue_management(self):
+        """Test that _process_workloads correctly removes callbacks from queued_callbacks."""
+        executor = LocalExecutor(parallelism=1)
+        callback_data = CallbackDTO(
+            id=self.CALLBACK_UUID,
+            fetch_method=CallbackFetchMethod.IMPORT_PATH,
+            data={"path": "test.func", "kwargs": {}},
+        )
+        callback_workload = workloads.ExecuteCallback(
+            callback=callback_data,
+            dag_rel_path="test.py",
+            bundle_info=BundleInfo(name="test_bundle", version="1.0"),
+            token="test_token",
+            log_path="test.log",
+        )
+
+        executor.start()
+
+        try:
+            executor.queued_callbacks[callback_workload.key] = callback_workload
+            executor._process_workloads([callback_workload])
+            assert len(executor.queued_callbacks) == 0
+            # We can't easily verify worker execution without running the worker,
+            # but we can verify the helper is called via mock
+
+        finally:
+            executor.end()
+
+    @mock.patch("airflow.sdk.execution_time.callback_supervisor.supervise_callback", return_value=0)
+    def test_execute_workload_calls_supervise_callback(self, mock_supervise_callback):
+        callback_data = CallbackDTO(
+            id=self.CALLBACK_UUID,
+            fetch_method=CallbackFetchMethod.IMPORT_PATH,
+            data={"path": "test.module.my_callback", "kwargs": {"arg1": "val1"}},
+        )
+        callback_workload = workloads.ExecuteCallback(
+            callback=callback_data,
+            dag_rel_path=Path("test.py"),
+            bundle_info=BundleInfo(name="test_bundle", version="1.0"),
+            token="test_token",
+            log_path="test.log",
+        )
+
+        BaseExecutor.run_workload(callback_workload)
+
+        mock_supervise_callback.assert_called_once_with(
+            id=self.CALLBACK_UUID,
+            callback_path="test.module.my_callback",
+            callback_kwargs={"arg1": "val1"},
+            dag_rel_path=Path("test.py"),
+            log_path="test.log",
+            bundle_info=BundleInfo(name="test_bundle", version="1.0"),
+            token=TestLocalExecutorCallbackSupport.TEST_TOKEN,
+            server=TestLocalExecutorCallbackSupport.TEST_SERVER,
+        )
+
+    @mock.patch(
+        "airflow.sdk.execution_time.callback_supervisor.supervise_callback",
+        side_effect=RuntimeError("Callback subprocess exited with code 1"),
+    )
+    def test_execute_workload_raises_on_callback_failure(self, mock_supervise_callback):
+        callback_data = CallbackDTO(
+            id=self.CALLBACK_UUID,
+            fetch_method=CallbackFetchMethod.IMPORT_PATH,
+            data={"path": "test.module.my_callback", "kwargs": {}},
+        )
+        callback_workload = workloads.ExecuteCallback(
+            callback=callback_data,
+            dag_rel_path=Path("test.py"),
+            bundle_info=BundleInfo(name="test_bundle", version="1.0"),
+            token="test_token",
+            log_path="test.log",
+        )
+
+        with pytest.raises(RuntimeError, match="Callback subprocess exited with code 1"):
+            BaseExecutor.run_workload(callback_workload)

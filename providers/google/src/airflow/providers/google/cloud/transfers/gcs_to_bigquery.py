@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -31,13 +32,12 @@ from google.cloud.bigquery import (
     ExtractJob,
     LoadJob,
     QueryJob,
-    SchemaField,
     UnknownJob,
 )
 from google.cloud.bigquery.table import EncryptionConfiguration, Table, TableReference
 
-from airflow.configuration import conf
-from airflow.exceptions import AirflowException
+from airflow.exceptions import AirflowProviderDeprecationWarning
+from airflow.providers.common.compat.sdk import AirflowException, conf
 from airflow.providers.google.cloud.hooks.bigquery import BigQueryHook, BigQueryJob
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 from airflow.providers.google.cloud.links.bigquery import BigQueryTableLink
@@ -137,7 +137,18 @@ class GCSToBigQueryOperator(BaseOperator):
         future executions, you can pick up from the max ID.
     :param schema_update_options: Allows the schema of the destination
         table to be updated as a side effect of the load job.
-    :param src_fmt_configs: configure optional fields specific to the source format
+    :param src_fmt_configs: (Deprecated) configure optional fields specific to the source format.
+        Use ``extra_config`` instead. Note when migrating that ``extra_config`` uses the fully-nested API
+        structure, so format-specific options must be nested under their parent key
+        (e.g., ``{"parquetOptions": {"enableListInference": True}}`` rather than
+        ``{"enableListInference": True}``).
+    :param extra_config: Dict of additional properties to apply over the BigQuery job configuration.
+        When ``external_table=False``, applied over the load job configuration
+        (see `JobConfigurationLoad <https://cloud.google.com/bigquery/docs/reference/rest/v2/Job#JobConfigurationLoad>`_).
+        When ``external_table=True``, applied over the external table configuration
+        (see `ExternalDataConfiguration <https://cloud.google.com/bigquery/docs/reference/rest/v2/tables#ExternalDataConfiguration>`_).
+        Applied after all top-level params, so keys here take precedence over overlapping top-level
+        operator params. Nested dicts are replaced entirely, not deep-merged.
     :param external_table: Flag to specify if the destination table should be
         a BigQuery external table. Default Value is False.
     :param time_partitioning: configure optional time partitioning fields i.e.
@@ -190,6 +201,7 @@ class GCSToBigQueryOperator(BaseOperator):
         "destination_project_dataset_table",
         "impersonation_chain",
         "src_fmt_configs",
+        "extra_config",
     )
     template_ext: Sequence[str] = (".sql",)
     ui_color = "#f0eee4"
@@ -220,6 +232,7 @@ class GCSToBigQueryOperator(BaseOperator):
         gcp_conn_id="google_cloud_default",
         schema_update_options=(),
         src_fmt_configs=None,
+        extra_config: dict | None = None,
         external_table=False,
         time_partitioning=None,
         range_partitioning=None,
@@ -290,6 +303,17 @@ class GCSToBigQueryOperator(BaseOperator):
 
         self.schema_update_options = schema_update_options
         self.src_fmt_configs = src_fmt_configs
+        if src_fmt_configs:
+            warnings.warn(
+                "The 'src_fmt_configs' parameter is deprecated. Use 'extra_config' instead. "
+                "Note: 'extra_config' uses the fully-nested API structure, so format-specific "
+                "options must be nested under their parent key "
+                "(e.g., {'parquetOptions': {'enableListInference': True}} rather than "
+                "{'enableListInference': True}).",
+                AirflowProviderDeprecationWarning,
+                stacklevel=2,
+            )
+        self.extra_config = extra_config
         self.time_partitioning = time_partitioning
         self.range_partitioning = range_partitioning
         self.cluster_fields = cluster_fields
@@ -545,7 +569,11 @@ class GCSToBigQueryOperator(BaseOperator):
             "allowJaggedRows": self.allow_jagged_rows,
             "encoding": self.encoding,
         }
-        src_fmt_to_param_mapping = {"CSV": "csvOptions", "GOOGLE_SHEETS": "googleSheetsOptions"}
+        src_fmt_to_param_mapping = {
+            "CSV": "csvOptions",
+            "GOOGLE_SHEETS": "googleSheetsOptions",
+            "PARQUET": "parquetOptions",
+        }
         src_fmt_to_configs_mapping = {
             "csvOptions": [
                 "allowJaggedRows",
@@ -558,6 +586,7 @@ class GCSToBigQueryOperator(BaseOperator):
                 "columnNameCharacterMap",
             ],
             "googleSheetsOptions": ["skipLeadingRows"],
+            "parquetOptions": ["enumAsString", "enableListInference", "mapTargetType"],
         }
         if self.source_format in src_fmt_to_param_mapping:
             valid_configs = src_fmt_to_configs_mapping[src_fmt_to_param_mapping[self.source_format]]
@@ -566,11 +595,15 @@ class GCSToBigQueryOperator(BaseOperator):
             )
             external_config_api_repr[src_fmt_to_param_mapping[self.source_format]] = self.src_fmt_configs
 
-        external_config = ExternalConfig.from_api_repr(external_config_api_repr)
         if self.schema_fields:
-            external_config.schema = [SchemaField.from_api_repr(f) for f in self.schema_fields]
+            external_config_api_repr["schema"] = {"fields": self.schema_fields}
         if self.max_bad_records:
-            external_config.max_bad_records = self.max_bad_records
+            external_config_api_repr["maxBadRecords"] = self.max_bad_records
+
+        if self.extra_config:
+            external_config_api_repr.update(self.extra_config)
+
+        external_config = ExternalConfig.from_api_repr(external_config_api_repr)
 
         # build table definition
         table = Table(
@@ -688,7 +721,17 @@ class GCSToBigQueryOperator(BaseOperator):
             "ORC": ["autodetect"],
         }
 
+        # Some source formats have nested configuration options which are not available
+        # at the top level of the load configuration.
+        src_fmt_to_param_mapping = {"PARQUET": "parquetOptions"}
+        src_fmt_to_nested_configs_mapping = {
+            "parquetOptions": ["enumAsString", "enableListInference", "mapTargetType"],
+        }
+
         valid_configs = src_fmt_to_configs_mapping[self.source_format]
+
+        src_fmt_param = src_fmt_to_param_mapping.get(self.source_format)
+        valid_nested_configs = src_fmt_to_nested_configs_mapping[src_fmt_param] if src_fmt_param else None
 
         # if following fields are not specified in src_fmt_configs,
         # honor the top-level params for backward-compatibility
@@ -702,13 +745,22 @@ class GCSToBigQueryOperator(BaseOperator):
         }
 
         self.src_fmt_configs = self._validate_src_fmt_configs(
-            self.source_format, self.src_fmt_configs, valid_configs, backward_compatibility_configs
+            self.source_format,
+            self.src_fmt_configs,
+            valid_configs,
+            backward_compatibility_configs,
+            src_fmt_param,
+            valid_nested_configs,
         )
 
         self.configuration["load"].update(self.src_fmt_configs)
 
         if self.allow_jagged_rows:
             self.configuration["load"]["allowJaggedRows"] = self.allow_jagged_rows
+
+        if self.extra_config:
+            self.configuration["load"].update(self.extra_config)
+
         return self.configuration
 
     def _validate_src_fmt_configs(
@@ -717,29 +769,51 @@ class GCSToBigQueryOperator(BaseOperator):
         src_fmt_configs: dict,
         valid_configs: list[str],
         backward_compatibility_configs: dict | None = None,
+        src_fmt_param: str | None = None,
+        valid_nested_configs: list[str] | None = None,
     ) -> dict:
         """
-        Validate the given src_fmt_configs against a valid configuration for the source format.
+        Validate and format the given src_fmt_configs against a valid configuration for the source format.
 
         Adds the backward compatibility config to the src_fmt_configs.
+
+        Adds nested source format configurations if valid_nested_configs is provided.
 
         :param source_format: File format to export.
         :param src_fmt_configs: Configure optional fields specific to the source format.
         :param valid_configs: Valid configuration specific to the source format
         :param backward_compatibility_configs: The top-level params for backward-compatibility
+        :param src_fmt_param: The source format parameter for nested configurations.
+        Required when valid_nested_configs is provided.
+        :param valid_nested_configs: Valid nested configuration specific to the source format.
         """
+        valid_src_fmt_configs = {}
+
         if backward_compatibility_configs is None:
             backward_compatibility_configs = {}
 
         for k, v in backward_compatibility_configs.items():
             if k not in src_fmt_configs and k in valid_configs:
-                src_fmt_configs[k] = v
+                valid_src_fmt_configs[k] = v
 
-        for k in src_fmt_configs:
-            if k not in valid_configs:
+        if valid_nested_configs is None:
+            valid_nested_configs = []
+
+        if valid_nested_configs:
+            if src_fmt_param is None:
+                raise ValueError("src_fmt_param is required when valid_nested_configs is provided.")
+
+            valid_src_fmt_configs[src_fmt_param] = {}
+
+        for k, v in src_fmt_configs.items():
+            if k in valid_configs:
+                valid_src_fmt_configs[k] = v
+            elif k in valid_nested_configs:
+                valid_src_fmt_configs[src_fmt_param][k] = v
+            else:
                 raise ValueError(f"{k} is not a valid src_fmt_configs for type {source_format}.")
 
-        return src_fmt_configs
+        return valid_src_fmt_configs
 
     def _cleanse_time_partitioning(
         self, destination_dataset_table: str | None, time_partitioning_in: dict | None

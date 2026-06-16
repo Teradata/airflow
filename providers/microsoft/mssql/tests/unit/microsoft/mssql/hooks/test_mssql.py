@@ -23,8 +23,8 @@ from unittest import mock
 import pytest
 import sqlalchemy
 
-from airflow.configuration import conf
 from airflow.models import Connection
+from airflow.providers.common.compat.sdk import conf
 from airflow.providers.microsoft.mssql.dialects.mssql import MsSqlDialect
 
 from tests_common.test_utils.file_loading import load_file_from_resources
@@ -112,6 +112,15 @@ def mssql_connections():
             port=8081,
             extra={"SQlalchemy_Scheme": "mssql+testdriver", "myparam": "5@-//*"},
         ),
+        "alt_3": Connection(
+            conn_type="mssql",
+            host="ip",
+            schema="testdb",
+            login="username",
+            password="password",
+            port=8081,
+            extra={"SQlalchemy_Scheme": "mssql+testdriver", "myparam": "5@-//*"},
+        ),
     }
 
 
@@ -120,6 +129,7 @@ URI_TEST_CASES = [
     ("alt", "mssql+pymssql://username:password@ip:8081"),
     ("alt_1", "mssql+testdriver://username:password@ip:8081/"),
     ("alt_2", "mssql+testdriver://username:password@ip:8081/?myparam=5%40-%2F%2F%2A"),
+    ("alt_3", "mssql+testdriver://username:password@ip:8081/testdb?myparam=5%40-%2F%2F%2A"),
 ]
 
 
@@ -190,6 +200,89 @@ class TestMsSqlHook:
 
         hook = MsSqlHook()
         assert hook.sqlalchemy_scheme == hook.DEFAULT_SQLALCHEMY_SCHEME
+
+    @mock.patch("airflow.providers.common.sql.hooks.sql.send_sql_hook_lineage")
+    @mock.patch("airflow.providers.microsoft.mssql.hooks.mssql.MsSqlHook.get_conn")
+    @mock.patch("airflow.providers.microsoft.mssql.hooks.mssql.MsSqlHook.get_connection")
+    def test_run_hook_lineage(self, get_connection, mssql_get_conn, mock_send_lineage, mssql_connections):
+        get_connection.return_value = mssql_connections["default"]
+        cur = mock.MagicMock(rowcount=0)
+        cur.fetchall.return_value = []
+        conn = mock.MagicMock()
+        conn.cursor.return_value = cur
+        mssql_get_conn.return_value = conn
+
+        hook = MsSqlHook()
+        statement = "SELECT 1"
+        hook.run(statement)
+
+        mock_send_lineage.assert_called()
+        call_kw = mock_send_lineage.call_args.kwargs
+        assert call_kw["context"] is hook
+        assert call_kw["sql"] == statement
+        assert call_kw["sql_parameters"] is None
+        assert call_kw["cur"] is cur
+
+    @mock.patch("airflow.providers.common.sql.hooks.sql.send_sql_hook_lineage")
+    @mock.patch("airflow.providers.microsoft.mssql.hooks.mssql.MsSqlHook.get_conn")
+    @mock.patch("airflow.providers.microsoft.mssql.hooks.mssql.MsSqlHook.get_connection")
+    def test_insert_rows_hook_lineage(
+        self, get_connection, mssql_get_conn, mock_send_lineage, mssql_connections
+    ):
+        get_connection.return_value = mssql_connections["default"]
+        cur = mock.MagicMock(rowcount=0)
+        conn = mock.MagicMock()
+        conn.cursor.return_value = cur
+        mssql_get_conn.return_value = conn
+
+        hook = MsSqlHook()
+        table = "table"
+        rows = [("hello",), ("world",)]
+        hook.insert_rows(table, rows)
+
+        mock_send_lineage.assert_called()
+        call_kw = mock_send_lineage.call_args.kwargs
+        assert call_kw["context"] is hook
+        assert call_kw["sql"] == "INSERT INTO table  VALUES (%s)"
+        assert call_kw["row_count"] == 2
+
+    @mock.patch("airflow.providers.common.sql.hooks.sql.send_sql_hook_lineage")
+    @mock.patch("airflow.providers.common.sql.hooks.sql.DbApiHook._get_pandas_df")
+    @mock.patch("airflow.providers.microsoft.mssql.hooks.mssql.MsSqlHook.get_connection")
+    def test_get_df_hook_lineage(
+        self, get_connection, mock_get_pandas_df, mock_send_lineage, mssql_connections
+    ):
+        get_connection.return_value = mssql_connections["default"]
+
+        hook = MsSqlHook()
+        sql = "SELECT 1"
+        parameters = ("x",)
+        hook.get_df(sql, parameters=parameters)
+
+        mock_send_lineage.assert_called_once()
+        call_kw = mock_send_lineage.call_args.kwargs
+        assert call_kw["context"] is hook
+        assert call_kw["sql"] == sql
+        assert call_kw["sql_parameters"] == parameters
+
+    @mock.patch("airflow.providers.common.sql.hooks.sql.send_sql_hook_lineage")
+    @mock.patch("airflow.providers.common.sql.hooks.sql.DbApiHook._get_pandas_df_by_chunks")
+    @mock.patch("airflow.providers.microsoft.mssql.hooks.mssql.MsSqlHook.get_connection")
+    def test_get_df_by_chunks_hook_lineage(
+        self, get_connection, mock_get_pandas_df_by_chunks, mock_send_lineage, mssql_connections
+    ):
+        get_connection.return_value = mssql_connections["default"]
+
+        hook = MsSqlHook()
+        sql = "SELECT 1"
+        parameters = ("x",)
+        hook.get_df_by_chunks(sql, parameters=parameters, chunksize=1)
+
+        mock_send_lineage.assert_called_once()
+        call_kw = mock_send_lineage.call_args.kwargs
+        assert call_kw["context"] is hook
+        assert call_kw["sql"] == sql
+        assert call_kw["sql_parameters"] == parameters
 
     def test_sqlalchemy_scheme_is_from_hook(self):
         hook = MsSqlHook(sqlalchemy_scheme="mssql+mytestdriver")

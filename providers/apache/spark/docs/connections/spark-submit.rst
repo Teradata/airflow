@@ -17,7 +17,7 @@
 
 
 
-.. _howto/connection:spark-submit:
+.. _howto/connection:spark:
 
 Apache Spark Submit Connection
 ==============================
@@ -49,17 +49,30 @@ Spark binary (optional)
 Kubernetes namespace (optional, only applies to spark on kubernetes applications)
     Kubernetes namespace (``spark.kubernetes.namespace``) to divide cluster resources between multiple users (via resource quota).
 
-When specifying the connection in environment variable you should specify
-it using URI syntax.
+REST scheme (optional, only applies to Spark standalone cluster mode)
+    Scheme used to reach the Spark standalone REST API (``http`` or ``https``). Defaults to ``http``.
+    Set to ``https`` when the Spark master REST API is TLS-enabled
+    (``spark.ssl.standalone.enabled=true``).
 
-Note that all components of the URI should be URL-encoded. The URI and the mongo
-connection string are not the same.
+REST port (optional, only applies to Spark standalone cluster mode)
+    Port of the Spark standalone REST API (``spark.master.rest.port``). Defaults to ``6066``.
+    Override when your cluster uses a non-default REST port.
 
-For example:
+.. note::
 
-.. code-block:: bash
+  When specifying the connection in environment variable you should specify
+  it using URI syntax.
+  You can provide a standard Spark master URI directly.
+  The master URL will be parsed correctly without needing repeated prefixes such as ``spark://spark://...``
+  Ensure all URI components are URL-encoded.
 
-   export AIRFLOW_CONN_SPARK_DEFAULT='spark://mysparkcluster.com:80?deploy-mode=cluster&spark_binary=command&namespace=kube+namespace'
+  For example:
+
+  .. code-block:: bash
+
+     export AIRFLOW_CONN_SPARK_DEFAULT='spark://mysparkcluster.com:80?deploy-mode=cluster&spark_binary=command&namespace=kube+namespace'
+
+
 
 .. warning::
 

@@ -25,7 +25,6 @@ from sqlalchemy import select, update
 from sqlalchemy.orm import joinedload
 
 from airflow._shared.timezones import timezone
-from airflow.api_fastapi.auth.managers.models.resource_details import DagAccessEntity
 from airflow.api_fastapi.common.db.common import (
     SessionDep,
     paginated_select,
@@ -42,16 +41,19 @@ from airflow.api_fastapi.core_api.datamodels.backfills import (
 from airflow.api_fastapi.core_api.openapi.exceptions import (
     create_openapi_http_exception_doc,
 )
-from airflow.api_fastapi.core_api.security import GetUserDep, requires_access_backfill, requires_access_dag
+from airflow.api_fastapi.core_api.security import GetUserDep, requires_access_backfill
+from airflow.api_fastapi.core_api.services.public.common import resolve_run_on_latest_version
 from airflow.api_fastapi.logging.decorators import action_logging
-from airflow.exceptions import DagNotFound
+from airflow.exceptions import DagNotFound, DagRunTypeNotAllowed
 from airflow.models import DagRun
 from airflow.models.backfill import (
     AlreadyRunningBackfill,
     Backfill,
     BackfillDagRun,
-    DagNoScheduleException,
+    DagNonPeriodicScheduleException,
+    InvalidBackfillConf,
     InvalidBackfillDate,
+    InvalidBackfillDateRange,
     InvalidBackfillDirection,
     InvalidReprocessBehavior,
     _create_backfill,
@@ -121,7 +123,6 @@ def get_backfill(
     dependencies=[
         Depends(action_logging()),
         Depends(requires_access_backfill(method="PUT")),
-        Depends(requires_access_dag(method="PUT", access_entity=DagAccessEntity.RUN)),
     ],
 )
 def pause_backfill(backfill_id: NonNegativeInt, session: SessionDep) -> BackfillResponse:
@@ -149,7 +150,6 @@ def pause_backfill(backfill_id: NonNegativeInt, session: SessionDep) -> Backfill
     dependencies=[
         Depends(action_logging()),
         Depends(requires_access_backfill(method="PUT")),
-        Depends(requires_access_dag(method="PUT", access_entity=DagAccessEntity.RUN)),
     ],
 )
 def unpause_backfill(backfill_id: NonNegativeInt, session: SessionDep) -> BackfillResponse:
@@ -175,7 +175,6 @@ def unpause_backfill(backfill_id: NonNegativeInt, session: SessionDep) -> Backfi
     ),
     dependencies=[
         Depends(action_logging()),
-        Depends(requires_access_dag(method="PUT", access_entity=DagAccessEntity.RUN)),
         Depends(requires_access_backfill(method="PUT")),
     ],
 )
@@ -219,19 +218,27 @@ def cancel_backfill(backfill_id: NonNegativeInt, session: SessionDep) -> Backfil
 
 @backfills_router.post(
     path="",
-    responses=create_openapi_http_exception_doc([status.HTTP_404_NOT_FOUND, status.HTTP_409_CONFLICT]),
+    responses=create_openapi_http_exception_doc(
+        [status.HTTP_400_BAD_REQUEST, status.HTTP_404_NOT_FOUND, status.HTTP_409_CONFLICT]
+    ),
     dependencies=[
         Depends(action_logging()),
-        Depends(requires_access_dag(method="POST", access_entity=DagAccessEntity.RUN)),
         Depends(requires_access_backfill(method="POST")),
     ],
 )
 def create_backfill(
     backfill_request: BackfillPostBody,
     user: GetUserDep,
+    session: SessionDep,
 ) -> BackfillResponse:
     from_date = timezone.coerce_datetime(backfill_request.from_date)
     to_date = timezone.coerce_datetime(backfill_request.to_date)
+    resolved_run_on_latest = resolve_run_on_latest_version(
+        backfill_request.run_on_latest_version,
+        backfill_request.dag_id,
+        session,
+        fallback=True,
+    )
     try:
         backfill_obj = _create_backfill(
             dag_id=backfill_request.dag_id,
@@ -242,6 +249,7 @@ def create_backfill(
             dag_run_conf=backfill_request.dag_run_conf,
             triggering_user_name=user.get_name(),
             reprocess_behavior=backfill_request.reprocess_behavior,
+            run_on_latest_version=resolved_run_on_latest,
         )
         return BackfillResponse.model_validate(backfill_obj)
 
@@ -256,11 +264,18 @@ def create_backfill(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Could not find dag {backfill_request.dag_id}",
         )
+    except DagRunTypeNotAllowed as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
     except (
         InvalidReprocessBehavior,
         InvalidBackfillDirection,
-        DagNoScheduleException,
+        DagNonPeriodicScheduleException,
         InvalidBackfillDate,
+        InvalidBackfillDateRange,
+        InvalidBackfillConf,
     ) as e:
         raise RequestValidationError(str(e))
 
@@ -269,7 +284,6 @@ def create_backfill(
     path="/dry_run",
     responses=create_openapi_http_exception_doc([status.HTTP_404_NOT_FOUND, status.HTTP_409_CONFLICT]),
     dependencies=[
-        Depends(requires_access_dag(method="POST", access_entity=DagAccessEntity.RUN)),
         Depends(requires_access_backfill(method="POST")),
     ],
 )
@@ -287,22 +301,35 @@ def create_backfill_dry_run(
             to_date=to_date,
             reverse=body.run_backwards,
             reprocess_behavior=body.reprocess_behavior,
+            dag_run_conf=body.dag_run_conf,
             session=session,
         )
-        backfills = [DryRunBackfillResponse(logical_date=d) for d in backfills_dry_run]
+        backfills = [
+            DryRunBackfillResponse(
+                logical_date=d.logical_date, partition_key=d.partition_key, partition_date=d.partition_date
+            )
+            for d in backfills_dry_run
+        ]
 
-        return DryRunBackfillCollectionResponse(backfills=backfills, total_entries=len(backfills_dry_run))
+        return DryRunBackfillCollectionResponse(backfills=backfills, total_entries=len(backfills))
 
     except DagNotFound:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Could not find dag {body.dag_id}",
         )
+    except DagRunTypeNotAllowed as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
 
     except (
         InvalidReprocessBehavior,
         InvalidBackfillDirection,
-        DagNoScheduleException,
+        DagNonPeriodicScheduleException,
         InvalidBackfillDate,
+        InvalidBackfillDateRange,
+        InvalidBackfillConf,
     ) as e:
         raise RequestValidationError(str(e))

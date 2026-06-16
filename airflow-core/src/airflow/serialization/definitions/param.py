@@ -20,8 +20,9 @@ from __future__ import annotations
 
 import collections.abc
 import copy
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
+from airflow.exceptions import ParamValidationError
 from airflow.serialization.definitions.notset import NOTSET, is_arg_set
 
 if TYPE_CHECKING:
@@ -31,11 +32,18 @@ if TYPE_CHECKING:
 class SerializedParam:
     """Server-side param class for deserialization."""
 
-    def __init__(self, default: Any = NOTSET, description: str | None = None, **schema):
+    def __init__(
+        self,
+        default: Any = NOTSET,
+        description: str | None = None,
+        source: Literal["dag", "task"] | None = None,
+        **schema,
+    ):
         # No validation needed - the SDK already validated the default.
         self.value = default
         self.description = description
         self.schema = schema
+        self.source = source
 
     def resolve(self, *, raises: bool = False) -> Any:
         """
@@ -48,12 +56,16 @@ class SerializedParam:
         :param raises: All exceptions during validation are suppressed by
             default. They are only raised if this is set to *True* instead.
         """
-        import jsonschema
+        from jsonschema import FormatChecker, validate
 
         try:
             if not is_arg_set(value := self.value):
                 raise ValueError("No value passed")
-            jsonschema.validate(value, self.schema, format_checker=jsonschema.FormatChecker())
+            validate(
+                value,
+                self.schema,
+                format_checker=FormatChecker(),
+            )
         except Exception:
             if not raises:
                 return None
@@ -66,6 +78,7 @@ class SerializedParam:
             "value": self.resolve(),
             "schema": self.schema,
             "description": self.description,
+            "source": self.source,
         }
 
 
@@ -135,7 +148,7 @@ class SerializedParamsDict(collections.abc.Mapping[str, Any]):
             try:
                 return v.resolve(raises=True)
             except Exception as e:
-                raise ValueError(f"Invalid input for param {k}: {e}") from None
+                raise ParamValidationError(f"Invalid input for param {k}: {e}") from None
 
         return {k: _validate_one(k, v) for k, v in self.__dict.items()}
 

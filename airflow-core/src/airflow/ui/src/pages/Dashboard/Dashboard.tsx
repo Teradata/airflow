@@ -17,25 +17,35 @@
  * under the License.
  */
 import { Box, Heading, VStack } from "@chakra-ui/react";
+import dayjs from "dayjs";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { usePluginServiceGetPlugins } from "openapi/queries";
 import type { ReactAppResponse, UIAlert } from "openapi/requests/types.gen";
 import ReactMarkdown from "src/components/ReactMarkdown";
+import TimeRangeSelector from "src/components/TimeRangeSelector";
 import { Accordion, Alert } from "src/components/ui";
 import { useConfig } from "src/queries/useConfig";
 
 import { ReactPlugin } from "../ReactPlugin";
+import { DashboardDeadlines } from "./Deadlines";
 import { FavoriteDags } from "./FavoriteDags";
 import { Health } from "./Health";
 import { HistoricalMetrics } from "./HistoricalMetrics";
 import { PoolSummary } from "./PoolSummary";
 import { Stats } from "./Stats";
 
+const defaultHour = "24";
+
 export const Dashboard = () => {
   const alerts = useConfig("dashboard_alert") as Array<UIAlert>;
   const { t: translate } = useTranslation("dashboard");
   const instanceName = useConfig("instance_name");
+
+  const now = dayjs();
+  const [startDate, setStartDate] = useState(now.subtract(Number(defaultHour), "hour").toISOString());
+  const [endDate, setEndDate] = useState(now.toISOString());
 
   const { data: pluginData } = usePluginServiceGetPlugins();
 
@@ -45,7 +55,7 @@ export const Dashboard = () => {
       .filter((reactAppPlugin: ReactAppResponse) => reactAppPlugin.destination === "dashboard") ?? [];
 
   return (
-    <Box overflow="auto" px={4}>
+    <Box overflow="auto" px={{ base: 2, md: 4 }}>
       <VStack alignItems="stretch" gap={6}>
         {/* All flex items within this VStack should specify an increasing order. This
         will be used by third parties plugins to position themselves within the page via CSS */}
@@ -81,12 +91,24 @@ export const Dashboard = () => {
         <Box order={4}>
           <FavoriteDags />
         </Box>
-        <Box display="flex" gap={8} order={5}>
+        <Box display="flex" flexDirection={{ base: "column", md: "row" }} gap={{ base: 4, md: 8 }} order={5}>
           <Health />
           <PoolSummary />
         </Box>
         <Box order={6}>
-          <HistoricalMetrics />
+          <TimeRangeSelector
+            defaultValue={defaultHour}
+            endDate={endDate}
+            setEndDate={setEndDate}
+            setStartDate={setStartDate}
+            startDate={startDate}
+          />
+        </Box>
+        <Box order={7}>
+          <DashboardDeadlines endDate={endDate} startDate={startDate} />
+        </Box>
+        <Box order={8}>
+          <HistoricalMetrics endDate={endDate} startDate={startDate} />
         </Box>
         {dashboardReactPlugins.map((plugin) => (
           <ReactPlugin key={plugin.name} reactApp={plugin} />

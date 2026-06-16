@@ -17,12 +17,15 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from unittest import mock
 
 import pytest
 from task_sdk.definitions.test_callback import TEST_CALLBACK_KWARGS, TEST_CALLBACK_PATH, UNIMPORTABLE_DOT_PATH
 
 from airflow.sdk.definitions.callback import AsyncCallback, SyncCallback
-from airflow.sdk.definitions.deadline import DeadlineAlert, DeadlineReference
+from airflow.sdk.definitions.deadline import DeadlineAlert, DeadlineReference, VariableInterval
+from airflow.sdk.definitions.variable import Variable
+from airflow.sdk.exceptions import AirflowRuntimeError
 
 DAG_ID = "dag_id_1"
 RUN_ID = 1
@@ -138,10 +141,74 @@ class TestDeadlineAlert:
         alert_set = {alert1, alert2}
         assert len(alert_set) == 1
 
-    def test_deadline_alert_unsupported_callback(self):
-        with pytest.raises(ValueError, match="Callbacks of type SyncCallback are not currently supported"):
+    @pytest.mark.parametrize(
+        ("callback_class"),
+        [
+            pytest.param(AsyncCallback, id="async_callback"),
+            pytest.param(SyncCallback, id="sync_callback"),
+        ],
+    )
+    def test_deadline_alert_accepts_all_callbacks(self, callback_class):
+        alert = DeadlineAlert(
+            reference=DeadlineReference.DAGRUN_QUEUED_AT,
+            interval=timedelta(hours=1),
+            callback=callback_class(TEST_CALLBACK_PATH),
+        )
+        assert alert.callback is not None
+        assert isinstance(alert.callback, callback_class)
+
+    def test_deadline_alert_rejects_invalid_callback(self):
+        """Test that DeadlineAlert rejects non-callback types."""
+        with pytest.raises(ValueError, match="Callbacks of type str are not currently supported"):
             DeadlineAlert(
                 reference=DeadlineReference.DAGRUN_QUEUED_AT,
                 interval=timedelta(hours=1),
-                callback=SyncCallback(TEST_CALLBACK_PATH),
+                callback="not_a_callback",  # type: ignore
             )
+
+
+class TestVariableInterval:
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            ("3", timedelta(seconds=3)),
+            ("10", timedelta(seconds=10)),
+            ("05", timedelta(seconds=5)),  # leading zero
+        ],
+    )
+    def test_resolve_valid(self, mocker, value, expected):
+        mocker.patch.object(Variable, "get", return_value=value)
+
+        interval = VariableInterval(key="test_interval")
+
+        assert interval.resolve() == expected
+
+    @pytest.mark.parametrize(
+        ("value", "raise_runtime", "match"),
+        [
+            (None, True, "not found"),
+            ("abc", False, "must be an integer"),
+            ("", False, "must be an integer"),
+            ("0", False, "must be > 0"),
+            ("-5", False, "must be > 0"),
+        ],
+    )
+    def test_resolve_invalid(self, mocker, value, raise_runtime, match):
+
+        if raise_runtime:
+            mock_err = mock.Mock()
+            mock_err.error.value = "MISSING"
+            mock_err.detail = "missing"
+
+            mocker.patch.object(
+                Variable,
+                "get",
+                side_effect=AirflowRuntimeError(mock_err),
+            )
+        else:
+            mocker.patch.object(Variable, "get", return_value=value)
+
+        interval = VariableInterval(key="test_interval")
+
+        with pytest.raises(ValueError, match=match):
+            interval.resolve()

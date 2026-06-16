@@ -27,6 +27,226 @@
 Changelog
 ---------
 
+``ElasticsearchTaskHandler`` no longer silently registers itself as the remote
+task-log reader during ``dictConfig``. The implicit registration still happens
+for one more release but now emits an ``AirflowProviderDeprecationWarning`` and
+will be removed in a future provider release. If you ship a custom
+``[logging] logging_config_class`` module that swaps in
+``ElasticsearchTaskHandler``, set ``REMOTE_TASK_LOG = ElasticsearchRemoteLogIO(...)``
+at module scope in that module.
+
+6.6.0
+.....
+
+Features
+~~~~~~~~
+
+* ``ElasticsearchSQLHook: add Polars DataFrame support via custom SQL reader (#66220)``
+
+Misc
+~~~~
+
+* ``Deprecate implicit REMOTE_TASK_LOG registration in ElasticsearchTaskHandler (#67105)``
+* ``Refactor Elasticsearch log formatter to use timezone.from_timestamp (#67245)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+
+6.5.4
+.....
+
+.. note::
+   A new ``[elasticsearch] es_compat_with`` config option lets operators pin
+   the ``compatible-with`` HTTP content-negotiation level used by the
+   Elasticsearch client. Since 6.5.1 the provider depends on
+   ``elasticsearch>=8.10,<10``, and a default install resolves to an
+   ``elasticsearch>=9`` client which unconditionally negotiates
+   ``compatible-with=9`` on every request. Elasticsearch 8.x servers reject
+   that with HTTP 400 ``media_type_header_exception`` (regression introduced
+   by #64070), breaking remote task log ingestion and the SQL/Python hooks
+   against ES 8 clusters. Setting ``es_compat_with = "8"`` rewrites the
+   client transport so every outbound request carries
+   ``compatible-with=8`` (and the matching ``+x-ndjson`` form for bulk
+   requests), restoring compatibility without dropping ES 9 support. When
+   unset, behavior is unchanged.
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Make _parse_raw_log resilient to malformed or non-JSON log lines by introducing best-effort parsing with a fallback structure. Add unit tests. (#66383)``
+* ``Pin compatible-with at the transport layer to keep ES 8 servers working (#66065)``
+
+Misc
+~~~~
+
+* ``Implement fetchmany support for ElasticsearchSQLCursor using an internal row buffer. (#66658)``
+* ``Adjust log message header for expandable sources (#66570)``
+
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Fix Elasticsearch and Opensearch providers changelog.rst (#67007)``
+   * ``Add explicit [tool.flit.sdist] sections to flit-based pyproject.tomls (#65861)``
+   * ``Providers wave 2026-04-21 (#65614)``
+   * ``Providers wave 2026-04-21``
+
+6.5.3
+.....
+
+.. note::
+  When the ``[elasticsearch] host`` config embeds credentials
+  (``https://user:password@elk.example.com:9200``), the log-source label
+  shown in task logs is now the host URL with the ``user:password@`` portion
+  stripped. Previously the full URL (including credentials) could appear as
+  a dictionary key in the task-log output when log-hits did not carry a
+  ``host`` field. The Elasticsearch client is still connected using the
+  full URL, so authentication is unaffected.
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Strip userinfo from OpenSearch host URL before using it as task-log label (#65509)``
+* ``Strip userinfo from ES host URL before using it as task-log label (#65349)``
+* ``Fix elasticsearch provider to use SDK imports for Airflow 3.2+ (#64931)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Fix stale system test documentation links (#65071)``
+
+6.5.2
+.....
+
+Bug Fixes
+~~~~~~~~~
+
+* ``ElasticsearchTaskHandler: Request only required source fields for task logs (#64562)``
+
+Misc
+~~~~
+
+* ``Load hook metadata from YAML without importing Hook class (#63826)``
+* ``Optimize 'ElasticsearchTaskHandler' by removing redundant 'count()' call before 'search()' (#64372)``
+
+Doc-only
+~~~~~~~~
+
+* ``Document expected Elasticsearch document schema for external log shippers (#64363)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``tests: refactor unit test of elasticsearch (#64200)``
+
+6.5.1
+.....
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Elasticsearch / opensearch logging exception details are missing in task log tab (#63739)``
+* ``Fix conf import to common.compat in 'ElasticsearchTaskHandler' (#64118)``
+* ``Remove self parameter from resolve_nested (#64146)``
+
+Misc
+~~~~
+
+* ``Support elasticsearch 9 (#64070)``
+* ``Add Python 3.14 Support (#63520)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Add *.iml to .gitignore in all distributions (#63636)``
+   * ``Enable Elasticsearch provider integration tests in CI (#62942)``
+
+6.5.0
+.....
+
+.. note::
+  The write_to_es Elasticsearch task logging feature, was incompatible with Airflow 3. This is now fixed.
+  Users must upgrade apache-airflow-providers-elasticsearch>=6.5.0 to pick up the new ElasticsearchRemoteLogIO class required by the fixed logging path.
+  No configuration changes are needed — existing settings such as write_to_es, target_index, json_format, host_field, and offset_field continue to work as before.
+  This fix will work with any airflow-airflow>=3.0 version.
+
+Features
+~~~~~~~~
+
+* ``feat: Add Hook Level Lineage to SQL hooks (#61535)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``fix the write-to-es feature for Airflow 3 (#53821)``
+* ``add max_line_per_pages setting to ElasticsearchTaskHandler (#61492)``
+* ``Fix max_lines_per_page config setting for ElasticsearchRemoteLogIO (#62562)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Add 'lifecycle' field to provider.yaml schema and all providers per AIP-95 (#62190)``
+   * ``Providers ad-hoc 2026-02-20 (#62209)``
+   * ``Update provider's compatibility matrix with 2.11.1 (#62295)``
+   * ``Prepare documentation for next release of providers (2026-02-24) (#62495)``
+
+6.4.4
+.....
+
+Misc
+~~~~
+
+* ``Refactor opensearch, elasticsearch, amazon providers to use SQLA2  Related to #59402 (#60497)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+6.4.3
+.....
+
+Misc
+~~~~
+
+* ``New year means updated Copyright notices (#60344)``
+* ``Updated conf import for std,es,os,ms providers (#60030)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+6.4.2
+.....
+
+Misc
+~~~~
+
+* ``Extract shared "module_loading" distribution (#59139)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+6.4.1
+.....
+
+Misc
+~~~~
+
+* ``Add backcompat for exceptions in providers (#58727)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+6.4.0
+.....
+
+.. note::
+    This release of provider is only available for Airflow 2.11+ as explained in the
+    Apache Airflow providers support policy <https://github.com/apache/airflow/blob/main/PROVIDERS.rst#minimum-supported-version-of-airflow-for-community-managed-providers>_.
+
+Misc
+~~~~
+
+* ``Bump minimum Airflow version in providers to Airflow 2.11.0 (#58612)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Updates to release process of providers (#58316)``
+
 6.3.5
 .....
 

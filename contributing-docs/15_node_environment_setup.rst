@@ -32,6 +32,21 @@ Adding the ``--dev-mode`` flag will automatically run the vite dev server for ho
 
 In certain WSL environments, you will need to set ``CHOKIDAR_USEPOLLING=true`` in your environment variables for hot reloading to work.
 
+System Requirements
+-------------------
+
+Building the Airflow UI requires at least 8GB of system RAM (6GB available).
+
+By default, the build process allocates 4GB of heap memory to Node.js. If you encounter
+out-of-memory errors during the build, you can increase this by setting the ``NODE_OPTIONS``
+environment variable:
+
+.. code-block:: bash
+
+    # Increase to 8GB
+    export NODE_OPTIONS="--max-old-space-size=8192"
+    breeze start-airflow
+
 pnpm commands
 -------------
 
@@ -91,8 +106,6 @@ Project Structure
 - ``/src/router.tsx`` the router for the UI, update this to add new pages or routes
 - ``/src/theme.ts`` the theme for the UI, update this to change the colors, fonts, etc.
 - ``/src/queryClient.ts`` the query client for the UI, update this to change the default options for the API requests
-
-**The outline for this document in GitHub is available at top-right corner button (with 3-dots and 3 lines).**
 
 
 React, JSX and Chakra
@@ -252,6 +265,60 @@ Choose the right state management for your use case:
     const [fullName, setFullName] = useState('');  // Unnecessary!
     // Calculate during render:
     const fullName = `${firstName} ${lastName}`;
+
+**Menu component**
+
+When ``Menu.Trigger`` wraps a concrete element such as ``IconButton`` or ``Button``,
+always pass ``asChild`` so Chakra merges its trigger behaviour onto that element
+instead of rendering a redundant extra ``<button>``:
+
+.. code-block:: typescript
+
+    // ✅ Good
+    <Menu.Trigger asChild>
+      <IconButton>
+        <LuSettings />
+      </IconButton>
+    </Menu.Trigger>
+
+    // ❌ Bad – produces nested <button> elements
+    <Menu.Trigger>
+      <IconButton>
+        <LuSettings />
+      </IconButton>
+    </Menu.Trigger>
+
+When a trigger needs a tooltip, pass ``tooltipLabel`` to ``Menu.Root``.
+Our ``Menu.Root`` and ``Menu.Trigger`` wire up the required Chakra ID syncing
+automatically. Do **not** manage IDs manually or add a standalone ``<Tooltip>``
+wrapper around ``Menu.Trigger``. When ``tooltipLabel`` is set, omit the ``label``
+prop from the inner ``IconButton`` — the tooltip covers accessibility labelling.
+
+.. code-block:: typescript
+
+    // ✅ Good
+    <Menu.Root tooltipLabel={translate("nav.settings")}>
+      <Menu.Trigger asChild>
+        <IconButton>
+          <LuSettings />
+        </IconButton>
+      </Menu.Trigger>
+      ...
+    </Menu.Root>
+
+    // ❌ Bad – manual ID juggling, standalone Tooltip wrapper
+    const triggerId = useId();
+    <Menu.Root ids={{ trigger: triggerId }}>
+      <Tooltip content={translate("nav.settings")} ids={{ trigger: triggerId }}>
+        <Menu.Trigger asChild>
+          <IconButton>
+            <LuSettings />
+          </IconButton>
+        </Menu.Trigger>
+      </Tooltip>
+      ...
+    </Menu.Root>
+
 
 **Error and Loading States**
 

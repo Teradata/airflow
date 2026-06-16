@@ -16,9 +16,16 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { Box, Heading, Flex, HStack, Skeleton, Separator } from "@chakra-ui/react";
-import type { BoxProps } from "@chakra-ui/react";
-import { createListCollection } from "@chakra-ui/react/collection";
+import {
+  Box,
+  Heading,
+  Flex,
+  HStack,
+  Skeleton,
+  Separator,
+  type BoxProps,
+  createListCollection,
+} from "@chakra-ui/react";
 import { useTranslation } from "react-i18next";
 import { FiDatabase } from "react-icons/fi";
 
@@ -70,7 +77,7 @@ export const AssetEvents = ({
 
   return (
     <Box borderBottomWidth={0} borderRadius={8} borderWidth={1} p={4} py={2} {...rest}>
-      <Flex alignItems="center" justify="space-between">
+      <Flex alignItems="center" flexWrap="wrap" justify="space-between">
         <HStack>
           <StateBadge colorPalette="brand" fontSize="md" variant="solid">
             <FiDatabase />
@@ -91,7 +98,7 @@ export const AssetEvents = ({
             width={130}
           >
             <Select.Trigger>
-              <Select.ValueText placeholder="Sort by" />
+              <Select.ValueText placeholder={translate("dashboard:sortBy.placeholder")} />
             </Select.Trigger>
 
             <Select.Content>
@@ -113,7 +120,7 @@ export const AssetEvents = ({
         displayMode="card"
         initialState={tableUrlState}
         isLoading={isLoading}
-        modelName={translate("common:assetEvent_one")}
+        modelName="common:assetEvent"
         noRowsMessage={translate("noAssetEvents")}
         onStateChange={setTableUrlState}
         skeletonCount={5}

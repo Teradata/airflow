@@ -28,6 +28,29 @@ Defining Dags
 .. autoapiclass:: airflow.sdk.DAG
 
 
+Configuration
+-------------
+
+The ``conf`` object is available as part of the Task SDK. It provides an interface to the
+configurations, allowing you to read and interact with Airflow configuration values.
+
+
+Macros
+------
+
+The ``macros`` module is available as part of the Task SDK. It provides builtin utility functions
+for date manipulation and other common operations in Jinja templates and task code.
+
+Available functions include:
+
+- ``ds_add(ds, days)`` - Add or subtract days from a date string
+- ``ds_format(ds, input_format, output_format)`` - Format datetime strings
+- ``ds_format_locale(ds, input_format, output_format, locale)`` - Format datetime strings with locale support
+- ``datetime_diff_for_humans(dt, since)`` - Human-readable datetime differences
+
+The module also provides direct access to commonly used standard library modules:
+``json``, ``time``, ``uuid``, ``dateutil``, and ``random``.
+
 Decorators
 ----------
 .. autoapifunction:: airflow.sdk.dag
@@ -56,6 +79,10 @@ Task Decorators:
 
 Bases
 -----
+.. autoapiclass:: airflow.sdk.BaseAsyncOperator
+
+.. autoapiclass:: airflow.sdk.BaseBranchOperator
+
 .. autoapiclass:: airflow.sdk.BaseOperator
 
 .. autoapiclass:: airflow.sdk.BaseSensorOperator
@@ -66,11 +93,27 @@ Bases
 
 .. autoapiclass:: airflow.sdk.BaseXCom
 
-.. autoapiclass:: airflow.sdk.XComArg
+.. autoapiclass:: airflow.sdk.BranchMixIn
 
 .. autoapiclass:: airflow.sdk.PokeReturnValue
 
+.. autoapiclass:: airflow.sdk.SkipMixin
+
+.. autoclass:: airflow.sdk.ResumableJobMixin
+
 .. autoapiclass:: airflow.sdk.BaseHook
+
+Callbacks
+---------
+.. autoclass:: airflow.sdk.AsyncCallback
+
+.. autoclass:: airflow.sdk.SyncCallback
+
+Deadline Alerts
+---------------
+.. autoclass:: airflow.sdk.DeadlineAlert
+
+.. autoclass:: airflow.sdk.DeadlineReference
 
 Connections & Variables
 -----------------------
@@ -82,13 +125,37 @@ Tasks & Operators
 -----------------
 .. autoapiclass:: airflow.sdk.TaskGroup
 
+.. autoclass:: airflow.sdk.TaskInstance
+
+.. autoapiclass:: airflow.sdk.XComArg
+
+.. autoapifunction:: airflow.sdk.literal
+
+.. autoapiclass:: airflow.sdk.Param
+
+.. autoclass:: airflow.sdk.ParamsDict
+
+.. autoclass:: airflow.sdk.TriggerRule
+
 .. autoapifunction:: airflow.sdk.get_current_context
 
 .. autoapifunction:: airflow.sdk.get_parsing_context
 
-.. autoapiclass:: airflow.sdk.Param
+Retry Policies
+--------------
+Retry policies let you configure per-exception retry behaviour as a parameter on any
+task or operator without modifying task code. See the Retry Policies section of the
+Tasks page in the core docs for usage and design rationale.
 
-.. autoclass:: airflow.sdk.TriggerRule
+.. autoapiclass:: airflow.sdk.RetryPolicy
+
+.. autoapiclass:: airflow.sdk.ExceptionRetryPolicy
+
+.. autoapiclass:: airflow.sdk.RetryRule
+
+.. autoapiclass:: airflow.sdk.RetryDecision
+
+.. autoclass:: airflow.sdk.RetryAction
 
 State Enums
 -----------
@@ -106,8 +173,6 @@ Setting Dependencies
 
 .. autoapifunction:: airflow.sdk.cross_downstream
 
-.. autoapifunction:: airflow.sdk.literal
-
 Edges & Labels
 ~~~~~~~~~~~~~~
 .. autoapiclass:: airflow.sdk.EdgeModifier
@@ -117,6 +182,8 @@ Edges & Labels
 Assets
 ------
 .. autoapiclass:: airflow.sdk.Asset
+
+.. autoapiclass:: airflow.sdk.AssetAccessControl
 
 .. autoapiclass:: airflow.sdk.AssetAlias
 
@@ -128,9 +195,107 @@ Assets
 
 .. autoapiclass:: airflow.sdk.Metadata
 
+Timetables
+----------
+.. autoapiclass:: airflow.sdk.AssetOrTimeSchedule
+
+.. autoapiclass:: airflow.sdk.CronDataIntervalTimetable
+
+.. autoapiclass:: airflow.sdk.CronTriggerTimetable
+
+.. autoapiclass:: airflow.sdk.CronPartitionTimetable
+
+.. autoapiclass:: airflow.sdk.DeltaDataIntervalTimetable
+
+.. autoapiclass:: airflow.sdk.DeltaTriggerTimetable
+
+.. autoapiclass:: airflow.sdk.EventsTimetable
+
+.. autoapiclass:: airflow.sdk.MultipleCronTriggerTimetable
+
+.. autoapiclass:: airflow.sdk.PartitionAtRuntime
+
+.. autoapiclass:: airflow.sdk.PartitionedAssetTimetable
+
+
+Partition Mapper
+----------------
+
+.. autoapiclass:: airflow.sdk.PartitionMapper
+
+.. autoapiclass:: airflow.sdk.ChainMapper
+
+.. autoapiclass:: airflow.sdk.IdentityMapper
+
+.. autoapiclass:: airflow.sdk.StartOfHourMapper
+
+.. autoapiclass:: airflow.sdk.StartOfDayMapper
+
+.. autoapiclass:: airflow.sdk.StartOfWeekMapper
+
+.. autoapiclass:: airflow.sdk.StartOfMonthMapper
+
+.. autoapiclass:: airflow.sdk.StartOfQuarterMapper
+
+.. autoapiclass:: airflow.sdk.StartOfYearMapper
+
+.. autoapiclass:: airflow.sdk.RollupMapper
+
+.. autoapiclass:: airflow.sdk.WaitForAll
+
+.. autoapiclass:: airflow.sdk.MinimumCount
+
+.. autoapiclass:: airflow.sdk.ProductMapper
+
+.. autoapiclass:: airflow.sdk.AllowedKeyMapper
+
+.. autoapiclass:: airflow.sdk.FanOutMapper
+
+.. autoapiclass:: airflow.sdk.FixedKeyMapper
+
+Rollup Windows
+~~~~~~~~~~~~~~
+
+.. autoapiclass:: airflow.sdk.Window
+
+.. autoapiclass:: airflow.sdk.HourWindow
+
+.. autoapiclass:: airflow.sdk.DayWindow
+
+.. autoapiclass:: airflow.sdk.WeekWindow
+
+.. autoapiclass:: airflow.sdk.MonthWindow
+
+.. autoapiclass:: airflow.sdk.QuarterWindow
+
+.. autoapiclass:: airflow.sdk.YearWindow
+
+.. autoapiclass:: airflow.sdk.SegmentWindow
+
 I/O Helpers
 -----------
 .. autoapiclass:: airflow.sdk.ObjectStoragePath
+
+Lineage
+-------
+The ``lineage`` module is available as part of the Task SDK. It provides the public hook lineage
+collector interfaces used to capture and retrieve asset lineage metadata during task execution.
+
+.. autoapimodule:: airflow.sdk.lineage
+
+Coordinators
+------------
+
+Coordinators bridge the Airflow worker and a non-Python language runtime.
+See :doc:`apache-airflow:authoring-and-scheduling/language-sdks/index` for a conceptual overview.
+
+.. rubric:: JVM
+
+.. autoapiclass:: airflow.sdk.coordinators.java.JavaCoordinator
+
+.. rubric:: Native executable (e.g. Go)
+
+.. autoapiclass:: airflow.sdk.coordinators.executable.ExecutableCoordinator
 
 Execution Time Components
 -------------------------
@@ -138,9 +303,24 @@ Execution Time Components
 
 .. autoapiclass:: airflow.sdk.Context
 
+The ``Context`` object represents the execution-time context available to tasks.
+It corresponds to the same context that is exposed to Jinja templates during task execution.
+
+For a complete list of available context variables (such as ``dag_run``,
+``task_instance``, ``logical_date``, etc.), see the
+:ref:`Templates reference <templates-ref>`.
+
+.. rubric:: Task State
+
+.. autodata:: airflow.sdk.NEVER_EXPIRE
+
 .. rubric:: Logging
 
 .. autofunction:: airflow.sdk.log.mask_secret
+
+Observability
+-------------
+.. autoclass:: airflow.sdk.Trace
 
 Everything else
 ---------------
@@ -148,7 +328,7 @@ Everything else
 .. autoapimodule:: airflow.sdk
   :members:
   :special-members: __version__
-  :exclude-members: BaseOperator, DAG, dag, asset, Asset, AssetAlias, AssetAll, AssetAny, AssetWatcher, TaskGroup, XComArg, get_current_context, get_parsing_context
+  :exclude-members: BaseAsyncOperator, BaseOperator, DAG, dag, asset, Asset, AssetAccessControl, AssetAlias, AssetAll, AssetAny, AssetWatcher, TaskGroup, TaskInstance, XComArg, get_current_context, get_parsing_context
   :undoc-members:
   :imported-members:
   :no-index:

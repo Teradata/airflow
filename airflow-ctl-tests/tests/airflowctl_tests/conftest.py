@@ -16,11 +16,16 @@
 # under the License.
 from __future__ import annotations
 
+import json
 import os
+import re
 import subprocess
 import sys
+import time
+from subprocess import PIPE, STDOUT, Popen
 
 import pytest
+import requests
 from python_on_whales import DockerClient, docker
 
 from airflowctl_tests import console
@@ -28,11 +33,164 @@ from airflowctl_tests.constants import (
     AIRFLOW_ROOT_PATH,
     DOCKER_COMPOSE_FILE_PATH,
     DOCKER_IMAGE,
+    LOGIN_COMMAND,
+    LOGIN_OUTPUT,
 )
 
 from tests_common.test_utils.fernet import generate_fernet_key_string
 
-docker_client = None
+# XCom add/edit/delete race against task execution: when the target task transitions to
+# RUNNING, the execution API tells the worker to clear every XCom key currently stored
+# for that task instance (see `xcom_keys_to_clear` in
+# airflow-core/src/airflow/api_fastapi/execution_api/routes/task_instances.py). Any
+# XCom the test just added through airflowctl is wiped, and the next xcom edit/delete
+# command then fails with "XCom doesn't exist". Waiting for the Dag run to reach a
+# terminal state means the task has already run (and won't run again), so user-added
+# XComs survive the rest of the xcom commands.
+_XCOM_TARGET_PATTERN = re.compile(r'^xcom\s+(?:add|get|list|edit|delete)\s+(\S+)\s+"(manual__[^"]+)"')
+_DAG_RUN_TERMINAL_STATES = frozenset({"success", "failed"})
+
+
+def _airflowctl_dag_run_state(dag_id: str, dag_run_id: str, env_vars: dict, skip_login: bool) -> str | None:
+    """Return the current state of a Dag run via airflowctl, or None if unparsable."""
+    host_envs = os.environ.copy()
+    host_envs.update(env_vars)
+
+    get_cmd = f'airflowctl dagrun get {dag_id} "{dag_run_id}" -o json'
+    if not skip_login:
+        get_cmd = f"airflowctl {LOGIN_COMMAND} && {get_cmd}"
+
+    proc = Popen(get_cmd.encode(), stdout=PIPE, stderr=STDOUT, shell=True, env=host_envs)
+    try:
+        out, _ = proc.communicate(timeout=20)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        return None
+    out_str = out.decode()
+    if LOGIN_OUTPUT in out_str:
+        out_str = out_str.split(f"{LOGIN_OUTPUT}\n", 1)[-1].strip()
+    start, end = out_str.find("{"), out_str.rfind("}")
+    if start == -1 or end == -1:
+        return None
+    try:
+        return json.loads(out_str[start : end + 1]).get("state")
+    except json.JSONDecodeError:
+        return None
+
+
+def _wait_for_dag_run_terminal_state(
+    dag_id: str,
+    dag_run_id: str,
+    env_vars: dict,
+    skip_login: bool,
+    timeout: int = 60,
+) -> None:
+    """Block until the Dag run reaches success/failed, or raise TimeoutError."""
+    deadline = time.monotonic() + timeout
+    last_state: str | None = None
+    while time.monotonic() < deadline:
+        last_state = _airflowctl_dag_run_state(dag_id, dag_run_id, env_vars, skip_login)
+        if last_state in _DAG_RUN_TERMINAL_STATES:
+            return
+        time.sleep(1)
+    raise TimeoutError(
+        f"Dag run {dag_id}/{dag_run_id} did not reach terminal state in {timeout}s "
+        f"(last seen state: {last_state})"
+    )
+
+
+@pytest.fixture(scope="module")
+def api_token():
+    url = "http://localhost:8080/auth/token"
+    payload = {"username": "airflow", "password": "airflow"}
+    try:
+        response = requests.post(url, json=payload)
+        response.raise_for_status()
+        token = response.json().get("access_token")
+        if not token:
+            raise ValueError("Response did not contain an access_token")
+        return token
+    except requests.exceptions.RequestException as e:
+        pytest.fail(f"Failed to obtain token: {e}")
+
+
+@pytest.fixture
+def run_command():
+    """Fixture that provides a helper to run airflowctl commands."""
+
+    def _run_command(command: str, env_vars: dict, skip_login: bool = False) -> str:
+        host_envs = os.environ.copy()
+        host_envs.update(env_vars)
+
+        command_from_config = f"airflowctl {command}"
+
+        # We need to run auth login first for all commands except login itself (unless skipped)
+        if not skip_login and command != LOGIN_COMMAND:
+            run_cmd = f"airflowctl {LOGIN_COMMAND} && {command_from_config}"
+        else:
+            run_cmd = command_from_config
+
+        # See `_XCOM_TARGET_PATTERN` above for why xcom commands have to wait for the
+        # Dag run to be terminal before running.
+        xcom_match = _XCOM_TARGET_PATTERN.match(command)
+        if xcom_match:
+            _wait_for_dag_run_terminal_state(xcom_match.group(1), xcom_match.group(2), env_vars, skip_login)
+
+        console.print(f"[yellow]Running command: {command}")
+
+        # Give some time for the command to execute and output to be ready
+        proc = Popen(run_cmd.encode(), stdout=PIPE, stderr=STDOUT, stdin=PIPE, shell=True, env=host_envs)
+        stdout_bytes, stderr_result = proc.communicate(timeout=60)
+
+        # CLI command gave errors
+        assert not stderr_result, (
+            f"Errors while executing command '{command_from_config}':\n{stderr_result.decode()}"
+        )
+
+        # Decode the output
+        stdout_result = stdout_bytes.decode()
+
+        # We need to trim auth login output if the command is not login itself and clean backspaces
+        if not skip_login and command != LOGIN_COMMAND:
+            assert LOGIN_OUTPUT in stdout_result, (
+                f"❌ Login output not found before command output for '{command_from_config}'\nFull output:\n{stdout_result}"
+            )
+            stdout_result = stdout_result.split(f"{LOGIN_OUTPUT}\n")[1].strip()
+        else:
+            stdout_result = stdout_result.strip()
+
+        # Check for non-zero exit code
+        assert proc.returncode == 0, (
+            f"❌ Command '{command_from_config}' exited with code {proc.returncode}\nOutput:\n{stdout_result}"
+        )
+
+        # Error patterns to detect failures that might otherwise slip through
+        # Please ensure it is aligning with airflowctl.api.client.get_json_error
+        error_patterns = [
+            "Server error",
+            "command error",
+            "unrecognized arguments",
+            "invalid choice",
+            "Traceback (most recent call last):",
+        ]
+        matched_error = next((error for error in error_patterns if error in stdout_result), None)
+        assert not matched_error, (
+            f"❌ Output contained unexpected text for command '{command_from_config}'\n"
+            f"Matched error pattern: {matched_error}\n"
+            f"Output:\n{stdout_result}"
+        )
+
+        console.print(f"[green]✅ Output did not contain unexpected text for command '{command_from_config}'")
+        console.print(f"[cyan]Result:\n{stdout_result}\n")
+        proc.kill()
+
+        return stdout_result
+
+    return _run_command
+
+
+class _CtlTestState:
+    docker_client: DockerClient | None = None
 
 
 # Pytest hook to run at the start of the session
@@ -145,8 +303,6 @@ def docker_compose_up(tmp_path_factory):
     """Fixture to spin up Docker Compose environment for the test session."""
     from shutil import copyfile
 
-    global docker_client
-
     tmp_dir = tmp_path_factory.mktemp("airflow-ctl-test")
     console.print(f"[yellow]Tests are run in {tmp_dir}")
 
@@ -157,8 +313,6 @@ def docker_compose_up(tmp_path_factory):
     dot_env_file = tmp_dir / ".env"
     dot_env_file.write_text(
         f"AIRFLOW_UID={os.getuid()}\n"
-        # To enable debug mode for airflowctl CLI
-        "AIRFLOW_CTL_CLI_DEBUG_MODE=true\n"
         # To enable config operations to work
         "AIRFLOW__API__EXPOSE_CONFIG=true\n"
     )
@@ -174,14 +328,21 @@ def docker_compose_up(tmp_path_factory):
     os.environ["FERNET_KEY"] = generate_fernet_key_string()
 
     # Initialize Docker client
-    docker_client = DockerClient(compose_files=[str(tmp_docker_compose_file)])
+    _CtlTestState.docker_client = DockerClient(
+        compose_files=[str(tmp_docker_compose_file)],
+        compose_project_name="breeze-airflowctl-test",
+    )
 
     try:
         console.print(f"[blue]Spinning up airflow environment using {DOCKER_IMAGE}")
-        docker_client.compose.up(detach=True, wait=True)
+        _CtlTestState.docker_client.compose.up(detach=True, wait=True)
         console.print("[green]Docker compose started for airflowctl test\n")
     except Exception:
-        print_diagnostics(docker_client.compose, docker_client.compose.version(), docker.version())
+        print_diagnostics(
+            _CtlTestState.docker_client.compose,
+            _CtlTestState.docker_client.compose.version(),
+            docker.version(),
+        )
         debug_environment()
         docker_compose_down()
         raise
@@ -189,71 +350,11 @@ def docker_compose_up(tmp_path_factory):
 
 def docker_compose_down():
     """Tear down Docker Compose environment."""
-    if docker_client:
-        docker_client.compose.down(remove_orphans=True, volumes=True, quiet=True)
+    if _CtlTestState.docker_client:
+        _CtlTestState.docker_client.compose.down(remove_orphans=True, volumes=True, quiet=True)
 
 
 def pytest_sessionfinish(session, exitstatus):
     """Tear down test environment at the end of the pytest session."""
     if not os.environ.get("SKIP_DOCKER_COMPOSE_DELETION"):
         docker_compose_down()
-
-
-# Fixtures for tests
-@pytest.fixture
-def login_command():
-    # Passing password via command line is insecure but acceptable for testing purposes
-    # Please do not do this in production, it enables possibility of exposing your credentials
-    return "auth login --username airflow --password airflow"
-
-
-@pytest.fixture
-def login_output():
-    return "Login successful! Welcome to airflowctl!"
-
-
-@pytest.fixture
-def date_param():
-    import random
-    from datetime import datetime, timedelta
-
-    from dateutil.relativedelta import relativedelta
-
-    # original datetime string
-    dt_str = "2025-10-25T00:02:00+00:00"
-
-    # parse to datetime object
-    dt = datetime.fromisoformat(dt_str)
-
-    # boundaries
-    start = dt - relativedelta(months=1)
-    end = dt + relativedelta(months=1)
-
-    # pick random time between start and end
-    delta = end - start
-    random_seconds = random.randint(0, int(delta.total_seconds()))
-    random_dt = start + timedelta(seconds=random_seconds)
-    return random_dt.isoformat()
-
-
-@pytest.fixture
-def test_commands(login_command, date_param):
-    # Define test commands to run with actual running API server
-    return [
-        login_command,
-        "backfill list",
-        "config get --section core --option executor",
-        "connections create --connection-id=test_con --conn-type=mysql --password=TEST_PASS -o json",
-        "connections list",
-        "connections list -o yaml",
-        "connections list -o tabledags list",
-        f"dagrun trigger --dag-id=example_bash_operator --logical-date={date_param} --run-after={date_param}",
-        "dagrun list --dag-id example_bash_operator --state success --limit=1",
-        "jobs list",
-        "pools create --name=test_pool --slots=5",
-        "pools list",
-        "providers list",
-        "variables create --key=test_key --value=test_value",
-        "variables list",
-        "version --remote",
-    ]

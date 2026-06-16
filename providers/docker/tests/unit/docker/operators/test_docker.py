@@ -26,7 +26,7 @@ from docker import APIClient
 from docker.errors import APIError
 from docker.types import DeviceRequest, LogConfig, Mount, Ulimit
 
-from airflow.exceptions import AirflowException, AirflowSkipException
+from airflow.providers.common.compat.sdk import AirflowException, AirflowSkipException
 from airflow.providers.docker.exceptions import DockerContainerFailedException
 from airflow.providers.docker.operators.docker import DockerOperator, fetch_logs
 
@@ -121,6 +121,52 @@ def test_on_kill_client_created(docker_api_client_patcher, container_exists):
         docker_api_client_patcher.return_value.stop.assert_not_called()
 
 
+def test_on_kill_auto_remove_force(docker_api_client_patcher):
+    """Test that on_kill removes the container when auto_remove='force'."""
+    op = DockerOperator(
+        image=TEST_IMAGE, hostname=TEST_DOCKER_URL, task_id="test_on_kill", auto_remove="force"
+    )
+    op.container = {"Id": "some_id"}
+
+    op.hook.get_conn()
+    op.on_kill()
+
+    docker_api_client_patcher.return_value.stop.assert_called_once_with("some_id")
+    docker_api_client_patcher.return_value.remove_container.assert_called_once_with("some_id", force=True)
+
+
+@pytest.mark.parametrize("auto_remove", ["success", "never"])
+def test_on_kill_auto_remove_not_force(docker_api_client_patcher, auto_remove):
+    """Test that on_kill does NOT remove the container when auto_remove is not 'force'."""
+    op = DockerOperator(
+        image=TEST_IMAGE, hostname=TEST_DOCKER_URL, task_id="test_on_kill", auto_remove=auto_remove
+    )
+    op.container = {"Id": "some_id"}
+
+    op.hook.get_conn()
+    op.on_kill()
+
+    docker_api_client_patcher.return_value.stop.assert_called_once_with("some_id")
+    docker_api_client_patcher.return_value.remove_container.assert_not_called()
+
+
+def test_on_kill_auto_remove_force_api_error(docker_api_client_patcher):
+    """Test that on_kill logs and swallows APIError when remove_container fails."""
+    docker_api_client_patcher.return_value.remove_container.side_effect = APIError("container already gone")
+
+    op = DockerOperator(
+        image=TEST_IMAGE, hostname=TEST_DOCKER_URL, task_id="test_on_kill", auto_remove="force"
+    )
+    op.container = {"Id": "some_id"}
+
+    op.hook.get_conn()
+    # Must not raise — on_kill is best-effort
+    op.on_kill()
+
+    docker_api_client_patcher.return_value.stop.assert_called_once_with("some_id")
+    docker_api_client_patcher.return_value.remove_container.assert_called_once_with("some_id", force=True)
+
+
 def test_on_kill_client_not_created(docker_api_client_patcher):
     """Test operator on_kill method if APIClient not created in case of error."""
     docker_api_client_patcher.side_effect = APIError("Fake Client Error")
@@ -149,14 +195,12 @@ class TestDockerOperator:
         self.client_mock.pull.return_value = {"status": "pull log"}
         self.client_mock.wait.return_value = {"StatusCode": 0}
         self.client_mock.create_host_config.return_value = mock.Mock()
-        self.log_messages = ["container log  😁   ", b"byte string container log"]
+        self.log_messages = ["container log  😁   \n", b"byte string container log\n"]
         self.client_mock.attach.return_value = self.log_messages
 
         # If logs() is called with tail then only return the last value, otherwise return the whole log.
-        self.client_mock.logs.side_effect = (
-            lambda **kwargs: iter(self.log_messages[-kwargs["tail"] :])
-            if "tail" in kwargs
-            else iter(self.log_messages)
+        self.client_mock.logs.side_effect = lambda **kwargs: (
+            iter(self.log_messages[-kwargs["tail"] :]) if "tail" in kwargs else iter(self.log_messages)
         )
 
         docker_api_client_patcher.return_value = self.client_mock
@@ -566,7 +610,7 @@ class TestDockerOperator:
 
     def test_execute_container_fails(self):
         failed_msg = {"StatusCode": 1}
-        log_line = ["unicode container log 😁   ", b"byte string container log"]
+        log_line = ["unicode container log 😁   \n", b"byte string container log\n"]
         expected_message = "Docker container failed: {failed_msg}"
         self.client_mock.attach.return_value = log_line
         self.client_mock.wait.return_value = failed_msg
@@ -579,7 +623,7 @@ class TestDockerOperator:
         assert str(raised_exception.value) == expected_message.format(
             failed_msg=failed_msg,
         )
-        assert raised_exception.value.logs == [log_line[0].strip(), log_line[1].decode("utf-8")]
+        assert raised_exception.value.logs == [log_line[0].rstrip(), log_line[1].decode("utf-8").rstrip()]
 
     def test_auto_remove_container_fails(self):
         self.client_mock.wait.return_value = {"StatusCode": 1}
@@ -622,14 +666,12 @@ class TestDockerOperator:
         assert no_xcom_push_result is None
 
     def test_execute_xcom_behavior_bytes(self):
-        self.log_messages = [b"container log 1 ", b"container log 2"]
+        self.log_messages = [b"container log 1 \n", b"container log 2\n"]
         self.client_mock.pull.return_value = [b'{"status":"pull log"}']
-        self.client_mock.attach.return_value = iter([b"container log 1 ", b"container log 2"])
+        self.client_mock.attach.return_value = iter([b"container log 1 \n", b"container log 2\n"])
         # Make sure the logs side effect is updated after the change
-        self.client_mock.attach.side_effect = (
-            lambda **kwargs: iter(self.log_messages[-kwargs["tail"] :])
-            if "tail" in kwargs
-            else iter(self.log_messages)
+        self.client_mock.attach.side_effect = lambda **kwargs: (
+            iter(self.log_messages[-kwargs["tail"] :]) if "tail" in kwargs else iter(self.log_messages)
         )
 
         kwargs = {
@@ -762,8 +804,8 @@ class TestDockerOperator:
         [
             pytest.param(
                 [
-                    "return self.main(*args, **kwargs)",
-                    "                 ^^^^^^^^^^^^^^^^",
+                    "return self.main(*args, **kwargs)\n",
+                    "                 ^^^^^^^^^^^^^^^^\n",
                 ],
                 [
                     "return self.main(*args, **kwargs)",
@@ -773,12 +815,24 @@ class TestDockerOperator:
             ),
             pytest.param(
                 [
-                    "   ^^^^^^^^^^^^^^^^   ",
+                    "   ^^^^^^^^^^^^^^^^   \n",
                 ],
                 [
                     "   ^^^^^^^^^^^^^^^^",
                 ],
                 id="should-remove-trailing-spaces",
+            ),
+            # Test case for issue #58911: Docker stream may chunks lines mid-way
+            pytest.param(
+                [
+                    b"    rv = self.invoke(ctx)\n         ^^^",
+                    b"^^^^^^^^^^^^^\n",
+                ],
+                [
+                    "    rv = self.invoke(ctx)",
+                    "         ^^^^^^^^^^^^^^^^",
+                ],
+                id="should-handle-mid-line-chunk-splits",
             ),
         ],
     )
@@ -796,20 +850,47 @@ class TestDockerOperator:
         assert labels == self.client_mock.create_container.call_args.kwargs["labels"]
 
     @pytest.mark.db_test
-    def test_basic_docker_operator_with_template_fields(self, dag_maker):
+    def test_basic_docker_operator_with_template_fields(self, create_task_instance_of_operator):
         from docker.types import Mount
 
-        with dag_maker():
-            operator = DockerOperator(
-                task_id="test",
-                image="test",
-                container_name="python_{{dag_run.dag_id}}",
-                mounts=[Mount(source="workspace", target="/{{task_instance.run_id}}")],
-            )
-            operator.execute({})
-
-        dr = dag_maker.create_dagrun()
-        ti = dr.task_instances[0]
+        ti = create_task_instance_of_operator(
+            operator_class=DockerOperator,
+            dag_id="test",
+            task_id="test",
+            image="test",
+            container_name="python_{{dag_run.dag_id}}",
+            mounts=[Mount(source="workspace", target="/{{task_instance.run_id}}")],
+        )
         rendered = ti.render_templates()
-        assert rendered.container_name == f"python_{dr.dag_id}"
+        assert rendered.container_name == f"python_{ti.dag_id}"
+        assert rendered.mounts[0]["Target"] == f"/{ti.run_id}"
+
+    def test_dict_mounts_are_normalized_to_mount_objects(self):
+        op = DockerOperator(
+            task_id="test",
+            image="test",
+            mounts=[
+                {"target": "/data", "source": "workspace", "type": "volume", "read_only": False},
+                Mount(target="/logs", source="logs", type="volume"),
+            ],
+        )
+        assert all(isinstance(m, Mount) for m in op.mounts)
+        assert op.mounts[0]["Target"] == "/data"
+        assert op.mounts[0]["Source"] == "workspace"
+        assert op.mounts[0]["Type"] == "volume"
+        assert op.mounts[0]["ReadOnly"] is False
+        assert op.mounts[1]["Target"] == "/logs"
+
+    @pytest.mark.db_test
+    def test_dict_mounts_are_templated(self, create_task_instance_of_operator):
+        ti = create_task_instance_of_operator(
+            operator_class=DockerOperator,
+            dag_id="test",
+            task_id="test",
+            image="test",
+            mounts=[
+                {"target": "/{{task_instance.run_id}}", "source": "workspace", "type": "volume"},
+            ],
+        )
+        rendered = ti.render_templates()
         assert rendered.mounts[0]["Target"] == f"/{ti.run_id}"

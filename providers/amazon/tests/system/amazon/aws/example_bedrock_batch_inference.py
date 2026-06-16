@@ -25,10 +25,7 @@ from botocore.exceptions import ClientError
 
 from airflow.providers.amazon.aws.hooks.bedrock import BedrockHook
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
-from airflow.providers.amazon.aws.operators.bedrock import (
-    BedrockBatchInferenceOperator,
-    BedrockInvokeModelOperator,
-)
+from airflow.providers.amazon.aws.operators.bedrock import BedrockBatchInferenceOperator
 from airflow.providers.amazon.aws.operators.s3 import (
     S3CreateBucketOperator,
     S3DeleteBucketOperator,
@@ -52,6 +49,7 @@ except ImportError:
     from airflow.utils.trigger_rule import TriggerRule  # type: ignore[no-redef,attr-defined]
 
 from system.amazon.aws.utils import SystemTestContextBuilder
+from system.amazon.aws.utils.bedrock import get_text_inference_profile_arn
 
 log = logging.getLogger(__name__)
 
@@ -61,13 +59,6 @@ sys_test_context_task = SystemTestContextBuilder().add_variable(ROLE_ARN_KEY).bu
 
 DAG_ID = "example_bedrock_batch_inference"
 
-#######################################################################
-# NOTE:
-#   Access to the following foundation model must be requested via
-#   the Amazon Bedrock console and may take up to 24 hours to apply:
-#######################################################################
-
-CLAUDE_MODEL_ID = "anthropic.claude-3-5-sonnet-20241022-v2:0"
 ANTHROPIC_VERSION = "bedrock-2023-05-31"
 
 # Batch inferences currently require a minimum of 100 prompts per batch.
@@ -122,7 +113,6 @@ with DAG(
     dag_id=DAG_ID,
     schedule="@once",
     start_date=datetime(2021, 1, 1),
-    tags={"example"},
     catchup=False,
 ) as dag:
     test_context = sys_test_context_task()
@@ -134,27 +124,18 @@ with DAG(
     output_uri = f"s3://{bucket_name}/output/"
     job_name = f"batch-infer-{env_id}"
 
-    # Test that this configuration works for a single prompt before trying the batch inferences.
-    # [START howto_operator_invoke_claude_messages]
-    invoke_claude_messages = BedrockInvokeModelOperator(
-        task_id="invoke_claude_messages",
-        model_id=CLAUDE_MODEL_ID,
-        input_data={
-            "anthropic_version": "bedrock-2023-05-31",
-            "max_tokens": 1000,
-            "messages": [{"role": "user", "content": PROMPT_TEMPLATE.format(n=42)}],
-        },
-    )
-    # [END howto_operator_invoke_claude_messages]
-
     create_bucket = S3CreateBucketOperator(task_id="create_bucket", bucket_name=bucket_name)
+
+    # Note that for Anthropic models, first-time users may need to
+    # submit use case details before they can access the model.
+    text_model_arn = get_text_inference_profile_arn()
 
     # [START howto_operator_bedrock_batch_inference]
     batch_infer = BedrockBatchInferenceOperator(
         task_id="batch_infer",
         job_name=job_name,
         role_arn=test_context[ROLE_ARN_KEY],
-        model_id=CLAUDE_MODEL_ID,
+        model_id=text_model_arn,
         input_uri=input_uri,
         output_uri=output_uri,
     )
@@ -182,9 +163,9 @@ with DAG(
     chain(
         # TEST SETUP
         test_context,
-        invoke_claude_messages,
         create_bucket,
         generate_prompts(env_id, bucket_name, input_data_s3_key),
+        text_model_arn,
         # TEST BODY
         batch_infer,
         await_job_scheduled,
@@ -201,5 +182,5 @@ with DAG(
 
 from tests_common.test_utils.system_tests import get_test_run  # noqa: E402
 
-# Needed to run the example DAG with pytest (see: tests/system/README.md#run_via_pytest)
+# Needed to run the example DAG with pytest (see: contributing-docs/testing/system_tests.rst)
 test_run = get_test_run(dag)

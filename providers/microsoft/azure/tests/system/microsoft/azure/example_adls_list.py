@@ -37,7 +37,8 @@ with models.DAG(
     # [START howto_operator_adls_list]
     adls_files = ADLSListOperator(
         task_id="adls_files",
-        path="folder/output/*.parquet",
+        file_system_name="mycontainer",
+        path="folder/output",
         azure_data_lake_conn_id="azure_data_lake_default",
     )
     # [END howto_operator_adls_list]
@@ -50,5 +51,5 @@ with models.DAG(
 
 from tests_common.test_utils.system_tests import get_test_run  # noqa: E402
 
-# Needed to run the example DAG with pytest (see: tests/system/README.md#run_via_pytest)
+# Needed to run the example DAG with pytest (see: contributing-docs/testing/system_tests.rst)
 test_run = get_test_run(dag)

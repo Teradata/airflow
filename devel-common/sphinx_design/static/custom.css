@@ -57,14 +57,30 @@ section ol li p:last-child, section ul li p:last-child {
   margin-bottom: 0 !important;
 }
 
-a.headerlink {
-  content: "" !important;
-  font-size: 75% !important;
+/* Fix for broken permalink icon */
+
+/* Remove the "[link]" text pseudo-element produced by legacy code */
+a.headerlink::after {
+  content: none !important;
+  display: none !important;
 }
 
-a.headerlink::after {
-  content: " [link]" !important;  /* Theme image not existing */
-  visibility: visible !important;
+/* Set link styles */
+a.headerlink {
+  font-size: 1rem !important;
+  visibility: visible !important; /* Always visible */
+  color: #017cee;             /* Airflow Blue */
+  text-decoration: none;
+  padding-left: 0.2em;
+}
+
+/* Set the SVG icon size and positioning */
+a.headerlink svg {
+  width: 1.5em;
+  height: 1.5em;
+  vertical-align: middle;
+  display: inline-block;
+  fill: currentColor;
 }
 
 /* compensate for sticky headers for anchored links */
@@ -80,4 +96,54 @@ a.headerlink::after {
     height: 117px; /* 40px banner + 77px mobile navbar */
     margin: -117px 0 0; /* negative fixed header height */
   }
+}
+
+/*
+Some layout optimization especially for dark mode for Swagger API reference
+*/
+
+/* Hide the authorize button which is use-less in docs w/o API running behind */
+.swagger-ui div.scheme-container {
+  display: none;
+}
+
+/* Set text color to white in dark mode for better readability */
+[data-bs-theme="dark"] .swagger-ui .title,
+[data-bs-theme="dark"] .swagger-ui h4,
+[data-bs-theme="dark"] .swagger-ui .opblock .opblock-section-header h4,
+[data-bs-theme="dark"] .swagger-ui .parameter__name,
+[data-bs-theme="dark"]  .swagger-ui .parameter__type,
+[data-bs-theme="dark"] .swagger-ui p {
+  color: var(--bs-emphasis-color);
+}
+
+[data-bs-theme="dark"] .swagger-ui a.nostyle {
+  color: var(--bs-link-color);
+}
+
+[data-bs-theme="dark"] .swagger-ui .opblock .opblock-summary-description {
+  color: var(--bs-secondary-color);
+}
+
+[data-bs-theme="dark"] .swagger-ui svg {
+  stroke: var(--bs-emphasis-color);
+}
+
+[data-bs-theme="dark"] .swagger-ui .opblock .opblock-section-header {
+  color: var(--bs-emphasis-color);
+  background-color: var(--bs-secondary-bg);
+}
+
+[data-bs-theme="dark"] .swagger-ui input[disabled],
+[data-bs-theme="dark"] .swagger-ui select[disabled],
+[data-bs-theme="dark"] .swagger-ui select,
+[data-bs-theme="dark"] .swagger-ui textarea[disabled]  {
+  border: 1px solid var(--bs-border-color)  ;
+  color: var(--bs-emphasis-color);
+  background-color: var(--bs-secondary-bg);
+}
+
+/* Somehow some dark mode is showing-up also in light mode for code areas, fix it here */
+.swagger-ui pre code {
+  background-color: rgb(51, 51, 51);
 }

@@ -18,13 +18,15 @@
 from __future__ import annotations
 
 import abc
+import asyncio
 import collections.abc
 import contextlib
 import copy
 import inspect
 import sys
 import warnings
-from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from asyncio import AbstractEventLoop
+from collections.abc import Callable, Collection, Generator, Iterable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -38,6 +40,8 @@ import attrs
 from airflow.sdk import TriggerRule, timezone
 from airflow.sdk._shared.secrets_masker import redact
 from airflow.sdk.definitions._internal.abstractoperator import (
+    DEFAULT_EMAIL_ON_FAILURE,
+    DEFAULT_EMAIL_ON_RETRY,
     DEFAULT_IGNORE_FIRST_DEPENDS_ON_PAST,
     DEFAULT_OWNER,
     DEFAULT_POOL_NAME,
@@ -62,11 +66,6 @@ from airflow.sdk.definitions.edges import EdgeModifier
 from airflow.sdk.definitions.mappedoperator import OperatorPartial, validate_mapping_kwargs
 from airflow.sdk.definitions.param import ParamsDict
 from airflow.sdk.exceptions import RemovedInAirflow4Warning
-from airflow.task.priority_strategy import (
-    PriorityWeightStrategy,
-    airflow_priority_weight_strategies,
-    validate_and_load_priority_weight_strategy,
-)
 
 # Databases do not support arbitrary precision integers, so we need to limit the range of priority weights.
 # postgres: -2147483648 to +2147483647 (see https://www.postgresql.org/docs/current/datatype-numeric.html)
@@ -90,20 +89,22 @@ if TYPE_CHECKING:
     import jinja2
     from typing_extensions import Self
 
+    from airflow.sdk.api.datamodels._generated import DagAttributeTypes
     from airflow.sdk.bases.operatorlink import BaseOperatorLink
     from airflow.sdk.definitions.context import Context
     from airflow.sdk.definitions.dag import DAG
     from airflow.sdk.definitions.operator_resources import Resources
+    from airflow.sdk.definitions.retry_policy import RetryPolicy
     from airflow.sdk.definitions.taskgroup import TaskGroup
     from airflow.sdk.definitions.xcom_arg import XComArg
-    from airflow.serialization.enums import DagAttributeTypes
-    from airflow.task.priority_strategy import PriorityWeightStrategy
+    from airflow.sdk.types import WeightRuleParam
     from airflow.triggers.base import BaseTrigger, StartTriggerArgs
 
     TaskPreExecuteHook = Callable[[Context], None]
     TaskPostExecuteHook = Callable[[Context, Any], None]
 
 __all__ = [
+    "BaseAsyncOperator",
     "BaseOperator",
     "chain",
     "chain_linear",
@@ -138,6 +139,7 @@ def _get_parent_defaults(dag: DAG | None, task_group: TaskGroup | None) -> tuple
         return {}, ParamsDict()
     dag_args = copy.copy(dag.default_args)
     dag_params = copy.deepcopy(dag.params)
+    dag_params._fill_missing_param_source("dag")
     if task_group:
         if task_group.default_args and not isinstance(task_group.default_args, collections.abc.Mapping):
             raise TypeError("default_args must be a mapping")
@@ -155,13 +157,20 @@ def get_merged_defaults(
     if task_params:
         if not isinstance(task_params, collections.abc.Mapping):
             raise TypeError(f"params must be a mapping, got {type(task_params)}")
+
+        task_params = ParamsDict(task_params)
+        task_params._fill_missing_param_source("task")
         params.update(task_params)
+
     if task_default_args:
         if not isinstance(task_default_args, collections.abc.Mapping):
             raise TypeError(f"default_args must be a mapping, got {type(task_params)}")
         args.update(task_default_args)
         with contextlib.suppress(KeyError):
-            params.update(task_default_args["params"] or {})
+            if params_from_default_args := ParamsDict(task_default_args["params"] or {}):
+                params_from_default_args._fill_missing_param_source("task")
+                params.update(params_from_default_args)
+
     return args, params
 
 
@@ -191,6 +200,27 @@ def coerce_resources(resources: dict[str, Any] | None) -> Resources | None:
     return Resources(**resources)
 
 
+@contextlib.contextmanager
+def event_loop() -> Generator[AbstractEventLoop]:
+    new_event_loop = False
+    loop = None
+    try:
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_closed():
+                raise RuntimeError
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            new_event_loop = True
+        yield loop
+    finally:
+        if new_event_loop and loop is not None:
+            with contextlib.suppress(AttributeError):
+                loop.close()
+                asyncio.set_event_loop(None)
+
+
 class _PartialDescriptor:
     """A descriptor that guards against ``.partial`` being called on Task objects."""
 
@@ -211,8 +241,8 @@ class _PartialDescriptor:
 OPERATOR_DEFAULTS: dict[str, Any] = {
     "allow_nested_operators": True,
     "depends_on_past": False,
-    "email_on_failure": True,
-    "email_on_retry": True,
+    "email_on_failure": DEFAULT_EMAIL_ON_FAILURE,
+    "email_on_retry": DEFAULT_EMAIL_ON_RETRY,
     "execution_timeout": DEFAULT_TASK_EXECUTION_TIMEOUT,
     # "executor": DEFAULT_EXECUTOR,
     "executor_config": {},
@@ -232,6 +262,7 @@ OPERATOR_DEFAULTS: dict[str, Any] = {
     "retries": DEFAULT_RETRIES,
     "retry_delay": DEFAULT_RETRY_DELAY,
     "retry_exponential_backoff": 0,
+    "retry_policy": None,
     "trigger_rule": DEFAULT_TRIGGER_RULE,
     "wait_for_past_depends_before_skipping": DEFAULT_WAIT_FOR_PAST_DEPENDS_BEFORE_SKIPPING,
     "wait_for_downstream": False,
@@ -269,7 +300,7 @@ if TYPE_CHECKING:
         retry_delay: timedelta | float = ...,
         retry_exponential_backoff: float = ...,
         priority_weight: int = ...,
-        weight_rule: str | PriorityWeightStrategy = ...,
+        weight_rule: WeightRuleParam = ...,
         sla: timedelta | None = ...,
         map_index_template: str | None = ...,
         max_active_tis_per_dag: int | None = ...,
@@ -521,6 +552,11 @@ class BaseOperatorMeta(abc.ABCMeta):
             # Store the args passed to init -- we need them to support task.map serialization!
             self._BaseOperator__init_kwargs.update(kwargs)  # type: ignore
 
+            # Validate trigger kwargs.
+            # Make sure method exists as class can depend on metaclass without extending the BaseOperator.
+            if hasattr(self, "_validate_start_from_trigger_kwargs"):
+                self._validate_start_from_trigger_kwargs()
+
             # Set upstream task defined by XComArgs passed to template fields of the operator.
             # BUT: only do this _ONCE_, not once for each class in the hierarchy
             if not instantiated_from_mapped and func == self.__init__.__wrapped__:  # type: ignore[misc]
@@ -750,13 +786,9 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
     :param pre_execute: a function to be called immediately before task
         execution, receiving a context dictionary; raising an exception will
         prevent the task from being executed.
-
-        |experimental|
     :param post_execute: a function to be called immediately after task
         execution, receiving a context dictionary and task result; raising an
         exception will prevent the task from succeeding.
-
-        |experimental|
     :param trigger_rule: defines the rule by which dependencies are applied
         for the task to get triggered. Options are:
         ``{ all_success | all_failed | all_done | all_skipped | one_success | one_done |
@@ -817,17 +849,30 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
                     dag=dag,
                 )
                 hello_world_task.execute(context)
+    :param render_template_as_native_obj: If True, uses a Jinja ``NativeEnvironment``
+        to render templates as native Python types. If False, a Jinja
+        ``Environment`` is used to render templates as string values.
+        If None (default), inherits from the DAG setting.
+    :param start_from_trigger: If True, the operator starts execution directly in the triggerer,
+        skipping the initial worker execution phase. In this mode, templated fields are rendered
+        inside the triggerer instead of the worker. This avoids an extra round trip to a worker,
+        but may increase load on the triggerer, since the DAG must be serialized in order to
+        render templated fields. Use with care for DAGs with many tasks or heavy templating.
+    :param start_trigger_args: Used together with ``start_from_trigger`` to explicitly specify
+        which operator fields should be passed to the trigger. This helps limit the amount of
+        data serialized and sent to the triggerer.
     """
 
     task_id: str
     owner: str = DEFAULT_OWNER
     email: str | Sequence[str] | None = None
-    email_on_retry: bool = True
-    email_on_failure: bool = True
+    email_on_retry: bool = DEFAULT_EMAIL_ON_RETRY
+    email_on_failure: bool = DEFAULT_EMAIL_ON_FAILURE
     retries: int | None = DEFAULT_RETRIES
     retry_delay: timedelta = DEFAULT_RETRY_DELAY
     retry_exponential_backoff: float = 0
     max_retry_delay: timedelta | float | None = None
+    retry_policy: RetryPolicy | None = None
     start_date: datetime | None = None
     end_date: datetime | None = None
     depends_on_past: bool = False
@@ -839,9 +884,7 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
     params: ParamsDict | dict = field(default_factory=ParamsDict)
     default_args: dict | None = None
     priority_weight: int = DEFAULT_PRIORITY_WEIGHT
-    weight_rule: PriorityWeightStrategy = field(
-        default_factory=airflow_priority_weight_strategies[DEFAULT_WEIGHT_RULE]
-    )
+    weight_rule: WeightRuleParam = field(default=DEFAULT_WEIGHT_RULE)
     queue: str = DEFAULT_QUEUE
     pool: str = DEFAULT_POOL_NAME
     pool_slots: int = DEFAULT_POOL_SLOTS
@@ -875,6 +918,7 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
     _task_display_name: str | None = None
     logger_name: str | None = None
     allow_nested_operators: bool = True
+    render_template_as_native_obj: bool | None = None
 
     is_setup: bool = False
     is_teardown: bool = False
@@ -884,6 +928,13 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
     template_ext: Sequence[str] = ()
 
     template_fields_renderers: ClassVar[dict[str, str]] = {}
+
+    # Names of constructor fields whose values may contain Pydantic model classes
+    # this operator can emit to XCom (e.g. ``("output_type",)``). The worker
+    # registers those classes in the deserialization allow-list before running
+    # tasks, so downstream consumers can deserialize the instances without an
+    # ``[core] allowed_deserialization_classes`` edit. Empty by default.
+    deserialization_allowed_class_fields: ClassVar[tuple[str, ...]] = ()
 
     operator_extra_links: Collection[BaseOperatorLink] = ()
 
@@ -922,6 +973,7 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
         "has_on_success_callback",
         "has_on_retry_callback",
         "has_on_skipped_callback",
+        "has_retry_policy",
         "do_xcom_push",
         "multiple_outputs",
         "allow_nested_operators",
@@ -980,12 +1032,13 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
         task_id: str,
         owner: str = DEFAULT_OWNER,
         email: str | Sequence[str] | None = None,
-        email_on_retry: bool = True,
-        email_on_failure: bool = True,
+        email_on_retry: bool = DEFAULT_EMAIL_ON_RETRY,
+        email_on_failure: bool = DEFAULT_EMAIL_ON_FAILURE,
         retries: int | None = DEFAULT_RETRIES,
         retry_delay: timedelta | float = DEFAULT_RETRY_DELAY,
         retry_exponential_backoff: float = 0,
         max_retry_delay: timedelta | float | None = None,
+        retry_policy: RetryPolicy | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         depends_on_past: bool = False,
@@ -996,7 +1049,7 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
         params: collections.abc.MutableMapping[str, Any] | None = None,
         default_args: dict | None = None,
         priority_weight: int = DEFAULT_PRIORITY_WEIGHT,
-        weight_rule: str | PriorityWeightStrategy = DEFAULT_WEIGHT_RULE,
+        weight_rule: WeightRuleParam = DEFAULT_WEIGHT_RULE,
         queue: str = DEFAULT_QUEUE,
         pool: str | None = None,
         pool_slots: int = DEFAULT_POOL_SLOTS,
@@ -1030,6 +1083,7 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
         task_display_name: str | None = None,
         logger_name: str | None = None,
         allow_nested_operators: bool = True,
+        render_template_as_native_obj: bool | None = None,
         **kwargs: Any,
     ):
         # Note: Metaclass handles passing in the Dag/TaskGroup from active context manager, if any
@@ -1133,13 +1187,14 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
         self.retry_exponential_backoff = retry_exponential_backoff
         if max_retry_delay is not None:
             self.max_retry_delay = max_retry_delay
+        self.retry_policy = retry_policy
 
         self.resources = resources
 
         self.params = ParamsDict(params)
 
         self.priority_weight = priority_weight
-        self.weight_rule = validate_and_load_priority_weight_strategy(weight_rule)
+        self.weight_rule = weight_rule
 
         self.max_active_tis_per_dag: int | None = max_active_tis_per_dag
         self.max_active_tis_per_dagrun: int | None = max_active_tis_per_dagrun
@@ -1156,6 +1211,8 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
         self._task_display_name = task_display_name
 
         self.allow_nested_operators = allow_nested_operators
+
+        self.render_template_as_native_obj = render_template_as_native_obj
 
         self._logger_name = logger_name
 
@@ -1409,6 +1466,15 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
             return
         XComArg.apply_upstream_relationship(self, newvalue)
 
+    def _validate_start_from_trigger_kwargs(self):
+        if self.start_from_trigger and self.start_trigger_args and self.start_trigger_args.trigger_kwargs:
+            for name, val in self.start_trigger_args.trigger_kwargs.items():
+                if callable(val):
+                    raise ValueError(
+                        f"{self.__class__.__name__} with task_id '{self.task_id}' has a callable in trigger kwargs named "
+                        f"'{name}', which is not allowed when start_from_trigger is enabled."
+                    )
+
     def on_kill(self) -> None:
         """
         Override this method to clean up subprocesses when a task instance gets killed.
@@ -1485,6 +1551,7 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
                     "on_success_callback",
                     "on_retry_callback",
                     "on_skipped_callback",
+                    "retry_policy",
                 }
                 | {  # Class level defaults, or `@property` need to be added to this list
                     "start_date",
@@ -1509,6 +1576,7 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
                     "has_on_success_callback",
                     "has_on_retry_callback",
                     "has_on_skipped_callback",
+                    "has_retry_policy",
                 }
             )
             DagContext.pop()
@@ -1523,7 +1591,7 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
 
     def serialize_for_task_group(self) -> tuple[DagAttributeTypes, Any]:
         """Serialize; required by DAGNode."""
-        from airflow.serialization.enums import DagAttributeTypes
+        from airflow.sdk.api.datamodels._generated import DagAttributeTypes
 
         return DagAttributeTypes.OP, self.task_id
 
@@ -1669,6 +1737,40 @@ class BaseOperator(AbstractOperator, metaclass=BaseOperatorMeta):
     def has_on_skipped_callback(self) -> bool:
         """Return True if the task has skipped callbacks."""
         return bool(self.on_skipped_callback)
+
+    @property
+    def has_retry_policy(self) -> bool:
+        """Return True if the task has a retry policy configured."""
+        return bool(self.retry_policy)
+
+
+class BaseAsyncOperator(BaseOperator):
+    """
+    Base class for async-capable operators.
+
+    As opposed to deferred operators which are executed on the triggerer, async operators are executed
+    on the worker.
+    """
+
+    @property
+    def is_async(self) -> bool:
+        return True
+
+    async def aexecute(self, context):
+        """Async version of execute(). Subclasses should implement this."""
+        raise NotImplementedError()
+
+    def execute(self, context):
+        """Run `aexecute()` inside an event loop."""
+        with event_loop() as loop:
+            if self.execution_timeout:
+                return loop.run_until_complete(
+                    asyncio.wait_for(
+                        self.aexecute(context),
+                        timeout=self.execution_timeout.total_seconds(),
+                    )
+                )
+            return loop.run_until_complete(self.aexecute(context))
 
 
 def chain(*tasks: DependencyMixin | Sequence[DependencyMixin]) -> None:

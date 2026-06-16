@@ -18,9 +18,9 @@
 
 from __future__ import annotations
 
-import os
 import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 
 from kubernetes import client
 from kubernetes.client.api_client import ApiClient
@@ -32,10 +32,19 @@ from airflow.providers.cncf.kubernetes.executors.kubernetes_executor import Kube
 from airflow.providers.cncf.kubernetes.kube_client import get_kube_client
 from airflow.providers.cncf.kubernetes.kubernetes_helper_functions import create_unique_id
 from airflow.providers.cncf.kubernetes.pod_generator import PodGenerator, generate_pod_command_args
-from airflow.providers.cncf.kubernetes.version_compat import AIRFLOW_V_3_0_PLUS, AIRFLOW_V_3_1_PLUS
+from airflow.providers.cncf.kubernetes.version_compat import (
+    AIRFLOW_V_3_0_PLUS,
+    AIRFLOW_V_3_1_PLUS,
+    AIRFLOW_V_3_2_PLUS,
+)
 from airflow.utils import cli as cli_utils, yaml
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
 from airflow.utils.types import DagRunType
+
+try:
+    from airflow.serialization.serialized_objects import create_scheduler_operator
+except ImportError:
+    create_scheduler_operator = lambda t: t
 
 if AIRFLOW_V_3_1_PLUS:
     from airflow.utils.cli import get_bagged_dag
@@ -52,7 +61,7 @@ def generate_pod_yaml(args):
         dag = get_bagged_dag(bundle_names=args.bundle_name, dag_id=args.dag_id)
     else:
         dag = get_bagged_dag(subdir=args.subdir, dag_id=args.dag_id)
-    yaml_output_path = args.output_path
+    yaml_output_path = Path(args.output_path) / "airflow_yaml_output"
 
     dm = DagModel(dag_id=dag.dag_id)
 
@@ -67,13 +76,19 @@ def generate_pod_yaml(args):
         dr = DagRun(dag.dag_id, execution_date=logical_date)
         dr.run_id = DagRun.generate_run_id(run_type=DagRunType.MANUAL, execution_date=logical_date)
 
-    kube_config = KubeConfig()
+    executor_conf = None
+    if AIRFLOW_V_3_2_PLUS and args.team:
+        from airflow.executors.base_executor import ExecutorConf
+
+        executor_conf = ExecutorConf(team_name=args.team)
+    kube_config = KubeConfig(executor_conf=executor_conf)
 
     for task in dag.tasks:
         if AIRFLOW_V_3_0_PLUS:
             from uuid6 import uuid7
 
-            ti = TaskInstance(task, run_id=dr.run_id, dag_version_id=uuid7())
+            serialized_task = create_scheduler_operator(task)
+            ti = TaskInstance(serialized_task, run_id=dr.run_id, dag_version_id=uuid7())
         else:
             ti = TaskInstance(task, run_id=dr.run_id)
         ti.dag_run = dr
@@ -97,11 +112,11 @@ def generate_pod_yaml(args):
         api_client = ApiClient()
         date_string = pod_generator.datetime_to_label_safe_datestring(logical_date)
         yaml_file_name = f"{args.dag_id}_{ti.task_id}_{date_string}.yml"
-        os.makedirs(os.path.dirname(yaml_output_path + "/airflow_yaml_output/"), exist_ok=True)
-        with open(yaml_output_path + "/airflow_yaml_output/" + yaml_file_name, "w") as output:
+        yaml_output_path.mkdir(parents=True, exist_ok=True)
+        with open(yaml_output_path / yaml_file_name, "w") as output:
             sanitized_pod = api_client.sanitize_for_serialization(pod)
             output.write(yaml.dump(sanitized_pod))
-    print(f"YAML output can be found at {yaml_output_path}/airflow_yaml_output/")
+    print(f"YAML output can be found at {yaml_output_path}")
 
 
 @cli_utils.action_cli(check_db=False)
@@ -134,10 +149,11 @@ def cleanup_pods(args):
     # * OnFailure: Restart Container; Pod phase stays Running.
     # * Never: Pod phase becomes Failed.
     pod_restart_policy_never = "never"
-
-    print("Loading Kubernetes configuration")
+    if args.verbose:
+        print("Loading Kubernetes configuration")
     kube_client = get_kube_client()
-    print(f"Listing pods in namespace {namespace}")
+    if args.verbose:
+        print(f"Listing pods in namespace {namespace}")
     airflow_pod_labels = [
         "dag_id",
         "task_id",
@@ -150,7 +166,8 @@ def cleanup_pods(args):
         pod_list = kube_client.list_namespaced_pod(**list_kwargs)
         for pod in pod_list.items:
             pod_name = pod.metadata.name
-            print(f"Inspecting pod {pod_name}")
+            if args.verbose:
+                print(f"Inspecting pod {pod_name}")
             pod_phase = pod.status.phase.lower()
             pod_reason = pod.status.reason.lower() if pod.status.reason else ""
             pod_restart_policy = pod.spec.restart_policy.lower()
@@ -175,7 +192,8 @@ def cleanup_pods(args):
                 except ApiException as e:
                     print(f"Can't remove POD: {e}", file=sys.stderr)
             else:
-                print(f"No action taken on pod {pod_name}")
+                if args.verbose:
+                    print(f"No action taken on pod {pod_name}")
         continue_token = pod_list.metadata._continue
         if not continue_token:
             break

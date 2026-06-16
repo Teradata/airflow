@@ -18,8 +18,10 @@
 from __future__ import annotations
 
 import logging
+import warnings
 from abc import ABCMeta, abstractmethod
 from collections import defaultdict
+from enum import Enum
 from functools import cache
 from typing import TYPE_CHECKING, Any, Generic, Literal, TypeVar
 
@@ -28,7 +30,6 @@ from sqlalchemy import select
 
 from airflow.api_fastapi.auth.managers.models.base_user import BaseUser
 from airflow.api_fastapi.auth.managers.models.resource_details import (
-    BackfillDetails,
     ConnectionDetails,
     DagDetails,
     PoolDetails,
@@ -45,7 +46,9 @@ from airflow.api_fastapi.common.types import ExtraMenuItem, MenuItem
 from airflow.configuration import conf
 from airflow.models import Connection, DagModel, Pool, Variable
 from airflow.models.dagbundle import DagBundleModel
+from airflow.models.revoked_token import RevokedToken
 from airflow.models.team import Team, dag_bundle_team_association_table
+from airflow.typing_compat import Unpack
 from airflow.utils.log.logging_mixin import LoggingMixin
 from airflow.utils.session import NEW_SESSION, provide_session
 
@@ -53,7 +56,9 @@ if TYPE_CHECKING:
     from collections.abc import Sequence
 
     from fastapi import FastAPI
+    from sqlalchemy import Row
     from sqlalchemy.orm import Session
+    from starlette.middleware import _MiddlewareFactory
 
     from airflow.api_fastapi.auth.managers.models.batch_apis import (
         IsAuthorizedConnectionRequest,
@@ -70,12 +75,36 @@ if TYPE_CHECKING:
     )
     from airflow.cli.cli_config import CLICommand
 
-# This cannot be in the TYPE_CHECKING block since some providers import it globally.
-# TODO: Move this inside once all providers drop Airflow 2.x support.
-# List of methods (or actions) a user can do against a resource
-ResourceMethod = Literal["GET", "POST", "PUT", "DELETE"]
-# Extends ``ResourceMethod`` to include "MENU". The method "MENU" is only supported with specific resources (menu items)
-ExtendedResourceMethod = Literal["GET", "POST", "PUT", "DELETE", "MENU"]
+if TYPE_CHECKING:
+    # For static type checking - accepts string literals
+    ResourceMethod = Literal["GET", "POST", "PUT", "DELETE"]
+    ExtendedResourceMethod = Literal["GET", "POST", "PUT", "DELETE", "MENU"]
+else:
+    # For runtime - provides iteration and validation
+
+    class ResourceMethod(str, Enum):
+        """HTTP methods (actions) a user can perform against a resource."""
+
+        GET = "GET"
+        POST = "POST"
+        PUT = "PUT"
+        DELETE = "DELETE"
+
+        def __str__(self) -> str:
+            return self.value
+
+    class ExtendedResourceMethod(str, Enum):
+        """Extended HTTP methods including MENU for UI resource authorization."""
+
+        GET = "GET"
+        POST = "POST"
+        PUT = "PUT"
+        DELETE = "DELETE"
+        MENU = "MENU"
+
+        def __str__(self) -> str:
+            return self.value
+
 
 log = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseUser)
@@ -92,11 +121,15 @@ class BaseAuthManager(Generic[T], LoggingMixin, metaclass=ABCMeta):
     """
 
     def init(self) -> None:
-        """
-        Run operations when Airflow is initializing.
+        """Run operations when Airflow is initializing."""
+        if conf.getboolean("core", "multi_team"):
+            am_teams = self._get_teams()
+            db_teams = Team.get_all_team_names()
 
-        By default, do nothing.
-        """
+            if not db_teams.issuperset(am_teams):
+                raise ValueError(
+                    f"Teams defined in the auth manager ({am_teams}) are not present in the database ({db_teams})."
+                )
 
     @abstractmethod
     def deserialize_user(self, token: dict[str, Any]) -> T:
@@ -106,6 +139,10 @@ class BaseAuthManager(Generic[T], LoggingMixin, metaclass=ABCMeta):
     def serialize_user(self, user: T) -> dict[str, Any]:
         """Create a subject and extra claims dict from a user object."""
 
+    def revoke_token(self, token: str) -> None:
+        """Revoke a JWT token by persisting its JTI in the database."""
+        self._get_token_validator().revoke_token(token)
+
     async def get_user_from_token(self, token: str) -> BaseUser:
         """Verify the JWT token is valid and create a user object from it if valid."""
         try:
@@ -114,11 +151,26 @@ class BaseAuthManager(Generic[T], LoggingMixin, metaclass=ABCMeta):
             log.error("JWT token is not valid: %s", e)
             raise e
 
+        if (jti := payload.get("jti")) and RevokedToken.is_revoked(jti):
+            raise InvalidTokenError("Token has been revoked")
+
         try:
             return self.deserialize_user(payload)
         except (ValueError, KeyError) as e:
             log.error("Couldn't deserialize user from token, JWT token is not valid: %s", e)
             raise InvalidTokenError(str(e))
+
+    def get_fastapi_middlewares(self) -> list[tuple[_MiddlewareFactory[Any], dict[str, Any]]]:
+        """
+        Return middlewares the auth manager wants registered on the main FastAPI app.
+
+        Each entry is a ``(middleware_class, kwargs)`` tuple and is registered via
+        ``app.add_middleware`` by the API server. Auth managers that need to intercept or
+        augment incoming requests (for example, attaching an anonymous user to
+        unauthenticated requests when public access is configured) should override this
+        method.
+        """
+        return []
 
     def generate_jwt(
         self, user: T, *, expiration_time_in_seconds: int = conf.getint("api_auth", "jwt_expiration_time")
@@ -126,6 +178,22 @@ class BaseAuthManager(Generic[T], LoggingMixin, metaclass=ABCMeta):
         """Return the JWT token from a user object."""
         return self._get_token_signer(expiration_time_in_seconds=expiration_time_in_seconds).generate(
             self.serialize_user(user)
+        )
+
+    def get_cli_user(self) -> T:
+        """
+        Return the user the local CLI acts as when calling the API server.
+
+        The Airflow CLI mints a short-lived JWT for this user (via :meth:`generate_jwt`)
+        so it can talk to the API server without persisting any credentials. A generic
+        auth manager cannot know which user is authorized for local CLI access, so the
+        default raises. Auth managers that support local CLI usage should override this
+        to return an administrative user. Otherwise, operators must provide a token via
+        the ``AIRFLOW_CLI_TOKEN`` environment variable.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support minting a local CLI token. "
+            "Set the AIRFLOW_CLI_TOKEN environment variable with a valid API token instead."
         )
 
     @abstractmethod
@@ -196,29 +264,13 @@ class BaseAuthManager(Generic[T], LoggingMixin, metaclass=ABCMeta):
         details: DagDetails | None = None,
     ) -> bool:
         """
-        Return whether the user is authorized to perform a given action on a DAG.
+        Return whether the user is authorized to perform a given action on a Dag.
 
         :param method: the method to perform
         :param user: the user to performing the action
-        :param access_entity: the kind of DAG information the authorization request is about.
-            If not provided, the authorization request is about the DAG itself
-        :param details: optional details about the DAG
-        """
-
-    @abstractmethod
-    def is_authorized_backfill(
-        self,
-        *,
-        method: ResourceMethod,
-        user: T,
-        details: BackfillDetails | None = None,
-    ) -> bool:
-        """
-        Return whether the user is authorized to perform a given action on a backfill.
-
-        :param method: the method to perform
-        :param user: the user to performing the action
-        :param details: optional details about the backfill
+        :param access_entity: the kind of Dag information the authorization request is about.
+            If not provided, the authorization request is about the Dag itself
+        :param details: optional details about the Dag
         """
 
     @abstractmethod
@@ -322,7 +374,7 @@ class BaseAuthManager(Generic[T], LoggingMixin, metaclass=ABCMeta):
         """
 
     @abstractmethod
-    def is_authorized_custom_view(self, *, method: ResourceMethod | str, resource_name: str, user: T) -> bool:
+    def is_authorized_custom_view(self, *, method: ResourceMethod, resource_name: str, user: T) -> bool:
         """
         Return whether the user is authorized to perform a given action on a custom view.
 
@@ -346,6 +398,18 @@ class BaseAuthManager(Generic[T], LoggingMixin, metaclass=ABCMeta):
         :param menu_items: list of all menu items
         :param user: the user
         """
+
+    def is_authorized_hitl_task(self, *, assigned_users: set[str], user: T) -> bool:
+        """
+        Check if a user is allowed to approve/reject a HITL task.
+
+        By default, checks if the user's ID is in the assigned_users set.
+        Auth managers can override this method to implement custom logic.
+
+        :param assigned_users: set of user IDs assigned to the task
+        :param user: the user to check authorization for
+        """
+        return user.get_id() in assigned_users
 
     def batch_is_authorized_connection(
         self,
@@ -463,7 +527,7 @@ class BaseAuthManager(Generic[T], LoggingMixin, metaclass=ABCMeta):
         :param method: the method to filter on
         :param session: the session
         """
-        stmt = select(Connection.conn_id, Team.name).join(Team, Connection.team_id == Team.id, isouter=True)
+        stmt = select(Connection.conn_id, Connection.team_name)
         rows = session.execute(stmt).all()
         connections_by_team: dict[str | None, set[str]] = defaultdict(set)
         for conn_id, team_name in rows:
@@ -517,24 +581,24 @@ class BaseAuthManager(Generic[T], LoggingMixin, metaclass=ABCMeta):
         session: Session = NEW_SESSION,
     ) -> set[str]:
         """
-        Get DAGs the user has access to.
+        Get Dags the user has access to.
 
         :param user: the user
         :param method: the method to filter on
         :param session: the session
         """
         stmt = (
-            select(DagModel.dag_id, Team.name)
+            select(DagModel.dag_id, dag_bundle_team_association_table.c.team_name)
             .join(DagBundleModel, DagModel.bundle_name == DagBundleModel.name)
             .join(
                 dag_bundle_team_association_table,
                 DagBundleModel.name == dag_bundle_team_association_table.c.dag_bundle_name,
                 isouter=True,
             )
-            .join(Team, Team.id == dag_bundle_team_association_table.c.team_id, isouter=True)
         )
-        rows = session.execute(stmt).all()
-        dags_by_team: dict[str | None, set[str]] = defaultdict(set)
+        # The below type annotation is acceptable on SQLA2.1, but not on 2.0
+        rows: Sequence[Row[Unpack[tuple[str, str]]]] = session.execute(stmt).all()  # type: ignore[type-arg]
+        dags_by_team: dict[str, set[str]] = defaultdict(set)
         for dag_id, team_name in rows:
             dags_by_team[team_name].add(dag_id)
 
@@ -557,13 +621,13 @@ class BaseAuthManager(Generic[T], LoggingMixin, metaclass=ABCMeta):
         team_name: str | None = None,
     ) -> set[str]:
         """
-        Filter DAGs the user has access to.
+        Filter Dags the user has access to.
 
-        By default, check individually if the user has permissions to access the DAG.
+        By default, check individually if the user has permissions to access the Dag.
         Can lead to some poor performance. It is recommended to override this method in the auth manager
         implementation to provide a more efficient implementation.
 
-        :param dag_ids: the set of DAG ids
+        :param dag_ids: the set of Dag ids
         :param user: the user
         :param method: the method to filter on
         :param team_name: the name of the team associated to the Dags if Airflow environment runs in
@@ -592,7 +656,7 @@ class BaseAuthManager(Generic[T], LoggingMixin, metaclass=ABCMeta):
         :param method: the method to filter on
         :param session: the session
         """
-        stmt = select(Pool.pool, Team.name).join(Team, Pool.team_id == Team.id, isouter=True)
+        stmt = select(Pool.pool, Pool.team_name)
         rows = session.execute(stmt).all()
         pools_by_team: dict[str | None, set[str]] = defaultdict(set)
         for pool_name, team_name in rows:
@@ -652,8 +716,8 @@ class BaseAuthManager(Generic[T], LoggingMixin, metaclass=ABCMeta):
         :param method: the method to filter on
         :param session: the session
         """
-        teams = Team.get_all_teams_id_to_name_mapping(session=session)
-        return self.filter_authorized_teams(teams_names=set(teams.values()), user=user, method=method)
+        team_names = Team.get_all_team_names(session=session)
+        return self.filter_authorized_teams(teams_names=team_names, user=user, method=method)
 
     def filter_authorized_teams(
         self,
@@ -694,7 +758,7 @@ class BaseAuthManager(Generic[T], LoggingMixin, metaclass=ABCMeta):
         :param method: the method to filter on
         :param session: the session
         """
-        stmt = select(Variable.key, Team.name).join(Team, Variable.team_id == Team.id, isouter=True)
+        stmt = select(Variable.key, Variable.team_name)
         rows = session.execute(stmt).all()
         variables_by_team: dict[str | None, set[str]] = defaultdict(set)
         for var_key, team_name in rows:
@@ -768,6 +832,14 @@ class BaseAuthManager(Generic[T], LoggingMixin, metaclass=ABCMeta):
         """
         return []
 
+    def _get_teams(self) -> set[str]:
+        """
+        Return the set of teams defined in the auth manager.
+
+        This method is used only when the Airflow environment is configured in multi-team mode.
+        """
+        raise NotImplementedError()
+
     @staticmethod
     def get_db_manager() -> str | None:
         """
@@ -776,6 +848,37 @@ class BaseAuthManager(Generic[T], LoggingMixin, metaclass=ABCMeta):
         This is optional and not all auth managers require a DB manager.
         """
         return None
+
+    @staticmethod
+    def _get_jwt_audience() -> str:
+        """
+        Resolve the JWT audience from the documented ``[api_auth] jwt_audience`` option.
+
+        Falls back to the undocumented ``[api] jwt_audience`` location used by the signer in
+        earlier 3.x releases (with a deprecation warning) so deployments that set the wrong
+        section continue to work until they migrate. Returns the default ``apache-airflow``
+        when neither is configured.
+
+        :meta private:
+        """
+        if conf.has_option("api_auth", "jwt_audience"):
+            return conf.get("api_auth", "jwt_audience")
+        if conf.has_option("api", "jwt_audience"):
+            # Bug context in PR https://github.com/apache/airflow/pull/67494: the signer used to
+            # read `[api] jwt_audience` while the validator read `[api_auth] jwt_audience`, so
+            # any deployment that hit the bug set the value under `[api]`. Honour it with a
+            # deprecation warning until the fallback can be removed in a future major release.
+            warnings.warn(
+                "The `[api] jwt_audience` configuration option is deprecated and was never "
+                "documented. It was read only by the JWT signer due to a bug; the validator "
+                "always read `[api_auth] jwt_audience`. Move the value to `[api_auth] "
+                "jwt_audience` (env var `AIRFLOW__API_AUTH__JWT_AUDIENCE`). Support for the "
+                "`[api]` location will be removed in a future release.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return conf.get("api", "jwt_audience")
+        return "apache-airflow"
 
     @classmethod
     @cache
@@ -793,7 +896,7 @@ class BaseAuthManager(Generic[T], LoggingMixin, metaclass=ABCMeta):
         return JWTGenerator(
             **get_signing_args(),
             valid_for=expiration_time_in_seconds,
-            audience=conf.get("api", "jwt_audience", fallback="apache-airflow"),
+            audience=cls._get_jwt_audience(),
         )
 
     @classmethod
@@ -807,5 +910,5 @@ class BaseAuthManager(Generic[T], LoggingMixin, metaclass=ABCMeta):
         return JWTValidator(
             **get_sig_validation_args(),
             leeway=conf.getint("api_auth", "jwt_leeway"),
-            audience=conf.get("api_auth", "jwt_audience", fallback="apache-airflow"),
+            audience=cls._get_jwt_audience(),
         )

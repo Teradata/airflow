@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import os
-from types import SimpleNamespace
 from unittest import mock
 
 import pandas as pd
@@ -27,13 +26,13 @@ import polars as pl
 import pytest
 import sqlalchemy
 
-from airflow.exceptions import AirflowException, AirflowOptionalProviderFeatureException
 from airflow.models import Connection
+from airflow.providers.common.compat.sdk import AirflowException, AirflowOptionalProviderFeatureException
 from airflow.providers.postgres.dialects.postgres import PostgresDialect
-from airflow.providers.postgres.hooks.postgres import CompatConnection, PostgresHook
+from airflow.providers.postgres.hooks.postgres import PostgresHook
 
 from tests_common.test_utils.common_sql import mock_db_hook
-from tests_common.test_utils.version_compat import NOTSET, SQLALCHEMY_V_1_4
+from tests_common.test_utils.version_compat import NOTSET
 
 INSERT_SQL_STATEMENT = "INSERT INTO connection (id, conn_id, conn_type, description, host, {}, login, password, port, is_encrypted, is_extra_encrypted, extra) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"
 
@@ -60,41 +59,11 @@ else:
 
 
 @pytest.fixture
-def postgres_hook_setup():
-    """Set up mock PostgresHook for testing."""
-    table = "test_postgres_hook_table"
-    cur = mock.MagicMock(rowcount=0)
-    conn = mock.MagicMock(spec=CompatConnection)
-    conn.cursor.return_value = cur
-
-    class UnitTestPostgresHook(PostgresHook):
-        conn_name_attr = "test_conn_id"
-
-        def get_conn(self):
-            return conn
-
-    db_hook = UnitTestPostgresHook()
-
-    # Return a namespace with all the objects
-    setup = SimpleNamespace(table=table, cur=cur, conn=conn, db_hook=db_hook)
-
-    yield setup
-
-    # Teardown - only for real database tests
-    try:
-        with PostgresHook().get_conn() as real_conn:
-            with real_conn.cursor() as real_cur:
-                real_cur.execute(f"DROP TABLE IF EXISTS {table}")
-    except Exception:
-        pass  # Ignore cleanup errors for unit tests
-
-
-@pytest.fixture
 def mock_connect(mocker):
     """Mock the connection object according to the correct psycopg version."""
     if USE_PSYCOPG3:
         return mocker.patch("airflow.providers.postgres.hooks.postgres.psycopg.connection.Connection.connect")
-    return mocker.patch("airflow.providers.postgres.hooks.postgres.psycopg2.connect")
+    return mocker.patch("airflow.providers.postgres.hooks.postgres.ppg2_connect")
 
 
 class TestPostgresHookConn:
@@ -126,18 +95,22 @@ class TestPostgresHookConn:
     @pytest.mark.parametrize("aws_conn_id", [NOTSET, None, "mock_aws_conn"])
     @pytest.mark.parametrize("port", [5432, 5439, None])
     @pytest.mark.parametrize(
-        ("host", "conn_cluster_identifier", "expected_host"),
+        ("host", "conn_cluster_identifier", "expected_host", "raises_exception"),
         [
             (
                 "cluster-identifier.ccdfre4hpd39h.us-east-1.redshift.amazonaws.com",
                 NOTSET,
                 "cluster-identifier.us-east-1",
+                False,
             ),
             (
                 "cluster-identifier.ccdfre4hpd39h.us-east-1.redshift.amazonaws.com",
                 "different-identifier",
                 "different-identifier.us-east-1",
+                False,
             ),
+            (None, NOTSET, None, True),
+            (None, "cluster-identifier", "cluster-identifier.us-east-1", False),
         ],
     )
     def test_openlineage_methods_with_redshift(
@@ -148,6 +121,7 @@ class TestPostgresHookConn:
         host,
         conn_cluster_identifier,
         expected_host,
+        raises_exception,
     ):
         mock_aws_hook_class = mocker.patch("airflow.providers.amazon.aws.hooks.base_aws.AwsBaseHook")
 
@@ -167,11 +141,14 @@ class TestPostgresHookConn:
         # Mock AWS Connection
         mock_aws_hook_instance = mock_aws_hook_class.return_value
         mock_aws_hook_instance.region_name = "us-east-1"
-
-        assert (
-            self.db_hook._get_openlineage_redshift_authority_part(self.connection)
-            == f"{expected_host}:{port or 5439}"
-        )
+        if raises_exception:
+            with pytest.raises(ValueError, match="connection host is required"):
+                self.db_hook._get_openlineage_redshift_authority_part(self.connection)
+        else:
+            assert (
+                self.db_hook._get_openlineage_redshift_authority_part(self.connection)
+                == f"{expected_host}:{port or 5439}"
+            )
 
     def test_get_conn_non_default_id(self, mock_connect):
         self.db_hook.test_conn_id = "non_default"
@@ -296,18 +273,22 @@ class TestPostgresHookConn:
     @pytest.mark.parametrize("aws_conn_id", [NOTSET, None, "mock_aws_conn"])
     @pytest.mark.parametrize("port", [5432, 5439, None])
     @pytest.mark.parametrize(
-        ("host", "conn_cluster_identifier", "expected_cluster_identifier"),
+        ("host", "conn_cluster_identifier", "expected_cluster_identifier", "raises_exception"),
         [
             (
                 "cluster-identifier.ccdfre4hpd39h.us-east-1.redshift.amazonaws.com",
                 NOTSET,
                 "cluster-identifier",
+                False,
             ),
             (
                 "cluster-identifier.ccdfre4hpd39h.us-east-1.redshift.amazonaws.com",
                 "different-identifier",
                 "different-identifier",
+                False,
             ),
+            (None, NOTSET, None, True),
+            (None, "cluster-identifier", "cluster-identifier", False),
         ],
     )
     def test_get_conn_rds_iam_redshift(
@@ -319,6 +300,7 @@ class TestPostgresHookConn:
         host,
         conn_cluster_identifier,
         expected_cluster_identifier,
+        raises_exception,
     ):
         mock_aws_hook_class = mocker.patch("airflow.providers.amazon.aws.hooks.base_aws.AwsBaseHook")
 
@@ -345,45 +327,52 @@ class TestPostgresHookConn:
             "DbUser": mock_db_user,
         }
         type(mock_aws_hook_instance).conn = mocker.PropertyMock(return_value=mock_client)
-
-        self.db_hook.get_conn()
-        # Check AwsHook initialization
-        mock_aws_hook_class.assert_called_once_with(
-            # If aws_conn_id not set than fallback to aws_default
-            aws_conn_id=aws_conn_id if aws_conn_id is not NOTSET else "aws_default",
-            client_type="redshift",
-        )
-        # Check boto3 'redshift' client method `get_cluster_credentials` call args
-        mock_client.get_cluster_credentials.assert_called_once_with(
-            DbUser=self.connection.login,
-            DbName=self.connection.schema,
-            ClusterIdentifier=expected_cluster_identifier,
-            AutoCreate=False,
-        )
-        # Check expected psycopg2 connection call args
-        mock_connect.assert_called_once_with(
-            user=mock_db_user,
-            password=mock_db_pass,
-            host=host,
-            dbname=self.connection.schema,
-            port=(port or 5439),
-        )
+        if raises_exception:
+            with pytest.raises(ValueError, match="connection host is required"):
+                self.db_hook.get_conn()
+        else:
+            self.db_hook.get_conn()
+            # Check AwsHook initialization
+            mock_aws_hook_class.assert_called_once_with(
+                # If aws_conn_id not set than fallback to aws_default
+                aws_conn_id=aws_conn_id if aws_conn_id is not NOTSET else "aws_default",
+                client_type="redshift",
+            )
+            # Check boto3 'redshift' client method `get_cluster_credentials` call args
+            mock_client.get_cluster_credentials.assert_called_once_with(
+                DbUser=self.connection.login,
+                DbName=self.connection.schema,
+                ClusterIdentifier=expected_cluster_identifier,
+                AutoCreate=False,
+            )
+            # Check expected psycopg2 connection call args
+            mock_connect.assert_called_once_with(
+                user=mock_db_user,
+                password=mock_db_pass,
+                host=host,
+                dbname=self.connection.schema,
+                port=(port or 5439),
+            )
 
     @pytest.mark.parametrize("aws_conn_id", [NOTSET, None, "mock_aws_conn"])
     @pytest.mark.parametrize("port", [5432, 5439, None])
     @pytest.mark.parametrize(
-        ("host", "conn_workgroup_name", "expected_workgroup_name"),
+        ("host", "conn_workgroup_name", "expected_workgroup_name", "raises_exception"),
         [
             (
                 "serverless-workgroup.ccdfre4hpd39h.us-east-1.redshift.amazonaws.com",
                 NOTSET,
                 "serverless-workgroup",
+                False,
             ),
             (
                 "cluster-identifier.ccdfre4hpd39h.us-east-1.redshift.amazonaws.com",
                 "different-workgroup",
                 "different-workgroup",
+                False,
             ),
+            (None, NOTSET, None, True),
+            (None, "serverless-workgroup", "serverless-workgroup", False),
         ],
     )
     def test_get_conn_rds_iam_redshift_serverless(
@@ -395,6 +384,7 @@ class TestPostgresHookConn:
         host,
         conn_workgroup_name,
         expected_workgroup_name,
+        raises_exception,
     ):
         mock_aws_hook_class = mocker.patch("airflow.providers.amazon.aws.hooks.base_aws.AwsBaseHook")
 
@@ -421,27 +411,30 @@ class TestPostgresHookConn:
             "dbUser": mock_db_user,
         }
         type(mock_aws_hook_instance).conn = mocker.PropertyMock(return_value=mock_client)
-
-        self.db_hook.get_conn()
-        # Check AwsHook initialization
-        mock_aws_hook_class.assert_called_once_with(
-            # If aws_conn_id not set than fallback to aws_default
-            aws_conn_id=aws_conn_id if aws_conn_id is not NOTSET else "aws_default",
-            client_type="redshift-serverless",
-        )
-        # Check boto3 'redshift' client method `get_cluster_credentials` call args
-        mock_client.get_credentials.assert_called_once_with(
-            dbName=self.connection.schema,
-            workgroupName=expected_workgroup_name,
-        )
-        # Check expected psycopg2 connection call args
-        mock_connect.assert_called_once_with(
-            user=mock_db_user,
-            password=mock_db_pass,
-            host=host,
-            dbname=self.connection.schema,
-            port=(port or 5439),
-        )
+        if raises_exception:
+            with pytest.raises(ValueError, match="connection host is required"):
+                self.db_hook.get_conn()
+        else:
+            self.db_hook.get_conn()
+            # Check AwsHook initialization
+            mock_aws_hook_class.assert_called_once_with(
+                # If aws_conn_id not set than fallback to aws_default
+                aws_conn_id=aws_conn_id if aws_conn_id is not NOTSET else "aws_default",
+                client_type="redshift-serverless",
+            )
+            # Check boto3 'redshift' client method `get_cluster_credentials` call args
+            mock_client.get_credentials.assert_called_once_with(
+                dbName=self.connection.schema,
+                workgroupName=expected_workgroup_name,
+            )
+            # Check expected psycopg2 connection call args
+            mock_connect.assert_called_once_with(
+                user=mock_db_user,
+                password=mock_db_pass,
+                host=host,
+                dbname=self.connection.schema,
+                port=(port or 5439),
+            )
 
     def test_get_conn_azure_iam(self, mocker, mock_connect):
         mock_azure_conn_id = "azure_conn1"
@@ -544,10 +537,7 @@ class TestPostgresHookConnPPG2:
         conn = Connection(login="login-conn", password="password-conn", host="host", schema="database")
         hook = PostgresHook(connection=conn)
         expected = "postgresql://login-conn:password-conn@host/database"
-        if SQLALCHEMY_V_1_4:
-            assert str(hook.sqlalchemy_url) == expected
-        else:
-            assert hook.sqlalchemy_url.render_as_string(hide_password=False) == expected
+        assert hook.sqlalchemy_url.render_as_string(hide_password=False) == expected
 
     def test_sqlalchemy_url_with_sqlalchemy_query(self):
         conn = Connection(
@@ -560,10 +550,7 @@ class TestPostgresHookConnPPG2:
         hook = PostgresHook(connection=conn)
 
         expected = "postgresql://login-conn:password-conn@host/database?gssencmode=disable"
-        if SQLALCHEMY_V_1_4:
-            assert str(hook.sqlalchemy_url) == expected
-        else:
-            assert hook.sqlalchemy_url.render_as_string(hide_password=False) == expected
+        assert hook.sqlalchemy_url.render_as_string(hide_password=False) == expected
 
     def test_get_conn_cursor(self, mock_connect):
         self.connection.extra = '{"cursor": "dictcursor", "sqlalchemy_query": {"gssencmode": "disable"}}'
@@ -596,10 +583,7 @@ class TestPostgresHookConnPPG3:
         conn = Connection(login="login-conn", password="password-conn", host="host", schema="database")
         hook = PostgresHook(connection=conn)
         expected = "postgresql+psycopg://login-conn:password-conn@host/database"
-        if SQLALCHEMY_V_1_4:
-            assert str(hook.sqlalchemy_url) == expected
-        else:
-            assert hook.sqlalchemy_url.render_as_string(hide_password=False) == expected
+        assert hook.sqlalchemy_url.render_as_string(hide_password=False) == expected
 
     def test_sqlalchemy_url_with_sqlalchemy_query(self):
         conn = Connection(
@@ -612,10 +596,7 @@ class TestPostgresHookConnPPG3:
         hook = PostgresHook(connection=conn)
 
         expected = "postgresql+psycopg://login-conn:password-conn@host/database?gssencmode=disable"
-        if SQLALCHEMY_V_1_4:
-            assert str(hook.sqlalchemy_url) == expected
-        else:
-            assert hook.sqlalchemy_url.render_as_string(hide_password=False) == expected
+        assert hook.sqlalchemy_url.render_as_string(hide_password=False) == expected
 
     def test_get_conn_cursor(self, mocker):
         mock_connect = mocker.patch("psycopg.connection.Connection.connect")
@@ -804,10 +785,8 @@ class TestPostgresHook:
         ) == INSERT_SQL_STATEMENT.format('"schema"')
 
 
-@pytest.mark.backend("postgres")
-@pytest.mark.skipif(USE_PSYCOPG3, reason="psycopg v3 is available")
-class TestPostgresHookPPG2:
-    """PostgresHook tests that are specific to psycopg2."""
+class _BasePostgresHookRuntimeTests:
+    """Shared runtime tests for psycopg2 and psycopg3."""
 
     table = "test_postgres_hook_table"
 
@@ -829,6 +808,121 @@ class TestPostgresHookPPG2:
             with conn.cursor() as cur:
                 cur.execute(f"DROP TABLE IF EXISTS {self.table}")
 
+    def test_insert_rows(self):
+        table = "table"
+        rows = [("hello",), ("world",)]
+
+        self.db_hook.insert_rows(table, rows)
+
+        assert self.conn.close.call_count == 1
+        assert self.cur.close.call_count == 1
+        assert self.conn.commit.call_count == 2
+
+        sql = f"INSERT INTO {table}  VALUES (%s)"
+        self.cur.executemany.assert_any_call(sql, rows)
+
+    def test_insert_rows_replace(self):
+        table = "table"
+        rows = [
+            (1, "hello"),
+            (2, "world"),
+        ]
+        fields = ("id", "value")
+
+        self.db_hook.insert_rows(
+            table,
+            rows,
+            fields,
+            replace=True,
+            replace_index=fields[0],
+        )
+
+        assert self.conn.close.call_count == 1
+        assert self.cur.close.call_count == 1
+        assert self.conn.commit.call_count == 2
+
+        sql = (
+            f"INSERT INTO {table} ({fields[0]}, {fields[1]}) VALUES (%s,%s) "
+            f"ON CONFLICT ({fields[0]}) DO UPDATE SET {fields[1]} = excluded.{fields[1]}"
+        )
+        self.cur.executemany.assert_any_call(sql, rows)
+
+    def test_insert_rows_replace_missing_target_field_arg(self):
+        table = "table"
+        rows = [
+            (1, "hello"),
+            (2, "world"),
+        ]
+        fields = ("id", "value")
+
+        with pytest.raises(
+            ValueError,
+            match="PostgreSQL ON CONFLICT upsert syntax requires column names",
+        ):
+            self.db_hook.insert_rows(
+                table,
+                rows,
+                replace=True,
+                replace_index=fields[0],
+            )
+
+    def test_insert_rows_replace_missing_replace_index_arg(self):
+        table = "table"
+        rows = [
+            (1, "hello"),
+            (2, "world"),
+        ]
+        fields = ("id", "value")
+
+        with pytest.raises(
+            ValueError,
+            match="PostgreSQL ON CONFLICT upsert syntax requires an unique index",
+        ):
+            self.db_hook.insert_rows(
+                table,
+                rows,
+                fields,
+                replace=True,
+            )
+
+    def test_insert_rows_replace_all_index(self):
+        table = "table"
+        rows = [
+            (1, "hello"),
+            (2, "world"),
+        ]
+        fields = ("id", "value")
+
+        self.db_hook.insert_rows(
+            table,
+            rows,
+            fields,
+            replace=True,
+            replace_index=fields,
+        )
+
+        assert self.conn.close.call_count == 1
+        assert self.cur.close.call_count == 1
+        assert self.conn.commit.call_count == 2
+
+        sql = (
+            f"INSERT INTO {table} ({', '.join(fields)}) VALUES (%s,%s) "
+            f"ON CONFLICT ({', '.join(fields)}) DO NOTHING"
+        )
+        self.cur.executemany.assert_any_call(sql, rows)
+
+    def test_dialect_name(self):
+        assert self.db_hook.dialect_name == "postgresql"
+
+    def test_dialect(self):
+        assert isinstance(self.db_hook.dialect, PostgresDialect)
+
+
+@pytest.mark.backend("postgres")
+@pytest.mark.skipif(USE_PSYCOPG3, reason="psycopg v3 is available")
+class TestPostgresHookPPG2(_BasePostgresHookRuntimeTests):
+    """PostgresHook tests that are specific to psycopg2."""
+
     def test_copy_expert(self, mocker):
         open_mock = mocker.mock_open(read_data='{"some": "json"}')
         mocker.patch("airflow.providers.postgres.hooks.postgres.open", open_mock)
@@ -846,137 +940,133 @@ class TestPostgresHookPPG2:
         self.cur.copy_expert.assert_called_once_with(statement, open_mock.return_value)
         assert open_mock.call_args.args == (filename, "r+")
 
-    def test_insert_rows(self, postgres_hook_setup):
-        setup = postgres_hook_setup
+    @mock.patch("airflow.providers.postgres.hooks.postgres.send_sql_hook_lineage")
+    def test_copy_expert_hook_lineage(self, mock_send_lineage, mocker):
+        open_mock = mocker.mock_open(read_data='{"some": "json"}')
+        mocker.patch("airflow.providers.postgres.hooks.postgres.open", open_mock)
+        statement = "COPY t FROM STDIN"
+        filename = "file"
+
+        self.db_hook.copy_expert(statement, filename)
+
+        mock_send_lineage.assert_called_once()
+        call_kw = mock_send_lineage.call_args.kwargs
+        assert call_kw["context"] is self.db_hook
+        assert call_kw["sql"] == statement
+        assert call_kw["sql_parameters"] == (filename,)
+        assert call_kw["cur"] is self.cur
+
+    @mock.patch("airflow.providers.common.sql.hooks.sql.send_sql_hook_lineage")
+    def test_run_hook_lineage(self, mock_send_lineage):
+        statement = "SELECT 1"
+        self.cur.fetchall.return_value = []
+
+        self.db_hook.run(statement)
+
+        mock_send_lineage.assert_called()
+        call_kw = mock_send_lineage.call_args.kwargs
+        assert call_kw["context"] is self.db_hook
+        assert call_kw["sql"] == statement
+        assert call_kw["sql_parameters"] is None
+        assert call_kw["cur"] is self.cur
+
+    @mock.patch("airflow.providers.postgres.hooks.postgres.send_sql_hook_lineage")
+    @mock.patch("pandas.io.sql.read_sql", return_value=pd.DataFrame({"a": [1]}))
+    @mock.patch("airflow.providers.postgres.hooks.postgres.PostgresHook.get_sqlalchemy_engine")
+    def test_get_df_hook_lineage(self, mock_engine, mock_read_sql, mock_send_lineage):
+        sql = "SELECT 1"
+        parameters = ("x",)
+        self.db_hook.get_df(sql, parameters=parameters)
+
+        mock_send_lineage.assert_called_once()
+        call_kw = mock_send_lineage.call_args.kwargs
+        assert call_kw["context"] is self.db_hook
+        assert call_kw["sql"] == sql
+        assert call_kw["sql_parameters"] == parameters
+
+    @mock.patch("airflow.providers.common.sql.hooks.sql.send_sql_hook_lineage")
+    @mock.patch("airflow.providers.common.sql.hooks.sql.DbApiHook._get_pandas_df_by_chunks")
+    def test_get_df_by_chunks_hook_lineage(self, mock_get_pandas_df_by_chunks, mock_send_lineage):
+        sql = "SELECT 1"
+        parameters = ("x",)
+        self.db_hook.get_df_by_chunks(sql, parameters=parameters, chunksize=1)
+
+        mock_send_lineage.assert_called_once()
+        call_kw = mock_send_lineage.call_args.kwargs
+        assert call_kw["context"] is self.db_hook
+        assert call_kw["sql"] == sql
+        assert call_kw["sql_parameters"] == parameters
+
+    @mock.patch("airflow.providers.common.sql.hooks.sql.send_sql_hook_lineage")
+    def test_insert_rows_hook_lineage(self, mock_send_lineage):
         table = "table"
         rows = [("hello",), ("world",)]
 
-        setup.db_hook.insert_rows(table, rows)
+        self.db_hook.insert_rows(table, rows)
 
-        assert setup.conn.close.call_count == 1
-        assert setup.cur.close.call_count == 1
+        mock_send_lineage.assert_called_once()
 
-        commit_count = 2  # The first and last commit
-        assert commit_count == setup.conn.commit.call_count
+        call_kw = mock_send_lineage.call_args.kwargs
 
-        sql = f"INSERT INTO {table}  VALUES (%s)"
-        setup.cur.executemany.assert_any_call(sql, rows)
+        assert call_kw["context"] is self.db_hook
+        assert call_kw["sql"] == f"INSERT INTO {table}  VALUES (%s)"
+        assert call_kw["row_count"] == 2
 
-    @mock.patch("airflow.providers.postgres.hooks.postgres.execute_batch")
-    def test_insert_rows_fast_executemany(self, mock_execute_batch, postgres_hook_setup):
-        setup = postgres_hook_setup
+    @mock.patch("airflow.providers.postgres.hooks.postgres.execute_values")
+    def test_insert_rows_fast_executemany(self, mock_execute_values):
         table = "table"
         rows = [("hello",), ("world",)]
 
-        setup.db_hook.insert_rows(table, rows, fast_executemany=True)
+        self.db_hook.insert_rows(table, rows, fast_executemany=True)
 
-        assert setup.conn.close.call_count == 1
-        assert setup.cur.close.call_count == 1
+        assert self.conn.close.call_count == 1
+        assert self.cur.close.call_count == 1
 
         commit_count = 2  # The first and last commit
-        assert setup.conn.commit.call_count == commit_count
+        assert self.conn.commit.call_count == commit_count
 
-        mock_execute_batch.assert_called_once_with(
-            setup.cur,
-            f"INSERT INTO {table}  VALUES (%s)",  # expected SQL
+        mock_execute_values.assert_called_once_with(
+            self.cur,
+            f"INSERT INTO {table}  VALUES %s",  # expected SQL
             [("hello",), ("world",)],  # expected values
             page_size=1000,
         )
 
         # executemany should NOT be called in this mode
-        setup.cur.executemany.assert_not_called()
+        self.cur.executemany.assert_not_called()
 
-    def test_insert_rows_replace(self, postgres_hook_setup):
-        setup = postgres_hook_setup
+    @mock.patch("airflow.providers.postgres.hooks.postgres.send_sql_hook_lineage")
+    @mock.patch("airflow.providers.postgres.hooks.postgres.execute_values")
+    def test_insert_rows_fast_executemany_hook_lineage(self, mock_execute_values, mock_send_lineage):
         table = "table"
-        rows = [
-            (
-                1,
-                "hello",
-            ),
-            (
-                2,
-                "world",
-            ),
-        ]
-        fields = ("id", "value")
+        rows = [("hello",), ("world",)]
 
-        setup.db_hook.insert_rows(table, rows, fields, replace=True, replace_index=fields[0])
+        self.db_hook.insert_rows(table, rows, fast_executemany=True)
 
-        assert setup.conn.close.call_count == 1
-        assert setup.cur.close.call_count == 1
+        mock_send_lineage.assert_called_once()
+        call_kw = mock_send_lineage.call_args.kwargs
+        assert call_kw["context"] is self.db_hook
+        assert call_kw["sql"] == f"INSERT INTO {table}  VALUES %s"
+        assert call_kw["row_count"] == 2
 
-        commit_count = 2  # The first and last commit
-        assert commit_count == setup.conn.commit.call_count
+    @mock.patch("airflow.providers.postgres.hooks.postgres.USE_PSYCOPG3", True)
+    @mock.patch("airflow.providers.common.sql.hooks.sql.DbApiHook.insert_rows")
+    def test_insert_rows_fast_executemany_psycopg3_fallback(self, mock_super_insert_rows):
+        """Verify psycopg3 falls back to default implementation even with fast_executemany=True."""
+        table = "table"
+        rows = [("hello",), ("world",)]
 
-        sql = (
-            f"INSERT INTO {table} ({fields[0]}, {fields[1]}) VALUES (%s,%s) "
-            f"ON CONFLICT ({fields[0]}) DO UPDATE SET {fields[1]} = excluded.{fields[1]}"
+        self.db_hook.insert_rows(table, rows, fast_executemany=True)
+
+        mock_super_insert_rows.assert_called_once_with(
+            table,
+            rows,
+            target_fields=None,
+            commit_every=1000,
+            replace=False,
+            executemany=False,
+            autocommit=False,
         )
-        setup.cur.executemany.assert_any_call(sql, rows)
-
-    def test_insert_rows_replace_missing_target_field_arg(self, postgres_hook_setup):
-        setup = postgres_hook_setup
-        table = "table"
-        rows = [
-            (
-                1,
-                "hello",
-            ),
-            (
-                2,
-                "world",
-            ),
-        ]
-        fields = ("id", "value")
-        with pytest.raises(ValueError, match="PostgreSQL ON CONFLICT upsert syntax requires column names"):
-            setup.db_hook.insert_rows(table, rows, replace=True, replace_index=fields[0])
-
-    def test_insert_rows_replace_missing_replace_index_arg(self, postgres_hook_setup):
-        setup = postgres_hook_setup
-        table = "table"
-        rows = [
-            (
-                1,
-                "hello",
-            ),
-            (
-                2,
-                "world",
-            ),
-        ]
-        fields = ("id", "value")
-        with pytest.raises(ValueError, match="PostgreSQL ON CONFLICT upsert syntax requires an unique index"):
-            setup.db_hook.insert_rows(table, rows, fields, replace=True)
-
-    def test_insert_rows_replace_all_index(self, postgres_hook_setup):
-        setup = postgres_hook_setup
-        table = "table"
-        rows = [
-            (
-                1,
-                "hello",
-            ),
-            (
-                2,
-                "world",
-            ),
-        ]
-        fields = ("id", "value")
-
-        setup.db_hook.insert_rows(table, rows, fields, replace=True, replace_index=fields)
-
-        assert setup.conn.close.call_count == 1
-        assert setup.cur.close.call_count == 1
-
-        commit_count = 2  # The first and last commit
-        assert commit_count == setup.conn.commit.call_count
-
-        sql = (
-            f"INSERT INTO {table} ({', '.join(fields)}) VALUES (%s,%s) "
-            f"ON CONFLICT ({', '.join(fields)}) DO NOTHING"
-        )
-        setup.cur.executemany.assert_any_call(sql, rows)
 
     @pytest.mark.usefixtures("reset_logging_config")
     def test_get_all_db_log_messages(self, mocker):
@@ -1020,39 +1110,11 @@ class TestPostgresHookPPG2:
         finally:
             hook.run(sql=f"DROP PROCEDURE {proc_name} (s text)")
 
-    def test_dialect_name(self, postgres_hook_setup):
-        setup = postgres_hook_setup
-        assert setup.db_hook.dialect_name == "postgresql"
-
-    def test_dialect(self, postgres_hook_setup):
-        setup = postgres_hook_setup
-        assert isinstance(setup.db_hook.dialect, PostgresDialect)
-
 
 @pytest.mark.backend("postgres")
 @pytest.mark.skipif(not USE_PSYCOPG3, reason="psycopg v3 or sqlalchemy v2 are not available")
-class TestPostgresHookPPG3:
+class TestPostgresHookPPG3(_BasePostgresHookRuntimeTests):
     """PostgresHook tests that are specific to psycopg3."""
-
-    table = "test_postgres_hook_table"
-
-    def setup_method(self):
-        self.cur = mock.MagicMock(rowcount=0)
-        self.conn = conn = mock.MagicMock()
-        self.conn.cursor.return_value = self.cur
-
-        class UnitTestPostgresHook(PostgresHook):
-            conn_name_attr = "test_conn_id"
-
-            def get_conn(self):
-                return conn
-
-        self.db_hook = UnitTestPostgresHook()
-
-    def teardown_method(self):
-        with PostgresHook().get_conn() as conn:
-            with conn.cursor() as cur:
-                cur.execute(f"DROP TABLE IF EXISTS {self.table}")
 
     def test_copy_expert_from(self, mocker):
         """Tests copy_expert with a 'COPY FROM STDIN' operation."""
@@ -1135,109 +1197,6 @@ class TestPostgresHookPPG3:
         )
         self.conn.commit.assert_called_once()
 
-    def test_insert_rows(self):
-        table = "table"
-        rows = [("hello",), ("world",)]
-
-        self.db_hook.insert_rows(table, rows)
-
-        assert self.conn.close.call_count == 1
-        assert self.cur.close.call_count == 1
-
-        commit_count = 2  # The first and last commit
-        assert commit_count == self.conn.commit.call_count
-
-        sql = f"INSERT INTO {table}  VALUES (%s)"
-        self.cur.executemany.assert_any_call(sql, rows)
-
-    def test_insert_rows_replace(self):
-        table = "table"
-        rows = [
-            (
-                1,
-                "hello",
-            ),
-            (
-                2,
-                "world",
-            ),
-        ]
-        fields = ("id", "value")
-
-        self.db_hook.insert_rows(table, rows, fields, replace=True, replace_index=fields[0])
-
-        assert self.conn.close.call_count == 1
-        assert self.cur.close.call_count == 1
-
-        commit_count = 2  # The first and last commit
-        assert commit_count == self.conn.commit.call_count
-
-        sql = (
-            f"INSERT INTO {table} ({fields[0]}, {fields[1]}) VALUES (%s,%s) "
-            f"ON CONFLICT ({fields[0]}) DO UPDATE SET {fields[1]} = excluded.{fields[1]}"
-        )
-        self.cur.executemany.assert_any_call(sql, rows)
-
-    def test_insert_rows_replace_missing_target_field_arg(self):
-        table = "table"
-        rows = [
-            (
-                1,
-                "hello",
-            ),
-            (
-                2,
-                "world",
-            ),
-        ]
-        fields = ("id", "value")
-        with pytest.raises(ValueError, match="PostgreSQL ON CONFLICT upsert syntax requires column names"):
-            self.db_hook.insert_rows(table, rows, replace=True, replace_index=fields[0])
-
-    def test_insert_rows_replace_missing_replace_index_arg(self):
-        table = "table"
-        rows = [
-            (
-                1,
-                "hello",
-            ),
-            (
-                2,
-                "world",
-            ),
-        ]
-        fields = ("id", "value")
-        with pytest.raises(ValueError, match="PostgreSQL ON CONFLICT upsert syntax requires an unique index"):
-            self.db_hook.insert_rows(table, rows, fields, replace=True)
-
-    def test_insert_rows_replace_all_index(self):
-        table = "table"
-        rows = [
-            (
-                1,
-                "hello",
-            ),
-            (
-                2,
-                "world",
-            ),
-        ]
-        fields = ("id", "value")
-
-        self.db_hook.insert_rows(table, rows, fields, replace=True, replace_index=fields)
-
-        assert self.conn.close.call_count == 1
-        assert self.cur.close.call_count == 1
-
-        commit_count = 2  # The first and last commit
-        assert commit_count == self.conn.commit.call_count
-
-        sql = (
-            f"INSERT INTO {table} ({', '.join(fields)}) VALUES (%s,%s) "
-            f"ON CONFLICT ({', '.join(fields)}) DO NOTHING"
-        )
-        self.cur.executemany.assert_any_call(sql, rows)
-
     @pytest.mark.skip(reason="Notice handling is callback-based in psycopg3 and cannot be tested this way.")
     def test_get_all_db_log_messages(self, mocker):
         pass
@@ -1267,8 +1226,16 @@ class TestPostgresHookPPG3:
         finally:
             hook.run(sql=f"DROP PROCEDURE {proc_name} (s text)")
 
-    def test_dialect_name(self):
-        assert self.db_hook.dialect_name == "postgresql"
+    @pytest.mark.usefixtures("reset_logging_config")
+    def test_insert_rows_fast_executemany_psycopg3_logs_warning(self, mocker):
+        mock_logger = mocker.patch("airflow.providers.postgres.hooks.postgres.PostgresHook.log")
 
-    def test_dialect(self):
-        assert isinstance(self.db_hook.dialect, PostgresDialect)
+        table = "table"
+        rows = [("hello",), ("world",)]
+
+        self.db_hook.insert_rows(table, rows, fast_executemany=True)
+
+        mock_logger.warning.assert_called_once_with(
+            "fast_executemany=True has no effect when using psycopg3. "
+            "psycopg3's executemany already uses pipelining for optimal performance."
+        )

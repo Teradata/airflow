@@ -28,8 +28,12 @@ from git.exc import BadName, GitCommandError, InvalidGitRepositoryError, NoSuchP
 from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 from airflow.dag_processing.bundles.base import BaseDagBundle
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
+from airflow.providers.common.compat.version_compat import AIRFLOW_V_3_3_PLUS
 from airflow.providers.git.hooks.git import GitHook
+
+if AIRFLOW_V_3_3_PLUS:
+    from airflow.dag_processing.bundles.base import BundleVersion
 
 log = structlog.get_logger(__name__)
 
@@ -45,12 +49,18 @@ class GitDagBundle(BaseDagBundle):
     :param subdir: Subdirectory within the repository where the DAGs are stored (Optional)
     :param git_conn_id: Connection ID for SSH/token based connection to the repository (Optional)
     :param repo_url: Explicit Git repository URL to override the connection's host. (Optional)
+    :param submodules: Whether to initialize git submodules. In case of submodules, the .git folder is preserved.
     :param prune_dotgit_folder: Remove .git folder from the versions after cloning.
 
         The per-version clone is not a full "git" copy (it makes use of git's `--local` ability
         to share the object directory via hard links, but if you have a lot of current versions
         running, or an especially large git repo leaving this as True will save some disk space
         at the expense of `git` operations not working in the bundle that Tasks run from.
+    :param sparse_dirs: List of directories to include when cloning the repository. Needs git version 2.25 or higher.
+
+        The sparse checkout will only produce the files and subfolders of the list of provided directories
+        into the working tree. The "cone" mode is used, which means that effective and fast filtering can be made.
+        See https://git-scm.com/docs/git-sparse-checkout for more information on the sparse checkout feature.
     """
 
     supports_versioning = True
@@ -62,7 +72,9 @@ class GitDagBundle(BaseDagBundle):
         subdir: str | None = None,
         git_conn_id: str | None = None,
         repo_url: str | None = None,
+        submodules: bool = False,
         prune_dotgit_folder: bool = True,
+        sparse_dirs: list[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -75,7 +87,13 @@ class GitDagBundle(BaseDagBundle):
             self.repo_path = self.base_dir / "tracking_repo"
         self.git_conn_id = git_conn_id
         self.repo_url = repo_url
-        self.prune_dotgit_folder = prune_dotgit_folder
+        self.submodules = submodules
+        self.sparse_dirs = sparse_dirs
+        # Force prune to False if submodules are used, otherwise git links break
+        if self.submodules:
+            self.prune_dotgit_folder = False
+        else:
+            self.prune_dotgit_folder = prune_dotgit_folder
 
         self._log = log.bind(
             bundle_name=self.name,
@@ -84,6 +102,8 @@ class GitDagBundle(BaseDagBundle):
             repo_path=self.repo_path,
             versions_path=self.versions_dir,
             git_conn_id=self.git_conn_id,
+            submodules=self.submodules,
+            sparse_dirs=self.sparse_dirs,
         )
 
         self._log.debug("bundle configured")
@@ -91,14 +111,90 @@ class GitDagBundle(BaseDagBundle):
         try:
             self.hook = GitHook(git_conn_id=git_conn_id or "git_default", repo_url=self.repo_url)
         except Exception as e:
-            self._log.warning("Could not create GitHook", conn_id=git_conn_id, exc=e)
+            if not self.repo_url:
+                # when repo_url is not provided, we need the connection to get it and if we fail here, we raise
+                raise
+            # if repo_url is provided, connection can be optional for auth, so we log and continue to enable
+            # public repos to work without connection
+            self._log.info(
+                "Connection not found but repo_url provided, continuing without Airflow connection",
+                git_conn_id=git_conn_id,
+                exc_info=str(e),
+            )
 
         if self.hook and self.hook.repo_url:
             self.repo_url = self.hook.repo_url
             self._log.debug("repo_url updated from hook")
 
+    def _is_pruned_worktree(self) -> bool:
+        # True if version path exists and has no .git
+        if not self.version:
+            return False
+        if not self.repo_path.exists() or not self.repo_path.is_dir():
+            return False
+        return not (self.repo_path / ".git").exists()
+
+    def _local_repo_has_version(self) -> bool:
+        """Check if the local repo already has the correct version checked out."""
+        if not self.version or not self.repo_path.is_dir() or not (self.repo_path / ".git").exists():
+            return False
+        repo = None
+        try:
+            repo = Repo(self.repo_path)
+            expected_commit = repo.commit(self.version)
+            has_version = repo.head.commit.hexsha == expected_commit.hexsha
+            return has_version
+        except (InvalidGitRepositoryError, NoSuchPathError, BadName, GitCommandError, ValueError):
+            return False
+        finally:
+            if repo is not None:
+                repo.close()
+
     def _initialize(self):
         with self.lock():
+            # Avoids re-cloning on every task run when:
+            # 1. A versioned worktree already exists on disk without a .git directory
+            # 2. The local repo already has the expected version
+            if self._is_pruned_worktree():
+                self._log.debug(
+                    "Using existing pruned worktree",
+                    repo_path=self.repo_path,
+                    version=self.version,
+                )
+                return
+            if self._local_repo_has_version():
+                self._log.debug(
+                    "Using existing local repo with correct version",
+                    repo_path=self.repo_path,
+                    version=self.version,
+                )
+                try:
+                    repo = Repo(self.repo_path)
+                except (InvalidGitRepositoryError, NoSuchPathError, GitCommandError) as e:
+                    self._log.debug(
+                        "Falling back to clone path after failing to reopen local repo",
+                        repo_path=self.repo_path,
+                        version=self.version,
+                        exc=e,
+                    )
+                else:
+                    try:
+                        # Discard any working-tree mutations a previous task left behind
+                        # so the bundle is the clean state callers expect.
+                        repo.git.reset("--hard", "HEAD")
+                        repo.git.clean("-fd")
+                    finally:
+                        repo.close()
+                    if self.prune_dotgit_folder:
+                        shutil.rmtree(self.repo_path / ".git")
+                        self.repo = None
+                    else:
+                        # Assign self.repo so get_current_version() returns the resolved
+                        # HEAD hexsha rather than the raw self.version (which may be a
+                        # tag or short SHA).
+                        self.repo = repo
+                    return
+
             cm = self.hook.configure_hook_env() if self.hook else nullcontext()
             with cm:
                 try:
@@ -123,11 +219,24 @@ class GitDagBundle(BaseDagBundle):
                     self.repo.remotes.origin.fetch()
                 self.repo.head.set_reference(str(self.repo.commit(self.version)))
                 self.repo.head.reset(index=True, working_tree=True)
+
+                if self.submodules:
+                    cm_sub = self.hook.configure_hook_env() if self.hook else nullcontext()
+                    with cm_sub:
+                        try:
+                            self._fetch_submodules()
+                        except GitCommandError as e:
+                            raise RuntimeError("Error pulling submodule from repository") from e
+
                 if self.prune_dotgit_folder:
+                    self.repo.close()
                     shutil.rmtree(self.repo_path / ".git")
+                    self.repo = None
             else:
                 self.refresh()
-            self.repo.close()
+
+            if self.repo is not None:
+                self.repo.close()
 
     def initialize(self) -> None:
         if not self.repo_url:
@@ -149,7 +258,14 @@ class GitDagBundle(BaseDagBundle):
                 Repo.clone_from(
                     url=self.bare_repo_path,
                     to_path=self.repo_path,
+                    multi_options=["--sparse", "--no-checkout"] if self.sparse_dirs else None,
                 )
+                if self.sparse_dirs:
+                    self._log.info("Setting up sparse checkout")
+                    repo = Repo(self.repo_path)
+                    repo.git.sparse_checkout("init", "--cone")
+                    repo.git.sparse_checkout("set", *self.sparse_dirs)
+                    repo.git.checkout(self.tracking_ref)
             else:
                 self._log.debug("repo exists", repo_path=self.repo_path)
             self.repo = Repo(self.repo_path)
@@ -211,14 +327,21 @@ class GitDagBundle(BaseDagBundle):
             f"<GitDagBundle("
             f"name={self.name!r}, "
             f"tracking_ref={self.tracking_ref!r}, "
+            f"submodules={self.submodules!r}, "
             f"subdir={self.subdir!r}, "
             f"version={self.version!r}"
             f")>"
         )
 
-    def get_current_version(self) -> str:
-        with self.repo as repo:
-            return repo.head.commit.hexsha
+    def get_current_version(self) -> str | BundleVersion:
+        if self.version is not None and getattr(self, "repo", None) is None:
+            hexsha = self.version
+        else:
+            with self.repo as repo:
+                hexsha = repo.head.commit.hexsha
+        if AIRFLOW_V_3_3_PLUS:
+            return BundleVersion(version=hexsha)
+        return hexsha
 
     @property
     def path(self) -> Path:
@@ -243,6 +366,16 @@ class GitDagBundle(BaseDagBundle):
             self.bare_repo.remotes.origin.fetch(refspecs)
             self.bare_repo.close()
 
+    @retry(
+        retry=retry_if_exception_type((GitCommandError,)),
+        stop=stop_after_attempt(2),
+        reraise=True,
+    )
+    def _fetch_submodules(self) -> None:
+        self._log.info("Initializing and updating submodules", repo_path=self.repo_path)
+        self.repo.git.submodule("sync", "--recursive")
+        self.repo.git.submodule("update", "--init", "--recursive", "--jobs", "1")
+
     def refresh(self) -> None:
         if self.version:
             raise AirflowException("Refreshing a specific version is not supported")
@@ -260,6 +393,13 @@ class GitDagBundle(BaseDagBundle):
                 else:
                     target = self.tracking_ref
                 self.repo.head.reset(target, index=True, working_tree=True)
+
+                if self.submodules:
+                    try:
+                        self._fetch_submodules()
+                    except GitCommandError as e:
+                        raise RuntimeError("Error pulling submodule from repository") from e
+
                 self.repo.close()
 
     @staticmethod

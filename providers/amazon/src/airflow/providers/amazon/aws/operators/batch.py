@@ -30,8 +30,6 @@ from collections.abc import Sequence
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
-from airflow.configuration import conf
-from airflow.exceptions import AirflowException
 from airflow.providers.amazon.aws.hooks.batch_client import BatchClientHook
 from airflow.providers.amazon.aws.links.batch import (
     BatchJobDefinitionLink,
@@ -47,9 +45,10 @@ from airflow.providers.amazon.aws.triggers.batch import (
 from airflow.providers.amazon.aws.utils import trim_none_values, validate_execute_complete_event
 from airflow.providers.amazon.aws.utils.mixins import aws_template_fields
 from airflow.providers.amazon.aws.utils.task_log_fetcher import AwsTaskLogFetcher
+from airflow.providers.common.compat.sdk import AirflowException, conf
 
 if TYPE_CHECKING:
-    from airflow.utils.context import Context
+    from airflow.sdk import Context
 
 
 class BatchOperator(AwsBaseOperator[BatchClientHook]):
@@ -239,6 +238,8 @@ class BatchOperator(AwsBaseOperator[BatchClientHook]):
                         aws_conn_id=self.aws_conn_id,
                         region_name=self.region_name,
                         waiter_delay=self.poll_interval,
+                        verify=self.verify,
+                        botocore_config=self.botocore_config,
                     ),
                     method_name="execute_complete",
                 )
@@ -515,7 +516,13 @@ class BatchCreateComputeEnvironmentOperator(AwsBaseOperator[BatchClientHook]):
         if self.deferrable:
             self.defer(
                 trigger=BatchCreateComputeEnvironmentTrigger(
-                    arn, self.poll_interval, self.max_retries, self.aws_conn_id, self.region_name
+                    compute_env_arn=arn,
+                    waiter_delay=self.poll_interval,
+                    waiter_max_attempts=self.max_retries,
+                    aws_conn_id=self.aws_conn_id,
+                    region_name=self.region_name,
+                    verify=self.verify,
+                    botocore_config=self.botocore_config,
                 ),
                 method_name="execute_complete",
             )

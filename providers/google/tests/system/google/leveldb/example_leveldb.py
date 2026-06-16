@@ -26,8 +26,8 @@ from datetime import datetime
 
 import pytest
 
-from airflow.exceptions import AirflowOptionalProviderFeatureException
 from airflow.models.dag import DAG
+from airflow.providers.common.compat.sdk import AirflowOptionalProviderFeatureException
 
 try:
     from airflow.providers.google.leveldb.operators.leveldb import LevelDBOperator
@@ -73,5 +73,5 @@ with DAG(
 
 from tests_common.test_utils.system_tests import get_test_run  # noqa: E402
 
-# Needed to run the example DAG with pytest (see: tests/system/README.md#run_via_pytest)
+# Needed to run the example DAG with pytest (see: contributing-docs/testing/system_tests.rst)
 test_run = get_test_run(dag)

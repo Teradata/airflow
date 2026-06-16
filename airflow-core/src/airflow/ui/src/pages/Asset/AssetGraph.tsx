@@ -20,42 +20,57 @@ import { useToken } from "@chakra-ui/react";
 import { ReactFlow, Controls, Background, MiniMap, type Node as ReactFlowNode } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { useParams } from "react-router-dom";
+import { useLocalStorage } from "usehooks-ts";
 
 import type { AssetResponse } from "openapi/requests/types.gen";
+import type { Direction } from "src/components/Graph/DirectionDropdown";
 import { DownloadButton } from "src/components/Graph/DownloadButton";
 import { edgeTypes, nodeTypes } from "src/components/Graph/graphTypes";
 import type { CustomNodeProps } from "src/components/Graph/reactflowUtils";
 import { useGraphLayout } from "src/components/Graph/useGraphLayout";
+import { directionKey } from "src/constants/localStorage";
 import { useColorMode } from "src/context/colorMode";
 import { useDependencyGraph } from "src/queries/useDependencyGraph";
 import { getReactFlowThemeStyle } from "src/theme";
 
-export const AssetGraph = ({ asset }: { readonly asset?: AssetResponse }) => {
+export const AssetGraph = ({
+  asset,
+  dependencyType = "scheduling",
+}: {
+  readonly asset?: AssetResponse;
+  readonly dependencyType?: "data" | "scheduling";
+}) => {
   const { assetId } = useParams();
   const { colorMode = "light" } = useColorMode();
 
-  const { data = { edges: [], nodes: [] } } = useDependencyGraph(`asset:${assetId}`);
-
-  const { data: graphData } = useGraphLayout({
-    ...data,
-    direction: "RIGHT",
-    openGroupIds: [],
+  // Fetch graph data from backend - filtering is done server-side
+  const { data: graphData = { edges: [], nodes: [] } } = useDependencyGraph(`asset:${assetId}`, {
+    dependencyType,
   });
 
-  const nodes = graphData?.nodes.map((node) =>
-    node.id === `asset:${assetId}` ? { ...node, data: { ...node.data, isSelected: true } } : node,
-  );
+  const [direction] = useLocalStorage<Direction>(directionKey(assetId ?? ""), "RIGHT");
+
+  const { data: layoutData } = useGraphLayout({
+    ...graphData,
+    direction,
+    openGroupIds: [],
+  });
 
   const [selectedDarkColor, selectedLightColor] = useToken("colors", ["bg.muted", "bg.emphasized"]);
 
   const selectedColor = colorMode === "dark" ? selectedDarkColor : selectedLightColor;
 
-  const edges = (graphData?.edges ?? []).map((edge) => ({
+  const nodes = layoutData?.nodes.map((node) =>
+    node.id === `asset:${assetId}` ? { ...node, data: { ...node.data, isSelected: true } } : node,
+  );
+
+  const edges = (layoutData?.edges ?? []).map((edge) => ({
     ...edge,
     data: {
       ...edge.data,
       rest: {
         ...edge.data?.rest,
+        edgeType: dependencyType,
         isSelected: `asset:${asset?.id}` === edge.source || `asset:${asset?.id}` === edge.target,
       },
     },

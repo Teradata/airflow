@@ -436,7 +436,7 @@ def set_up(env_id, role_arn):
     if AIRFLOW_V_3_0_PLUS:
         from airflow.sdk import get_current_context
     else:
-        from airflow.providers.standard.operators.python import get_current_context
+        from airflow.operators.python import get_current_context  # type: ignore[attr-defined,no-redef]
 
     ti = get_current_context()["ti"]
     ti.xcom_push(key="docker_image", value=ecr_repository_uri)
@@ -537,7 +537,6 @@ with DAG(
     dag_id=DAG_ID,
     schedule="@once",
     start_date=datetime(2021, 1, 1),
-    tags=["example"],
     catchup=False,
 ) as dag:
     test_context = sys_test_context_task()
@@ -738,5 +737,5 @@ with DAG(
 
 from tests_common.test_utils.system_tests import get_test_run  # noqa: E402
 
-# Needed to run the example DAG with pytest (see: tests/system/README.md#run_via_pytest)
+# Needed to run the example DAG with pytest (see: contributing-docs/testing/system_tests.rst)
 test_run = get_test_run(dag)

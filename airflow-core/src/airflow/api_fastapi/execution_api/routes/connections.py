@@ -18,27 +18,33 @@
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 
 from airflow.api_fastapi.execution_api.datamodels.connection import ConnectionResponse
-from airflow.api_fastapi.execution_api.deps import JWTBearerDep
+from airflow.api_fastapi.execution_api.security import CurrentTIToken, get_team_name_dep
 from airflow.exceptions import AirflowNotFoundException
 from airflow.models.connection import Connection
 
 
 async def has_connection_access(
-    connection_id: str = Path(),
-    token=JWTBearerDep,
+    connection_id: Annotated[str, Path(min_length=1)],
+    token=CurrentTIToken,
 ) -> bool:
     """Check if the task has access to the connection."""
-    # TODO: Placeholder for actual implementation
-
     log.debug(
         "Checking access for task instance with key '%s' to connection '%s'",
         token.id,
         connection_id,
     )
+
+    # The current version of Airflow does not support true
+    # multi-tenancy yet (this is well-documented at
+    # https://airflow.apache.org/docs/apache-airflow/stable/security/security_model.html#future-multi-tenancy-isolation),
+    # so for now we always return 'True' here.
+    # When we introduce true multi-tenancy in the future
+    # this would be the place to do add a check.
     return True
 
 
@@ -57,10 +63,13 @@ log = logging.getLogger(__name__)
         status.HTTP_403_FORBIDDEN: {"description": "Task does not have access to the connection"},
     },
 )
-def get_connection(connection_id: str) -> ConnectionResponse:
+def get_connection(
+    connection_id: Annotated[str, Path(min_length=1)],
+    team_name: Annotated[str | None, Depends(get_team_name_dep)],
+) -> ConnectionResponse:
     """Get an Airflow connection."""
     try:
-        connection = Connection.get_connection_from_secrets(connection_id)
+        connection = Connection.get_connection_from_secrets(connection_id, team_name=team_name)
     except AirflowNotFoundException:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND,

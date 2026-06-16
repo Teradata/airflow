@@ -28,30 +28,32 @@
   "backfill_zero": "Nenhum backfill",
   "browse": {
     "auditLog": "Log de Auditoria",
+    "jobs": "Tarefas",
     "requiredActions": "Ações Necessárias",
     "xcoms": "XComs"
   },
+  "collapseAllExtra": "Recolher todos os extra json",
   "collapseDetailsPanel": "Recolher Painel de Detalhes",
   "createdAssetEvent_many": "Eventos de Asset Criados",
   "createdAssetEvent_one": "Evento de Asset Criado",
   "createdAssetEvent_other": "Eventos de Asset Criados",
   "createdAssetEvent_zero": "Nenhum evento de asset criado",
-  "dag_many": "DAGs",
-  "dag_one": "DAG",
-  "dag_other": "DAGs",
-  "dag_zero": "Nenhum DAG",
+  "dag_many": "Dags",
+  "dag_one": "Dag",
+  "dag_other": "Dags",
+  "dag_zero": "Nenhum Dag",
   "dagDetails": {
     "catchup": "Catchup",
-    "dagRunTimeout": "Tempo Limite da Execução do DAG",
+    "dagRunTimeout": "Tempo Limite da Execução do Dag",
     "defaultArgs": "Argumentos Padrão",
     "description": "Descrição",
-    "documentation": "Documentação do DAG",
+    "documentation": "Documentação do Dag",
     "fileLocation": "Local do Arquivo",
     "hasTaskConcurrencyLimits": "Tem Limite de Concorrência de Tarefas",
     "lastExpired": "Último Expirado",
     "lastParseDuration": "Duração do Último Parse",
     "lastParsed": "Último Parseado",
-    "latestDagVersion": "Última Versão do DAG",
+    "latestDagVersion": "Última Versão do Dag",
     "latestRun": "Última Execução",
     "maxActiveRuns": "Máximo de Execuções Ativas",
     "maxActiveTasks": "Máximo de Tarefas Ativas",
@@ -62,13 +64,20 @@
     "schedule": "Agendamento",
     "tags": "Etiquetas"
   },
-  "dagId": "ID do DAG",
+  "dagId": "ID do Dag",
   "dagRun": {
     "conf": "Conf",
-    "dagVersions": "Versão(s) do DAG",
+    "dagVersions": "Versão(s) do Dag",
     "dataIntervalEnd": "Fim do Intervalo de Dados",
     "dataIntervalStart": "Início do Intervalo de Dados",
+    "durationStats": {
+      "mean": "Média",
+      "mode": "Moda"
+    },
+    "expectedDuration": "Duração Esperada",
     "lastSchedulingDecision": "Última Decisão de Agendamento",
+    "mappedPartitionKey": "Chave de partição mapeada",
+    "partitionKey": "Chave de partição",
     "queuedAt": "Enfileirado Em",
     "runAfter": "Executar Depois",
     "runType": "Tipo de Execução",
@@ -76,14 +85,19 @@
     "triggeredBy": "Acionado por",
     "triggeringUser": "Nome do Usuário que Disparou"
   },
-  "dagRun_many": "Execuções do DAG",
-  "dagRun_one": "Execução do DAG",
-  "dagRun_other": "Execuções do DAG",
-  "dagRun_zero": "Nenhuma execução do DAG",
-  "dagRunId": "ID da Execução do DAG",
-  "dagWarnings": "Avisos/Erros do DAG",
+  "dagRun_many": "Execuções do Dag",
+  "dagRun_one": "Execução do Dag",
+  "dagRun_other": "Execuções do Dag",
+  "dagRun_zero": "Nenhuma execução do Dag",
+  "dagRunId": "ID da Execução do Dag",
+  "dagWarnings": "Avisos/Erros do Dag",
   "defaultToGraphView": "Padrão para visualização gráfica",
   "defaultToGridView": "Padrão para visualização em grade",
+  "delete": "Excluir",
+  "diff": "Diff",
+  "diffCompareWith": "Comparar com",
+  "diffExit": "Sair do Diff",
+  "diffSelectVersionToCompare": "Selecionar versão para comparar",
   "direction": "Direção",
   "docs": {
     "documentation": "Documentação",
@@ -96,11 +110,13 @@
     "tooltip": "Pressione {{hotkey}} para baixar os logs"
   },
   "duration": "Duração",
+  "edit": "Editar",
   "endDate": "Data Final",
   "error": {
     "back": "Voltar",
     "defaultMessage": "Ocorreu um erro inesperado",
     "home": "Início",
+    "invalidUrl": "Página não encontrada. Verifique o URL e tente novamente.",
     "notFound": "Página Não Encontrada",
     "title": "Erro"
   },
@@ -110,6 +126,7 @@
     "hotkey": "Pressione {{hotkey}} para expandir ou recolher",
     "tooltip": "Pressione {{hotkey}} para expandir ou recolher a secção"
   },
+  "expandAllExtra": "Expandir todos os extra json",
   "expression": {
     "all": "Todos",
     "and": "E",
@@ -120,28 +137,33 @@
   "filters": {
     "durationFrom": "Duração De",
     "durationTo": "Duração Até",
+    "endTime": "Hora de Fim",
     "logicalDateFrom": "Data Lógica De",
     "logicalDateTo": "Data Lógica Para",
     "runAfterFrom": "Executar Depois De",
-    "runAfterTo": "Executar Depois Para"
+    "runAfterTo": "Executar Depois Para",
+    "selectDateRange": "Selecionar intervalo de datas",
+    "startTime": "Hora de Início"
   },
   "logicalDate": "Data Lógica",
   "logout": "Sair",
   "logoutConfirmation": "Você está prestes a sair do aplicativo.",
   "mapIndex": "Índice do Mapa",
   "modal": {
+    "add": "Adicionar",
     "cancel": "Cancelar",
     "confirm": "Confirmar",
     "delete": {
       "button": "Excluir",
       "confirmation": "Tem certeza que deseja excluir {{resourceName}}? Esta ação não pode ser desfeita."
-    }
+    },
+    "save": "Guardar"
   },
   "nav": {
     "admin": "Administração",
     "assets": "Assets",
     "browse": "Navegar",
-    "dags": "DAGs",
+    "dags": "Dags",
     "docs": "Documentação",
     "home": "Início",
     "legacyFabViews": "Visualizações Legacy FAB",
@@ -151,22 +173,22 @@
   "noItemsFound": "Nenhum {{modelName}} encontrado",
   "note": {
     "add": "Adicionar uma nota",
-    "dagRun": "Nota da Execução do DAG",
+    "dagRun": "Nota da Execução do Dag",
     "label": "Nota",
     "placeholder": "Adicionar uma nota...",
     "taskInstance": "Nota da Instância de Tarefa"
   },
-  "pools": {
-    "deferred": "Deferido",
-    "open": "Aberto",
-    "pools_many": "pools",
-    "pools_one": "pool",
-    "pools_other": "pools",
-    "pools_zero": "nenhum pool",
-    "queued": "Enfileirado",
-    "running": "Executando",
-    "scheduled": "Agendado"
+  "partitionedDagRun_many": "Execuções de Dag Particionadas",
+  "partitionedDagRun_one": "Execução de Dag Particionada",
+  "partitionedDagRun_other": "Execuções de Dag Particionadas",
+  "partitionedDagRun_zero": "Nenhuma execução de dag particionada",
+  "partitionedDagRunDetail": {
+    "receivedAssetEvents": "Eventos de Asset recebidos"
   },
+  "pendingDagRun_many": "{{count}} Execuções de Dag Pendentes",
+  "pendingDagRun_one": "{{count}} Execução de Dag Pendente",
+  "pendingDagRun_other": "{{count}} Execuções de Dag Pendentes",
+  "pendingDagRun_zero": "Nenhuma execução de dag pendente",
   "reset": "Resetar",
   "runId": "ID da Execução",
   "runTypes": {
@@ -191,6 +213,7 @@
   },
   "selectLanguage": "Selecionar Idioma",
   "showDetailsPanel": "Mostrar Painel de Detalhes",
+  "signedInAs": "Sessão iniciada como",
   "source": {
     "hide": "Ocultar",
     "hotkey": "Pressione {{hotkey}} para ocultar/mostrar",
@@ -207,6 +230,7 @@
     "failed": "Falha",
     "no_status": "Sem Status",
     "none": "Sem Status",
+    "open": "Aberto",
     "planned": "Planejado",
     "queued": "Enfileirado",
     "removed": "Removido",
@@ -222,7 +246,7 @@
   "table": {
     "completedAt": "Concluído em",
     "createdAt": "Criado em",
-    "filterByTag": "Filtrar DAGs por tag",
+    "filterByTag": "Filtrar Dags por tag",
     "filterColumns": "Filtrar colunas da tabela",
     "filterReset_many": "Resetar filtros",
     "filterReset_one": "Resetar filtro",
@@ -248,10 +272,9 @@
   "task_one": "Tarefa",
   "task_other": "Tarefas",
   "task_zero": "Nenhuma tarefa",
-  "taskGroup": "Grupo de Tarefas",
   "taskId": "ID da Tarefa",
   "taskInstance": {
-    "dagVersion": "Versão do DAG",
+    "dagVersion": "Versão do Dag",
     "executor": "Executor",
     "executorConfig": "Configuração do Executor",
     "hostname": "Hostname",

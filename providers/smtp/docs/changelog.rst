@@ -27,6 +27,123 @@
 Changelog
 ---------
 
+3.0.1
+.....
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fix SMTP connection test for noop tuple response (#66406)``
+* ``Fix SMTP email callback to use email_conn_id (#65072)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Add explicit [tool.flit.sdist] sections to flit-based pyproject.tomls (#65861)``
+   * ``Providers wave 2026-04-21 (#65614)``
+   * ``Providers wave 2026-04-21``
+
+3.0.0
+.....
+
+Breaking changes
+~~~~~~~~~~~~~~~~
+
+The SMTP STARTTLS upgrade performed by ``SmtpHook.get_conn`` and ``SmtpHook.aget_conn`` now
+validates the SMTP server's certificate against the system's trusted CA bundle by default.
+Previously the ``starttls()`` call was made without an SSL context, so any certificate was
+accepted.
+
+Deployments that intentionally point ``SmtpHook`` at an SMTP server with a self-signed or
+otherwise non-validating certificate and need to preserve the previous behaviour must set the
+``ssl_context`` field in the SMTP connection extras to ``"none"``. Leaving the field unset (or
+setting it to ``"default"``) now applies ``ssl.create_default_context()`` to the STARTTLS
+upgrade as well as to the existing ``SMTP_SSL`` path.
+
+* ``Validate SMTP server certificate on STARTTLS upgrade (#65346)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+2.4.5
+.....
+
+Misc
+~~~~
+
+* ``Load hook metadata from YAML without importing Hook class (#63826)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+2.4.4
+.....
+
+Misc
+~~~~
+
+* ``Add Python 3.14 Support (#63520)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Add *.iml to .gitignore in all distributions (#63636)``
+
+2.4.3
+.....
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fix OAuth2 XOAUTH2 auth and EHLO after STARTTLS in SmtpHook (#62879)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Prepare documentation for next release of providers (2026-02-24) (#62495)``
+   * ``Add 'lifecycle' field to provider.yaml schema and all providers per AIP-95 (#62190)``
+   * ``[Part 3] Migrate connection UI metadata to YAML for more providers (#62165)``
+   * ``YAML first discovery for connection form metadata (#60410)``
+
+2.4.2
+.....
+
+Misc
+~~~~
+
+* ``New year means updated Copyright notices (#60344)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+2.4.1
+.....
+
+Misc
+~~~~
+
+* ``Add backcompat for exceptions in providers (#58727)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+2.4.0
+.....
+
+.. note::
+    This release of provider is only available for Airflow 2.11+ as explained in the
+    Apache Airflow providers support policy <https://github.com/apache/airflow/blob/main/PROVIDERS.rst#minimum-supported-version-of-airflow-for-community-managed-providers>_.
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Include all __init__ params in template_fields for consistency with other operators (#58278)``
+
+Misc
+~~~~
+
+* ``Bump minimum Airflow version in providers to Airflow 2.11.0 (#58612)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Updates to release process of providers (#58316)``
 
 2.3.2
 .....

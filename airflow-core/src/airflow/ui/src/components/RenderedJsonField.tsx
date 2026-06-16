@@ -17,35 +17,105 @@
  * under the License.
  */
 import { Flex, type FlexProps } from "@chakra-ui/react";
-import ReactJson, { type ReactJsonViewProps } from "react-json-view";
+import { useCallback, useEffect, useRef, useState } from "react";
 
+import Editor, { type OnMount } from "src/components/MonacoEditor";
 import { ClipboardRoot, ClipboardIconButton } from "src/components/ui";
-import { useColorMode } from "src/context/colorMode";
+import { useMonacoTheme } from "src/context/colorMode";
+
+const MAX_HEIGHT = 300;
+const MIN_HEIGHT = 40;
+
+type EditorInstance = Parameters<OnMount>[0];
 
 type Props = {
+  readonly collapsed?: boolean;
   readonly content: object;
   readonly enableClipboard?: boolean;
-  readonly jsonProps?: Omit<ReactJsonViewProps, "src">;
 } & FlexProps;
 
-const RenderedJsonField = ({ content, enableClipboard = true, jsonProps, ...rest }: Props) => {
-  const contentFormatted = JSON.stringify(content, undefined, 4);
-  const { colorMode } = useColorMode();
+const RenderedJsonField = ({ collapsed = false, content, enableClipboard = true, ...rest }: Props) => {
+  const contentFormatted = JSON.stringify(content, undefined, 2);
+  const { beforeMount, theme } = useMonacoTheme();
+  const lineCount = contentFormatted.split("\n").length;
+  const expandedHeight = Math.min(Math.max(lineCount * 19 + 10, MIN_HEIGHT), MAX_HEIGHT);
+  const [editorHeight, setEditorHeight] = useState(collapsed ? MIN_HEIGHT : expandedHeight);
+  const [isReady, setIsReady] = useState(!collapsed);
+  const editorRef = useRef<EditorInstance | null>(null);
+
+  const handleMount: OnMount = useCallback(
+    (editorInstance) => {
+      editorRef.current = editorInstance;
+
+      editorInstance.onDidContentSizeChange(() => {
+        const contentHeight = editorInstance.getContentHeight();
+
+        setEditorHeight(Math.min(Math.max(contentHeight, MIN_HEIGHT), MAX_HEIGHT));
+      });
+
+      if (collapsed) {
+        const action = editorInstance.getAction("editor.foldAll");
+
+        if (action) {
+          void action.run().then(() => {
+            setIsReady(true);
+          });
+        } else {
+          setIsReady(true);
+        }
+      }
+    },
+    [collapsed],
+  );
+
+  // Sync fold state when the `collapsed` prop changes after mount (e.g. via Expand/Collapse All).
+  // The initial fold is handled in `handleMount` to avoid the unfolded->folded flicker.
+  useEffect(() => {
+    const editor = editorRef.current;
+
+    if (editor === null || !isReady) {
+      return;
+    }
+    const action = editor.getAction(collapsed ? "editor.foldAll" : "editor.unfoldAll");
+
+    if (action) {
+      void action.run();
+    }
+  }, [collapsed, isReady]);
 
   return (
-    <Flex {...rest}>
-      <ReactJson
-        displayDataTypes={false}
-        enableClipboard={false}
-        iconStyle="triangle"
-        indentWidth={2}
-        name={false}
-        src={content}
-        style={{
-          backgroundColor: "inherit",
+    <Flex
+      flex={1}
+      gap={2}
+      minW={200}
+      // Hide the editor until it's ready to prevent a flickering effect when collapsing.
+      // The editor will be hidden until the fold action is completed (if collapsed) or immediately if not collapsed.
+      style={isReady ? undefined : { height: "0px", overflow: "hidden" }}
+      {...rest}
+    >
+      <Editor
+        beforeMount={beforeMount}
+        height={`${editorHeight}px`}
+        language="json"
+        onMount={handleMount}
+        options={{
+          automaticLayout: true,
+          contextmenu: false,
+          folding: true,
+          fontSize: 13,
+          glyphMargin: false,
+          lineDecorationsWidth: 0,
+          lineNumbers: "off",
+          minimap: { enabled: false },
+          overviewRulerLanes: 0,
+          readOnly: true,
+          renderLineHighlight: "none",
+          scrollbar: { vertical: "hidden", verticalScrollbarSize: 0 },
+          scrollBeyondLastLine: false,
+          wordWrap: "on",
         }}
-        theme={colorMode === "dark" ? "monokai" : "rjv-default"}
-        {...jsonProps}
+        theme={theme}
+        value={contentFormatted}
       />
       {enableClipboard ? (
         <ClipboardRoot value={contentFormatted}>

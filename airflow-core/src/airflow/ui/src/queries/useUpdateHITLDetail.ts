@@ -23,14 +23,19 @@ import { useTranslation } from "react-i18next";
 import {
   UseDagRunServiceGetDagRunKeyFn,
   useDagRunServiceGetDagRunsKey,
+  UseGanttServiceGetGanttDataKeyFn,
   useTaskInstanceServiceGetHitlDetailsKey,
   useTaskInstanceServiceGetHitlDetailKey,
+  useTaskInstanceServiceGetHitlDetailTryDetailKey,
   useTaskInstanceServiceUpdateHitlDetail,
   useTaskInstanceServiceGetTaskInstanceKey,
   useTaskInstanceServiceGetTaskInstancesKey,
 } from "openapi/queries";
 import { toaster } from "src/components/ui/Toaster";
+import { createErrorToaster } from "src/utils";
 import type { HITLResponseParams } from "src/utils/hitl";
+
+import { gridQueryKeys, tiPerAttemptQueryKeys } from "./gridViewQueryKeys";
 
 export const useUpdateHITLDetail = ({
   dagId,
@@ -52,11 +57,17 @@ export const useUpdateHITLDetail = ({
       [useDagRunServiceGetDagRunsKey],
       [useTaskInstanceServiceGetTaskInstancesKey, { dagId, dagRunId }],
       [useTaskInstanceServiceGetTaskInstanceKey, { dagId, dagRunId, mapIndex, taskId }],
-      [useTaskInstanceServiceGetHitlDetailsKey, { dagIdPattern: dagId, dagRunId }],
+      [useTaskInstanceServiceGetHitlDetailsKey, { dagIdPrefixPattern: dagId, dagRunId }],
       [useTaskInstanceServiceGetHitlDetailKey, { dagId, dagRunId }],
+      [useTaskInstanceServiceGetHitlDetailTryDetailKey, { dagId, dagRunId }],
+      UseGanttServiceGetGanttDataKeyFn({ dagId, runId: dagRunId }),
+      ...tiPerAttemptQueryKeys,
     ];
 
-    await Promise.all(queryKeys.map((key) => queryClient.invalidateQueries({ queryKey: key })));
+    await Promise.all([
+      ...queryKeys.map((key) => queryClient.invalidateQueries({ queryKey: key })),
+      ...gridQueryKeys(dagId).map((key) => queryClient.invalidateQueries({ queryKey: key })),
+    ]);
 
     toaster.create({
       title: translate("response.success", { taskId }),
@@ -64,12 +75,8 @@ export const useUpdateHITLDetail = ({
     });
   };
 
-  const onError = (_error: Error) => {
-    toaster.create({
-      description: _error.message,
-      title: translate("response.error"),
-      type: "error",
-    });
+  const onError = (apiError: unknown) => {
+    createErrorToaster(apiError, { titleKey: "hitl:response.error" }, translate);
   };
 
   const { isPending, mutate } = useTaskInstanceServiceUpdateHitlDetail({
@@ -78,15 +85,19 @@ export const useUpdateHITLDetail = ({
   });
 
   const updateHITLResponse = (updateHITLResponseRequestBody: HITLResponseParams) => {
+    const mapIndexValue = mapIndex ?? -1;
+
+    const requestBody = {
+      chosen_options: updateHITLResponseRequestBody.chosen_options ?? [],
+      params_input: updateHITLResponseRequestBody.params_input ?? {},
+    };
+
     try {
       mutate({
         dagId,
         dagRunId,
-        mapIndex: mapIndex ?? -1,
-        requestBody: {
-          chosen_options: updateHITLResponseRequestBody.chosen_options ?? [],
-          params_input: updateHITLResponseRequestBody.params_input ?? {},
-        },
+        mapIndex: mapIndexValue,
+        requestBody,
         taskId,
       });
     } catch (parseError) {

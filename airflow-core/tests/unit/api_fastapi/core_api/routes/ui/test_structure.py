@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import copy
+from unittest import mock
 
 import pendulum
 import pytest
@@ -41,6 +42,8 @@ pytestmark = pytest.mark.db_test
 DAG_ID = "dag_with_multiple_versions"
 DAG_ID_EXTERNAL_TRIGGER = "external_trigger"
 DAG_ID_RESOLVED_ASSET_ALIAS = "dag_with_resolved_asset_alias"
+DAG_ID_LINEAR_DEPTH = "linear_depth_dag"
+DAG_ID_NONLINEAR_DEPTH = "nonlinear_depth_dag"
 LATEST_VERSION_DAG_RESPONSE: dict = {
     "edges": [],
     "nodes": [
@@ -52,6 +55,7 @@ LATEST_VERSION_DAG_RESPONSE: dict = {
             "tooltip": None,
             "setup_teardown_type": None,
             "type": "task",
+            "team": None,
             "operator": "EmptyOperator",
             "asset_condition_type": None,
         },
@@ -63,6 +67,7 @@ LATEST_VERSION_DAG_RESPONSE: dict = {
             "tooltip": None,
             "setup_teardown_type": None,
             "type": "task",
+            "team": None,
             "operator": "EmptyOperator",
             "asset_condition_type": None,
         },
@@ -74,6 +79,7 @@ LATEST_VERSION_DAG_RESPONSE: dict = {
             "tooltip": None,
             "setup_teardown_type": None,
             "type": "task",
+            "team": None,
             "operator": "EmptyOperator",
             "asset_condition_type": None,
         },
@@ -182,6 +188,42 @@ def make_dags(dag_maker, session, time_machine, asset1: Asset, asset2: Asset, as
     session.commit()
     dag_maker.sync_dagbag_to_db()
 
+    # Linear DAG with 5 tasks for depth testing
+    with dag_maker(
+        dag_id=DAG_ID_LINEAR_DEPTH,
+        serialized=True,
+        session=session,
+        start_date=pendulum.DateTime(2023, 2, 1, 0, 0, 0, tzinfo=pendulum.UTC),
+    ):
+        task_a = EmptyOperator(task_id="task_a")
+        task_b = EmptyOperator(task_id="task_b")
+        task_c = EmptyOperator(task_id="task_c")
+        task_d = EmptyOperator(task_id="task_d")
+        task_e = EmptyOperator(task_id="task_e")
+        # Linear chain: task_a >> task_b >> task_c >> task_d >> task_e
+        task_a >> task_b >> task_c >> task_d >> task_e
+    dag_maker.sync_dagbag_to_db()
+
+    # Non-linear DAG for depth testing with branching and merging
+    with dag_maker(
+        dag_id=DAG_ID_NONLINEAR_DEPTH,
+        serialized=True,
+        session=session,
+        start_date=pendulum.DateTime(2023, 2, 1, 0, 0, 0, tzinfo=pendulum.UTC),
+    ):
+        start = EmptyOperator(task_id="start")
+        branch_a = EmptyOperator(task_id="branch_a")
+        branch_b = EmptyOperator(task_id="branch_b")
+        intermediate = EmptyOperator(task_id="intermediate")
+        merge = EmptyOperator(task_id="merge")
+        end = EmptyOperator(task_id="end")
+        # Non-linear structure
+        start >> [branch_a, branch_b]
+        branch_a >> intermediate >> merge
+        branch_b >> merge
+        merge >> end
+    dag_maker.sync_dagbag_to_db()
+
 
 def _fetch_asset_id(asset: Asset, session: Session) -> str:
     return str(
@@ -239,6 +281,7 @@ class TestStructureDataEndpoint:
                             "tooltip": None,
                             "setup_teardown_type": None,
                             "type": "task",
+                            "team": None,
                             "operator": "EmptyOperator",
                         },
                         {
@@ -250,6 +293,7 @@ class TestStructureDataEndpoint:
                             "tooltip": None,
                             "setup_teardown_type": None,
                             "type": "task",
+                            "team": None,
                             "operator": "ExternalTaskSensor",
                         },
                         {
@@ -261,11 +305,12 @@ class TestStructureDataEndpoint:
                             "tooltip": None,
                             "setup_teardown_type": None,
                             "type": "task",
+                            "team": None,
                             "operator": "EmptyOperator",
                         },
                     ],
                 },
-                3,
+                7,
             ),
             (
                 {
@@ -273,7 +318,7 @@ class TestStructureDataEndpoint:
                     "root": "unknown_task",
                 },
                 {"edges": [], "nodes": []},
-                3,
+                7,
             ),
             (
                 {
@@ -295,10 +340,11 @@ class TestStructureDataEndpoint:
                             "setup_teardown_type": None,
                             "tooltip": None,
                             "type": "task",
+                            "team": None,
                         },
                     ],
                 },
-                3,
+                7,
             ),
             (
                 {"dag_id": DAG_ID_EXTERNAL_TRIGGER, "external_dependencies": True},
@@ -322,6 +368,7 @@ class TestStructureDataEndpoint:
                             "tooltip": None,
                             "setup_teardown_type": None,
                             "type": "task",
+                            "team": None,
                             "operator": "TriggerDagRunOperator",
                         },
                         {
@@ -333,11 +380,12 @@ class TestStructureDataEndpoint:
                             "tooltip": None,
                             "setup_teardown_type": None,
                             "type": "trigger",
+                            "team": None,
                             "operator": None,
                         },
                     ],
                 },
-                10,
+                14,
             ),
         ],
     )
@@ -429,6 +477,7 @@ class TestStructureDataEndpoint:
                     "tooltip": None,
                     "setup_teardown_type": None,
                     "type": "task",
+                    "team": None,
                     "operator": "EmptyOperator",
                     "asset_condition_type": None,
                 },
@@ -440,6 +489,7 @@ class TestStructureDataEndpoint:
                     "tooltip": None,
                     "setup_teardown_type": None,
                     "type": "task",
+                    "team": None,
                     "operator": "ExternalTaskSensor",
                     "asset_condition_type": None,
                 },
@@ -451,6 +501,7 @@ class TestStructureDataEndpoint:
                     "tooltip": None,
                     "setup_teardown_type": None,
                     "type": "task",
+                    "team": None,
                     "operator": "EmptyOperator",
                     "asset_condition_type": None,
                 },
@@ -462,6 +513,7 @@ class TestStructureDataEndpoint:
                     "tooltip": None,
                     "setup_teardown_type": None,
                     "type": "asset",
+                    "team": None,
                     "operator": None,
                     "asset_condition_type": None,
                 },
@@ -473,6 +525,7 @@ class TestStructureDataEndpoint:
                     "tooltip": None,
                     "setup_teardown_type": None,
                     "type": "sensor",
+                    "team": None,
                     "operator": None,
                     "asset_condition_type": None,
                 },
@@ -484,6 +537,7 @@ class TestStructureDataEndpoint:
                     "tooltip": None,
                     "setup_teardown_type": None,
                     "type": "trigger",
+                    "team": None,
                     "operator": None,
                     "asset_condition_type": None,
                 },
@@ -495,6 +549,7 @@ class TestStructureDataEndpoint:
                     "tooltip": None,
                     "setup_teardown_type": None,
                     "type": "asset-condition",
+                    "team": None,
                     "operator": None,
                     "asset_condition_type": "and-gate",
                 },
@@ -506,6 +561,7 @@ class TestStructureDataEndpoint:
                     "tooltip": None,
                     "setup_teardown_type": None,
                     "type": "asset",
+                    "team": None,
                     "operator": None,
                     "asset_condition_type": None,
                 },
@@ -517,6 +573,7 @@ class TestStructureDataEndpoint:
                     "tooltip": None,
                     "setup_teardown_type": None,
                     "type": "asset",
+                    "team": None,
                     "operator": None,
                     "asset_condition_type": None,
                 },
@@ -528,13 +585,14 @@ class TestStructureDataEndpoint:
                     "tooltip": None,
                     "setup_teardown_type": None,
                     "type": "asset-alias",
+                    "team": None,
                     "operator": None,
                     "asset_condition_type": None,
                 },
             ],
         }
 
-        with assert_queries_count(10):
+        with assert_queries_count(14):
             response = test_client.get("/structure/structure_data", params=params)
         assert response.status_code == 200
         assert response.json() == expected
@@ -544,7 +602,7 @@ class TestStructureDataEndpoint:
         self, test_client, session
     ):
         resolved_asset = session.scalar(
-            session.query(AssetModel).filter_by(name="resolved_example_asset_alias")
+            select(AssetModel).where(AssetModel.name == "resolved_example_asset_alias")
         )
         params = {
             "dag_id": DAG_ID_RESOLVED_ASSET_ALIAS,
@@ -572,6 +630,7 @@ class TestStructureDataEndpoint:
                     "id": "task_1",
                     "label": "task_1",
                     "type": "task",
+                    "team": None,
                     "children": None,
                     "is_mapped": None,
                     "tooltip": None,
@@ -583,6 +642,7 @@ class TestStructureDataEndpoint:
                     "id": "task_2",
                     "label": "task_2",
                     "type": "task",
+                    "team": None,
                     "children": None,
                     "is_mapped": None,
                     "tooltip": None,
@@ -594,6 +654,7 @@ class TestStructureDataEndpoint:
                     "id": f"asset:{resolved_asset.id}",
                     "label": "resolved_example_asset_alias",
                     "type": "asset",
+                    "team": None,
                     "children": None,
                     "is_mapped": None,
                     "tooltip": None,
@@ -647,10 +708,53 @@ class TestStructureDataEndpoint:
         response = unauthorized_test_client.get("/structure/structure_data", params={"dag_id": DAG_ID})
         assert response.status_code == 403
 
+    @mock.patch(
+        "airflow.api_fastapi.auth.managers.base_auth_manager.BaseAuthManager.get_authorized_dag_ids",
+        return_value={DAG_ID_EXTERNAL_TRIGGER},
+    )
+    @pytest.mark.usefixtures("make_dags")
+    def test_external_deps_filters_unreadable_dags(self, _, test_client):
+        response = test_client.get(
+            "/structure/structure_data",
+            params={"dag_id": DAG_ID_EXTERNAL_TRIGGER, "external_dependencies": True},
+        )
+        assert response.status_code == 200
+        result = response.json()
+        node_ids = {node["id"] for node in result["nodes"]}
+        assert "trigger_dag_run_operator" in node_ids
+        assert not any(DAG_ID in nid for nid in node_ids if nid != "trigger_dag_run_operator")
+        edge_targets = {edge["target_id"] for edge in result["edges"]}
+        assert not any(DAG_ID in tid for tid in edge_targets)
+
     def test_should_return_404(self, test_client):
         response = test_client.get("/structure/structure_data", params={"dag_id": "not_existing"})
         assert response.status_code == 404
         assert response.json()["detail"] == "Dag with id not_existing was not found"
+
+    @pytest.mark.usefixtures("make_dags")
+    def test_should_return_400_on_malformed_asset_expression(self, test_client):
+        """A TypeError from get_upstream_assets surfaces as a 400 with a clear message.
+
+        The asset_expression ultimately comes from user-authored Dag code (via the Task SDK),
+        so a malformed expression is bad input that ended up persisted -- not a server fault.
+        Without the try/except wrap, the TypeError propagates uncaught and FastAPI returns a
+        generic ``{"detail": "Internal Server Error"}`` 500 body with no context about which
+        Dag triggered it. With the wrap, the response identifies the Dag and version, which
+        is what a caller needs to fix the upstream Dag definition.
+        """
+        with mock.patch(
+            "airflow.api_fastapi.core_api.routes.ui.structure.get_upstream_assets",
+            side_effect=TypeError("Unsupported type: dict_keys(['weird-op'])"),
+        ):
+            response = test_client.get(
+                "/structure/structure_data",
+                params={"dag_id": DAG_ID, "external_dependencies": True},
+            )
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "Malformed asset_expression" in detail
+        assert DAG_ID in detail
+        assert "Unsupported type" in detail
 
     def test_should_return_404_when_dag_version_not_found(self, test_client):
         response = test_client.get(
@@ -729,3 +833,75 @@ class TestStructureDataEndpoint:
         )
         assert mapped_in_group["is_mapped"] is True
         assert mapped_in_group["operator"] == "PythonOperator"
+
+    @pytest.mark.parametrize(
+        ("params", "expected_task_ids", "description"),
+        [
+            pytest.param(
+                {"dag_id": DAG_ID_LINEAR_DEPTH, "root": "task_a", "include_downstream": True, "depth": 1},
+                ["task_a", "task_b"],
+                "depth=1 downstream from task_a should return task_a and task_b only",
+                id="downstream_depth_1",
+            ),
+            pytest.param(
+                {"dag_id": DAG_ID_LINEAR_DEPTH, "root": "task_a", "include_downstream": True, "depth": 2},
+                ["task_a", "task_b", "task_c"],
+                "depth=2 downstream from task_a should return task_a, task_b, and task_c",
+                id="downstream_depth_2",
+            ),
+            pytest.param(
+                {"dag_id": DAG_ID_LINEAR_DEPTH, "root": "task_e", "include_upstream": True, "depth": 1},
+                ["task_d", "task_e"],
+                "depth=1 upstream from task_e should return task_e and task_d only",
+                id="upstream_depth_1",
+            ),
+            pytest.param(
+                {"dag_id": DAG_ID_LINEAR_DEPTH, "root": "task_e", "include_upstream": True, "depth": 2},
+                ["task_c", "task_d", "task_e"],
+                "depth=2 upstream from task_e should return task_e, task_d, and task_c",
+                id="upstream_depth_2",
+            ),
+            pytest.param(
+                {
+                    "dag_id": DAG_ID_LINEAR_DEPTH,
+                    "root": "task_c",
+                    "include_upstream": True,
+                    "include_downstream": True,
+                    "depth": 1,
+                },
+                ["task_b", "task_c", "task_d"],
+                "depth=1 both directions from task_c should return task_b, task_c, and task_d",
+                id="both_directions_depth_1",
+            ),
+            pytest.param(
+                {
+                    "dag_id": DAG_ID_NONLINEAR_DEPTH,
+                    "root": "start",
+                    "include_downstream": True,
+                    "depth": 1,
+                },
+                ["branch_a", "branch_b", "start"],
+                "depth=1 downstream from start in nonlinear DAG should return start and both branches",
+                id="nonlinear_downstream_depth_1",
+            ),
+            pytest.param(
+                {
+                    "dag_id": DAG_ID_NONLINEAR_DEPTH,
+                    "root": "merge",
+                    "include_upstream": True,
+                    "depth": 1,
+                },
+                ["branch_b", "intermediate", "merge"],
+                "depth=1 upstream from merge in nonlinear DAG should return merge, branch_b, and intermediate",
+                id="nonlinear_upstream_depth_1",
+            ),
+        ],
+    )
+    @pytest.mark.usefixtures("make_dags")
+    def test_structure_with_depth(self, test_client, params, expected_task_ids, description):
+        """Test that depth parameter limits the number of levels returned in various scenarios."""
+        response = test_client.get("/structure/structure_data", params=params)
+        assert response.status_code == 200
+        data = response.json()
+        task_ids = sorted([node["id"] for node in data["nodes"]])
+        assert task_ids == expected_task_ids, description

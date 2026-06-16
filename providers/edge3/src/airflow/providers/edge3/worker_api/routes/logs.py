@@ -21,20 +21,16 @@ from functools import cache
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
 
-from airflow.configuration import conf
+from fastapi import Body, Depends, status
+
+from airflow.api_fastapi.common.db.common import SessionDep  # noqa: TC001
+from airflow.api_fastapi.common.router import AirflowRouter
+from airflow.api_fastapi.core_api.openapi.exceptions import create_openapi_http_exception_doc
 from airflow.models.taskinstance import TaskInstance
-from airflow.models.taskinstancekey import TaskInstanceKey
+from airflow.providers.common.compat.sdk import TaskInstanceKey, conf
 from airflow.providers.edge3.models.edge_logs import EdgeLogsModel
 from airflow.providers.edge3.worker_api.auth import jwt_token_authorization_rest
 from airflow.providers.edge3.worker_api.datamodels import PushLogsBody, WorkerApiDocs
-from airflow.providers.edge3.worker_api.routes._v2_compat import (
-    AirflowRouter,
-    Body,
-    Depends,
-    SessionDep,
-    create_openapi_http_exception_doc,
-    status,
-)
 from airflow.utils.log.file_task_handler import FileTaskHandler
 from airflow.utils.session import NEW_SESSION, provide_session
 
@@ -43,7 +39,7 @@ logs_router = AirflowRouter(tags=["Logs"], prefix="/logs")
 
 @cache
 @provide_session
-def _logfile_path(task: TaskInstanceKey, session=NEW_SESSION) -> str:
+def _logfile_path(task: TaskInstanceKey, *, session=NEW_SESSION) -> str:
     """Elaborate the (relative) path and filename to expect from task execution."""
     ti = TaskInstance.get_task_instance(
         dag_id=task.dag_id,

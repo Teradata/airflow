@@ -30,6 +30,7 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 from google.api_core.gapic_v1.method import DEFAULT, _MethodDefault
+from google.cloud import pubsub_v1
 from google.cloud.pubsub_v1.types import (
     DeadLetterPolicy,
     Duration,
@@ -41,8 +42,7 @@ from google.cloud.pubsub_v1.types import (
     SchemaSettings,
 )
 
-from airflow.configuration import conf
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException, conf
 from airflow.providers.google.cloud.hooks.pubsub import PubSubHook
 from airflow.providers.google.cloud.links.pubsub import PubSubSubscriptionLink, PubSubTopicLink
 from airflow.providers.google.cloud.operators.cloud_base import GoogleCloudBaseOperator
@@ -57,6 +57,10 @@ if TYPE_CHECKING:
     from airflow.providers.openlineage.extractors import OperatorLineage
 
 
+class PubSubMessageTransformException(Exception):
+    """Raise when messages failed to convert pubsub received format."""
+
+
 class PubSubCreateTopicOperator(GoogleCloudBaseOperator):
     """
     Create a PubSub topic.
@@ -66,7 +70,7 @@ class PubSubCreateTopicOperator(GoogleCloudBaseOperator):
         :ref:`howto/operator:PubSubCreateTopicOperator`
 
     By default, if the topic already exists, this operator will
-    not cause the DAG to fail. ::
+    not cause the Dag to fail. ::
 
         with DAG("successful DAG") as dag:
             create_topic = PubSubCreateTopicOperator(project_id="my-project", topic="my_new_topic")
@@ -203,7 +207,7 @@ class PubSubCreateSubscriptionOperator(GoogleCloudBaseOperator):
     Subscription can be created in a different project from its topic.
 
     By default, if the subscription already exists, this operator will
-    not cause the DAG to fail. However, the topic must exist in the project. ::
+    not cause the Dag to fail. However, the topic must exist in the project. ::
 
         with DAG("successful DAG") as dag:
             create_subscription = PubSubCreateSubscriptionOperator(
@@ -284,7 +288,7 @@ class PubSubCreateSubscriptionOperator(GoogleCloudBaseOperator):
     :param dead_letter_policy: A policy that specifies the conditions for dead lettering
         messages in this subscription. If dead_letter_policy is not set, dead lettering is
         disabled.
-    :param retry_policy: A policy that specifies how Pub/Sub retries message delivery
+    :param message_retry_policy: A policy that specifies how Pub/Sub retries message delivery
         for this subscription. If not set, the default retry policy is applied. This
         generally implies that messages will be retried as soon as possible for healthy
         subscribers. RetryPolicy will be triggered on NACKs or acknowledgement deadline
@@ -333,7 +337,7 @@ class PubSubCreateSubscriptionOperator(GoogleCloudBaseOperator):
         expiration_policy: dict | ExpirationPolicy | None = None,
         filter_: str | None = None,
         dead_letter_policy: dict | DeadLetterPolicy | None = None,
-        retry_policy: dict | RetryPolicy | None = None,
+        message_retry_policy: dict | RetryPolicy | None = None,
         retry: Retry | _MethodDefault = DEFAULT,
         timeout: float | None = None,
         metadata: Sequence[tuple[str, str]] = (),
@@ -356,7 +360,7 @@ class PubSubCreateSubscriptionOperator(GoogleCloudBaseOperator):
         self.expiration_policy = expiration_policy
         self.filter_ = filter_
         self.dead_letter_policy = dead_letter_policy
-        self.retry_policy = retry_policy
+        self.message_retry_policy = message_retry_policy
         self.retry = retry
         self.timeout = timeout
         self.metadata = metadata
@@ -387,7 +391,7 @@ class PubSubCreateSubscriptionOperator(GoogleCloudBaseOperator):
             expiration_policy=self.expiration_policy,
             filter_=self.filter_,
             dead_letter_policy=self.dead_letter_policy,
-            retry_policy=self.retry_policy,
+            retry_policy=self.message_retry_policy,
             retry=self.retry,
             timeout=self.timeout,
             metadata=self.metadata,
@@ -432,7 +436,7 @@ class PubSubDeleteTopicOperator(GoogleCloudBaseOperator):
         :ref:`howto/operator:PubSubDeleteTopicOperator`
 
     By default, if the topic does not exist, this operator will
-    not cause the DAG to fail. ::
+    not cause the Dag to fail. ::
 
         with DAG("successful DAG") as dag:
             PubSubDeleteTopicOperator(project_id="my-project", topic="non_existing_topic")
@@ -680,6 +684,9 @@ class PubSubPublishMessageOperator(GoogleCloudBaseOperator):
         ordering_key in PubsubMessage will be delivered to the subscribers in the order
         in which they are received by the Pub/Sub system. Otherwise, they may be
         delivered in any order. Default is False.
+    :param enable_open_telemetry_tracing: If true, enables OpenTelemetry tracing for
+        published messages. This allows distributed tracing of messages as they flow
+        through Pub/Sub topics. Default is False.
     :param impersonation_chain: Optional service account to impersonate using short-term
         credentials, or chained list of accounts required to get the access_token
         of the last account in the list, which will be impersonated in the request.
@@ -695,6 +702,7 @@ class PubSubPublishMessageOperator(GoogleCloudBaseOperator):
         "topic",
         "messages",
         "enable_message_ordering",
+        "enable_open_telemetry_tracing",
         "impersonation_chain",
     )
     ui_color = "#0273d4"
@@ -707,6 +715,7 @@ class PubSubPublishMessageOperator(GoogleCloudBaseOperator):
         project_id: str = PROVIDE_PROJECT_ID,
         gcp_conn_id: str = "google_cloud_default",
         enable_message_ordering: bool = False,
+        enable_open_telemetry_tracing: bool = False,
         impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
@@ -716,6 +725,7 @@ class PubSubPublishMessageOperator(GoogleCloudBaseOperator):
         self.messages = messages
         self.gcp_conn_id = gcp_conn_id
         self.enable_message_ordering = enable_message_ordering
+        self.enable_open_telemetry_tracing = enable_open_telemetry_tracing
         self.impersonation_chain = impersonation_chain
 
     @cached_property
@@ -724,6 +734,7 @@ class PubSubPublishMessageOperator(GoogleCloudBaseOperator):
             gcp_conn_id=self.gcp_conn_id,
             impersonation_chain=self.impersonation_chain,
             enable_message_ordering=self.enable_message_ordering,
+            enable_open_telemetry_tracing=self.enable_open_telemetry_tracing,
         )
 
     def execute(self, context: Context) -> None:
@@ -865,11 +876,21 @@ class PubSubPullOperator(GoogleCloudBaseOperator):
         if event["status"] == "success":
             self.log.info("Sensor pulls messages: %s", event["message"])
             messages_callback = self.messages_callback or self._default_message_callback
-            _return_value = messages_callback(event["message"], context)
+            received_messages = self._convert_to_received_messages(event["message"])
+            _return_value = messages_callback(received_messages, context)
             return _return_value
 
         self.log.info("Sensor failed: %s", event["message"])
         raise AirflowException(event["message"])
+
+    def _convert_to_received_messages(self, messages: Any) -> list[ReceivedMessage]:
+        try:
+            received_messages = [pubsub_v1.types.ReceivedMessage(msg) for msg in messages]
+            return received_messages
+        except Exception as e:
+            raise PubSubMessageTransformException(
+                f"Error converting triggerer event message back to received message format: {e}"
+            ) from e
 
     def _default_message_callback(
         self,

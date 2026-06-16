@@ -22,14 +22,14 @@ import io
 import json
 import logging
 import os
-import shutil
 from argparse import ArgumentParser
-from contextlib import contextmanager, redirect_stdout
+from contextlib import redirect_stdout
 from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest import mock
 
 import pytest
+from sqlalchemy import delete
 
 from airflow._shared.timezones import timezone
 from airflow.cli import cli_parser
@@ -42,9 +42,9 @@ from airflow.models.dag_version import DagVersion
 from airflow.models.dagbag import DBDagBag
 from airflow.models.serialized_dag import SerializedDagModel
 from airflow.providers.standard.operators.bash import BashOperator
-from airflow.serialization.serialized_objects import LazyDeserializedDAG, SerializedDAG
+from airflow.serialization.serialized_objects import DagSerialization, LazyDeserializedDAG
 from airflow.utils.session import create_session
-from airflow.utils.state import State, TaskInstanceState
+from airflow.utils.state import State
 from airflow.utils.types import DagRunTriggeredByType, DagRunType
 
 from tests_common.test_utils.config import conf_vars
@@ -63,19 +63,10 @@ ROOT_FOLDER = Path(__file__).parents[4].resolve()
 
 def reset(dag_id):
     with create_session() as session:
-        tis = session.query(TaskInstance).filter_by(dag_id=dag_id)
-        tis.delete()
-        runs = session.query(DagRun).filter_by(dag_id=dag_id)
-        runs.delete()
-        session.query(DagModel).filter_by(dag_id=dag_id).delete()
-        session.query(SerializedDagModel).filter_by(dag_id=dag_id).delete()
-
-
-@contextmanager
-def move_back(old_path, new_path):
-    shutil.move(old_path, new_path)
-    yield
-    shutil.move(new_path, old_path)
+        session.execute(delete(TaskInstance).where(TaskInstance.dag_id == dag_id))
+        session.execute(delete(DagRun).where(DagRun.dag_id == dag_id))
+        session.execute(delete(DagModel).where(DagModel.dag_id == dag_id))
+        session.execute(delete(SerializedDagModel).where(SerializedDagModel.dag_id == dag_id))
 
 
 class TestCliTasks:
@@ -88,7 +79,8 @@ class TestCliTasks:
 
     @classmethod
     def setup_class(cls):
-        parse_and_sync_to_db(os.devnull, include_examples=True)
+        with conf_vars({("core", "load_examples"): "True"}):
+            parse_and_sync_to_db(os.devnull)
         cls.parser = cli_parser.get_parser()
         clear_db_runs()
 
@@ -242,27 +234,32 @@ class TestCliTasks:
         assert "foo=bar" in output
         assert "AIRFLOW_TEST_MODE=True" in output
 
-    @mock.patch("airflow.providers.standard.triggers.file.os.path.getmtime", return_value=0)
     @mock.patch(
         "airflow.providers.standard.triggers.file.glob", return_value=["/tmp/temporary_file_for_testing"]
     )
-    @mock.patch("airflow.providers.standard.triggers.file.os")
     @mock.patch("airflow.providers.standard.sensors.filesystem.FileSensor.poke", return_value=False)
-    def test_cli_test_with_deferrable_operator(self, mock_pock, mock_os, mock_glob, mock_getmtime, caplog):
-        mock_os.path.isfile.return_value = True
-        with caplog.at_level(level=logging.INFO):
-            task_command.task_test(
-                self.parser.parse_args(
-                    [
-                        "tasks",
-                        "test",
-                        "example_sensors",
-                        "wait_for_file_async",
-                        DEFAULT_DATE.isoformat(),
-                    ]
+    def test_cli_test_with_deferrable_operator(self, mock_poke, mock_glob, caplog):
+        mock_stat = mock.MagicMock()
+        mock_stat.st_mtime = 0
+        mock_path_instance = mock.MagicMock()
+        mock_path_instance.is_file = mock.AsyncMock(return_value=True)
+        mock_path_instance.stat = mock.AsyncMock(return_value=mock_stat)
+        mock_anyio_path = mock.MagicMock(return_value=mock_path_instance)
+
+        with mock.patch("airflow.providers.standard.triggers.file.anyio.Path", mock_anyio_path):
+            with caplog.at_level(level=logging.INFO):
+                task_command.task_test(
+                    self.parser.parse_args(
+                        [
+                            "tasks",
+                            "test",
+                            "example_sensors",
+                            "wait_for_file_async",
+                            DEFAULT_DATE.isoformat(),
+                        ]
+                    )
                 )
-            )
-            output = caplog.text
+                output = caplog.text
         assert "Found File /tmp/temporary_file_for_testing" in output
 
     def test_task_render(self):
@@ -278,6 +275,47 @@ class TestCliTasks:
 
         assert 'echo "2016-01-01"' in output
         assert 'echo "2016-01-08"' in output
+
+    @pytest.mark.db_test
+    @pytest.mark.usefixtures("testing_dag_bundle")
+    def test_task_render_handles_detached_dagrun(self, dag_maker, session):
+        """Test that task_render handles DagRun with unloaded consumed_asset_events relationship."""
+        from airflow.api_fastapi.execution_api.datamodels.taskinstance import DagRun as DagRunPydantic
+
+        with dag_maker(dag_id="test_detached", session=session):
+            pass
+
+        dr = dag_maker.create_dagrun()
+        session.commit()
+        # Detach: this would cause DetachedInstanceError before fix
+        session.expunge(dr)
+
+        # This should not raise DetachedInstanceError
+        pydantic_dr = DagRunPydantic.model_validate(dr)
+        assert pydantic_dr.consumed_asset_events == []
+        assert pydantic_dr.note is None
+
+        args = self.parser.parse_args(["tasks", "render", "tutorial", "templated", "2016-01-01"])
+
+        with redirect_stdout(io.StringIO()):
+            task_command.task_render(args)
+
+    @pytest.mark.db_test
+    def test_task_render_handles_expired_dagrun(self, dag_maker, session):
+        """Test that model_validate extracts state from an expired DagRun instance."""
+        from airflow.api_fastapi.execution_api.datamodels.taskinstance import DagRun as DagRunPydantic
+        from airflow.utils.state import DagRunState
+
+        with dag_maker(dag_id="test_expired", session=session):
+            pass
+
+        dr = dag_maker.create_dagrun(state=DagRunState.RUNNING)
+        session.commit()
+        # After commit, SQLAlchemy expires all attributes — _state is no longer in insp.dict
+        # but the instance is still attached, so direct access triggers a lazy reload.
+
+        pydantic_dr = DagRunPydantic.model_validate(dr)
+        assert pydantic_dr.state == DagRunState.RUNNING
 
     @pytest.mark.usefixtures("testing_dag_bundle")
     def test_mapped_task_render(self):
@@ -305,6 +343,71 @@ class TestCliTasks:
         assert "[2]" not in output
         assert "[3]" not in output
         assert "property: op_args" in output
+
+    @pytest.mark.usefixtures("testing_dag_bundle")
+    def test_mapped_task_render_out_of_range_map_index(self):
+        """Raise RuntimeError when map_index exceeds the parse-time mapped count."""
+        with pytest.raises(RuntimeError) as exc_info:
+            task_command.task_render(
+                self.parser.parse_args(
+                    [
+                        "tasks",
+                        "render",
+                        "test_mapped_classic",
+                        "consumer_literal",
+                        "2022-01-01",
+                        "--map-index",
+                        "5",
+                    ]
+                )
+            )
+        assert exc_info.value.args == (
+            "map_index 5 is out of range. Task 'consumer_literal' has 3 mapped instance(s) [0..2].",
+        )
+
+    @pytest.mark.usefixtures("testing_dag_bundle")
+    def test_mapped_task_render_boundary_map_index(self):
+        """Render should succeed for the last valid map_index (count - 1)."""
+        with redirect_stdout(io.StringIO()) as stdout:
+            task_command.task_render(
+                self.parser.parse_args(
+                    [
+                        "tasks",
+                        "render",
+                        "test_mapped_classic",
+                        "consumer_literal",
+                        "2022-01-01",
+                        "--map-index",
+                        "2",
+                    ]
+                )
+            )
+        output = stdout.getvalue()
+        assert "[3]" in output
+        assert "property: op_args" in output
+
+    @pytest.mark.usefixtures("testing_dag_bundle")
+    def test_mapped_task_render_dynamic_skips_validation(self):
+        """Dynamic (XCom-based) mapping should skip map_index validation."""
+        # consumer depends on XCom from make_arg_lists, so parse-time count
+        # is not available. Validation should be skipped (NotFullyPopulated).
+        # The render may fail for other reasons, but not with our
+        # "out of range" RuntimeError.
+        with pytest.raises(Exception, match=".*") as exc_info:
+            task_command.task_render(
+                self.parser.parse_args(
+                    [
+                        "tasks",
+                        "render",
+                        "test_mapped_classic",
+                        "consumer",
+                        "2022-01-01",
+                        "--map-index",
+                        "999",
+                    ]
+                )
+            )
+        assert "out of range" not in str(exc_info.value)
 
     def test_mapped_task_render_with_template(self, dag_maker):
         """
@@ -349,13 +452,26 @@ class TestCliTasks:
         )
 
     def test_task_states_for_dag_run(self):
-        dag2 = DagBag().dags["example_python_operator"]
+        # Build a minimal DAG inline rather than importing one from the
+        # standard provider's example_dags. The test only asserts CLI
+        # behaviour around a known dag_id/task_id pair, so reproducing the
+        # name and a single task is enough and keeps this core test
+        # decoupled from the standard provider's example DAGs.
+        from airflow.sdk import DAG
+
+        with DAG(
+            dag_id="example_python_operator",
+            schedule=None,
+            start_date=timezone.datetime(2021, 1, 1),
+        ) as dag2:
+            BashOperator(task_id="print_the_context", bash_command="echo hello")
+
         lazy_deserialized_dag2 = LazyDeserializedDAG.from_dag(dag2)
 
         SerializedDagModel.write_dag(lazy_deserialized_dag2, bundle_name="testing")
 
+        dag2 = DagSerialization.from_dict(lazy_deserialized_dag2.data)
         task2 = dag2.get_task(task_id="print_the_context")
-        dag2 = SerializedDAG.from_dict(lazy_deserialized_dag2.data)
 
         default_date2 = timezone.datetime(2016, 1, 9)
         dag2.clear()
@@ -430,12 +546,6 @@ class TestCliTasks:
         output = stdout.getvalue()
         # no indentation before property name
         assert "# property: bash_command" in output.split("\n")
-
-
-def _set_state_and_try_num(ti, session):
-    ti.state = TaskInstanceState.QUEUED
-    ti.try_number += 1
-    session.commit()
 
 
 class TestLogsfromTaskRunCommand:

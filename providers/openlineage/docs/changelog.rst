@@ -26,6 +26,310 @@
 Changelog
 ---------
 
+2.18.0
+......
+
+Features
+~~~~~~~~
+
+* ``Openlineage: Read HTTP API key auth from Airflow connection (#66342)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Self-heal ProcessPoolExecutor on BrokenProcessPool (#67400)``
+
+Misc
+~~~~
+
+* ``Remove further findings from positional session check (#67712)``
+
+Doc-only
+~~~~~~~~
+
+* ``Correct README.rst common compat version reference inconsistency (#67554)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``tests: Add new options to test operator (#67195)``
+
+
+2.17.0
+......
+
+Features
+~~~~~~~~
+
+* ``Add standardized SQL check representation for listeners (#66849)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Cache connections in OpenLineage SQL hook lineage (#64843)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Isolate openlineage extractor test from hook lineage collector pollution (#67057)``
+   * ``Enable ruff B008 (function-call-in-default-argument) and fix violations (#66979)``
+
+2.16.0
+......
+
+Features
+~~~~~~~~
+
+* ``Remove the DualStatsManager and the Stats interfaces (#63932)``
+* ``Add public emit_dataset_lineage and emit_query_lineage API for OpenLineage provider (#65788)``
+* ``Add dynamically emitted asset events to OpenLineage (#65727)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Prevent stats from breaking executor initializer (#66351)``
+* ``Manual state change should not use fork-execute model on scheduler (#65677)``
+
+Misc
+~~~~
+
+* ``Cleanup integration names for consistency (#66287)``
+* ``Bump Ol client dependency to 1.46 (#66145)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Add explicit [tool.flit.sdist] sections to flit-based pyproject.tomls (#65861)``
+   * ``Providers wave 2026-04-21 (#65614)``
+   * ``Providers wave 2026-04-21``
+
+2.15.0
+......
+
+Features
+~~~~~~~~
+
+* ``Add rendered map_index template to OpenLineage events (#65529)``
+
+Bug Fixes
+~~~~~~~~~
+* ``Fix DetachedInstanceError in OpenLineage listener by using safe_getattr (#65579)``
+
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+2.14.0
+......
+
+Features
+~~~~~~~~
+
+* ``Add OpenLineage parent and transport info injection to 'EmrServerlessStartJobOperator' (#64807)``
+* ``Add OpenLineage parent info injection to GlueJobOperator (#64513)``
+* ``Add dagrun partition info to OpenLineage events (#64897)``
+* ``Fix OpenLineage SQL utils emitting duplicate datasets for tables in multiple schemas (#64622)``
+
+Misc
+~~~~
+
+* ``Fix example dags documentation links (#65071)``
+
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Prepare providers release 2026-04-07 (#64864)``
+
+2.13.0
+......
+
+Features
+~~~~~~~~
+
+* ``Add Deadline Alerts to OL events (#63352)``
+
+Misc
+~~~~
+
+* ``Add Python 3.14 Support (#63520)``
+
+Doc-only
+~~~~~~~~
+
+* ``Clarify HLL in extraction precedence (#63723)``
+* ``Fix typos and spelling (#64139)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Add *.iml to .gitignore in all distributions (#63636)``
+
+2.12.0
+......
+
+Features
+~~~~~~~~
+
+* ``Add DagRun note to OL events (#62347)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+
+2.11.0
+......
+
+Features
+~~~~~~~~
+
+* ``feat: Consume SQL hook lineage in OpenLineage (#62171)``
+* ``feat: Add Dag Edge Labels to OpenLineage event (#62018)``
+* ``feat: Add OpenLineage support for HITL operators (#61867)``
+
+Misc
+~~~~
+
+* ``Bump min sqlalchemy version to 1.4.54 (#62299)``
+* ``Route providers to consume Stats from common compat provider (#61812)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Revert "feat: Add DagRun note to OL events (#62221)" (#62238)``
+   * ``feat: Add DagRun note to OL events (#62221)``
+   * ``Add 'lifecycle' field to provider.yaml schema and all providers per AIP-95 (#62190)``
+   * ``Informatica provider (#57610)``
+
+2.10.2
+......
+
+Misc
+~~~~
+
+* ``Move lineage from airflow core to task sdk (#61157)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Use SQLA's native Uuid/JSON instead of sqlalchemy-utils' types (#61532)``
+   * ``Make code compatible with setuptools v82++ (#61651)``
+
+2.10.1
+......
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Add AirflowRunFacet to AF3 tasks with externally changed state (#60583)``
+
+Misc
+~~~~
+
+* ``Add SQLAlchemy to the dev‑dependency group in providers (#60472)``
+* ``Option to disable exporting of legacy metric names (#53722)``
+
+Doc-only
+~~~~~~~~
+
+* ``Refresh OpenLineage provider docs (#60462)``
+* ``Add OpenLineage known limitations to troubleshooting page (#61072)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Move lineage from airflow core to task sdk (#60968)``
+   * ``Revert "Move lineage from airflow core to task sdk (#60968)" (#61151)``
+
+2.10.0
+......
+
+Features
+~~~~~~~~
+
+* ``Add on_task_instance_skipped support to OpenLineage listener (#60409)``
+* ``Add JobDependenciesRunFacet to asset-triggered OL DAG events (#59521)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fixing static checks in OL adapter on main (#60042)``
+
+Misc
+~~~~
+
+* ``Consume ''AirflowOptionalProviderFeatureException'' from compat sdk in providers (#60335)``
+* ``New year means updated Copyright notices (#60344)``
+* ``Move listeners module to shared library for client server separation (#59883)``
+* ``Move over plugins_manager to a shared library (#59956)``
+* ``Allow providers to consume AirflowConfigException from compat sdk (#60044)``
+* ``Source openlineage provider to use airflow.sdk.configuration.conf (#60026)``
+* ``Make sqlalchemy optional dependency for openlineage provider (#59921)``
+
+Doc-only
+~~~~~~~~
+
+* ``Improve changelog descriptions in PR #59947 (latest versions only) (#60036)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Assorted SQLA2/Mypy fixes (#60094)``
+   * ``Do not dynamically add dag_doc.md when parsing the test (#59933)``
+
+2.9.2
+.....
+
+Misc
+~~~~
+
+* ``Move MappedOperator to serialization (#59628)``
+* ``Split SerializedBaseOperator from serde logic (#59627)``
+* ``Minor cleanups removing SDK references from Core (#59491)``
+* ``Refactor deprecated SQLA query openlineage provider (#59448)``
+* ``Bump OpenLineage client dependency to 1.41 (#59321)``
+* ``Extract shared "module_loading" distribution (#59139)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``TaskInstance unused method cleanup (#59835)``
+   * ``Split SDK and serialized asset classes (#58993)``
+
+2.9.1
+.....
+
+Misc
+~~~~
+
+* ``chore: Adjust AirflowRunFacet and docs after moving OL methods to BaseSQLOperator (#58903)``
+* ``Move the traces and metrics code under a common observability package (#56187)``
+* ``Implement timetables in SDK (#58669)``
+* ``Remove global from openlineage provider (#58868)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``tests: Add OL system tests for deferrable TriggerDagRunOperator (#58933)``
+
+2.9.0
+.....
+
+.. note::
+    This release of provider is only available for Airflow 2.11+ as explained in the
+    Apache Airflow providers support policy <https://github.com/apache/airflow/blob/main/PROVIDERS.rst#minimum-supported-version-of-airflow-for-community-managed-providers>_.
+
+Features
+~~~~~~~~
+
+* ``Add few attrs from external_task sensor to OpenLineage events (#58719)``
+* ``Auto-inject OpenLineage parent info into TriggerDagRunOperator conf (#58672)``
+
+Bug Fixes
+~~~~~~~~~
+
+* ``Fix OL root macros should reflect root from dagrun conf parent (#58428)``
+* ``Fix root in parentRunFacet is not always sourced from dag run (#58407)``
+
+Misc
+~~~~
+
+* ``Bump minimum Airflow version in providers to Airflow 2.11.0 (#58612)``
+* ``Bump min version of openlineage libraries to 1.40.0 to fix compat issues (#58302)``
+
+.. Below changes are excluded from the changelog. Move them to
+   appropriate section above if needed. Do not delete the lines(!):
+   * ``Updates to release process of providers (#58316)``
+   * ``Remove global from lineage.hook (#58285)``
+
 2.8.0
 .....
 
@@ -428,14 +732,14 @@ Misc
 
 * ``Adding uuid6 as a dependency for openlineage (#46653)``
 * ``Remove AirflowContextDeprecationWarning as all context should be clean for Airflow 3 (#46601)``
-* ``Remove Airflow 3 Deprecation Warning dependency in OTel Provoder (#46600)``
+* ``Remove Airflow 3 Deprecation Warning dependency in OTel Provider (#46600)``
 * ``AIP-72: Move Secrets Masker to task SDK (#46375)``
 * ``Add run_after column to DagRun model (#45732)``
 * ``Remove old lineage stuff (#45260)``
 * ``Start porting mapped task to SDK (#45627)``
 * ``chore: Update docstring for DatabaseInfo in OpenLineage provider (#45638)``
 * ``Remove classes from 'typing_compat' that can be imported directly (#45589)``
-* ``udpated 404 hyperlink to gcstogcsoperator (#45311)``
+* ``updated 404 hyperlink to gcstogcsoperator (#45311)``
 * ``pass error for on_task_instance_failed in task sdk (#46941)``
 
 .. Below changes are excluded from the changelog. Move them to

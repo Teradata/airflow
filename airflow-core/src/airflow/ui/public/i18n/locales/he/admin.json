@@ -3,6 +3,7 @@
     "description": "תיאור",
     "key": "מפתח",
     "name": "שם",
+    "team": "צוות",
     "value": "ערך"
   },
   "config": {
@@ -52,6 +53,12 @@
     "searchPlaceholder": "חפש חיבורים",
     "test": "בדוק חיבור",
     "testDisabled": "אפשרות זו אינה זמינה. פנו למנהל המערכת להפעלתה",
+    "testError": {
+      "title": "בדיקת החיבור נכשלה"
+    },
+    "testSuccess": {
+      "title": "בדיקת החיבור הצליחה"
+    },
     "typeMeta": {
       "error": "נכשל באחזור מטא סוג חיבור",
       "standardFields": {
@@ -77,6 +84,23 @@
   "formActions": {
     "save": "שמור"
   },
+  "jobs": {
+    "columns": {
+      "executorClass": "מחלקת מְבצע",
+      "hostname": "שם מארח",
+      "id": "מזהה",
+      "jobType": "סוג עבודה",
+      "latestHeartbeat": "אות חיים אחרון",
+      "unixname": "שם Unix"
+    },
+    "filters": {
+      "allStates": "כל המצבים",
+      "allTypes": "כל הסוגים",
+      "dagProcessorJob": "DagProcessorJob",
+      "schedulerJob": "SchedulerJob",
+      "triggererJob": "TriggererJob"
+    }
+  },
   "plugins": {
     "columns": {
       "source": "מקור"
@@ -100,7 +124,8 @@
       "includeDeferred": "כלול משימות מושהות",
       "nameMaxLength": "השם יכול לכלול 256 תווים לכל היותר",
       "nameRequired": "נדרש שם",
-      "slots": "מקומות שמורים"
+      "slots": "קיבולת",
+      "slotsHelperText": "השתמש ב-1- כדי להגדיר קיבולת בלתי מוגבלת."
     },
     "noPoolsFound": "לא נמצאו מאגרי משאבים",
     "pool_one": "מאגר משאבים",

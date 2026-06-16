@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 from googleapiclient.discovery import build
 
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.common.hooks.base_google import GoogleBaseHook
 
 if TYPE_CHECKING:
@@ -70,7 +70,13 @@ class GoogleCalendarHook(GoogleBaseHook):
         """
         if not self._conn:
             http_authorized = self._authorize()
-            self._conn = build("calendar", self.api_version, http=http_authorized, cache_discovery=False)
+            self._conn = build(
+                "calendar",
+                self.api_version,
+                http=http_authorized,
+                cache_discovery=False,
+                client_options=self.get_client_options(),
+            )
 
         return self._conn
 

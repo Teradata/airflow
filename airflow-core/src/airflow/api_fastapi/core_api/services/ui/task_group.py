@@ -24,14 +24,13 @@ from functools import cache
 from operator import methodcaller
 
 from airflow.configuration import conf
-from airflow.models.mappedoperator import MappedOperator, is_mapped
-from airflow.sdk import TaskGroup
-from airflow.serialization.serialized_objects import SerializedBaseOperator
+from airflow.serialization.definitions.baseoperator import SerializedBaseOperator
+from airflow.serialization.definitions.mappedoperator import SerializedMappedOperator, is_mapped
 
 
 @cache
 def get_task_group_children_getter() -> Callable:
-    """Get the Task Group Children Getter for the DAG."""
+    """Get the Task Group Children Getter for the Dag."""
     sort_order = conf.get("api", "grid_view_sorting_order")
     if sort_order == "topological":
         return methodcaller("topological_sort")
@@ -40,7 +39,7 @@ def get_task_group_children_getter() -> Callable:
 
 def task_group_to_dict(task_item_or_group, parent_group_is_mapped=False):
     """Create a nested dict representation of this TaskGroup and its children used to construct the Graph."""
-    if isinstance(task := task_item_or_group, (SerializedBaseOperator, MappedOperator)):
+    if isinstance(task := task_item_or_group, (SerializedBaseOperator, SerializedMappedOperator)):
         # we explicitly want the short task ID here, not the full doted notation if in a group
         task_display_name = task.task_display_name if task.task_display_name != task.task_id else task.label
         node_operator = {
@@ -57,7 +56,7 @@ def task_group_to_dict(task_item_or_group, parent_group_is_mapped=False):
             node_operator["is_mapped"] = True
         return node_operator
 
-    task_group: TaskGroup = task_item_or_group
+    task_group = task_item_or_group
     mapped = is_mapped(task_group)
     children = [
         task_group_to_dict(child, parent_group_is_mapped=parent_group_is_mapped or mapped)
@@ -72,7 +71,7 @@ def task_group_to_dict(task_item_or_group, parent_group_is_mapped=False):
         # This is the join node used to reduce the number of edges between two TaskGroup.
         children.append({"id": task_group.downstream_join_id, "label": "", "type": "join"})
 
-    return {
+    node = {
         "id": task_group.group_id,
         "label": task_group.group_display_name or task_group.label,
         "tooltip": task_group.tooltip,
@@ -80,11 +79,12 @@ def task_group_to_dict(task_item_or_group, parent_group_is_mapped=False):
         "children": children,
         "type": "task",
     }
+    return node
 
 
 def task_group_to_dict_grid(task_item_or_group, parent_group_is_mapped=False):
     """Create a nested dict representation of this TaskGroup and its children used to construct the Grid."""
-    if isinstance(task := task_item_or_group, (MappedOperator, SerializedBaseOperator)):
+    if isinstance(task := task_item_or_group, (SerializedMappedOperator, SerializedBaseOperator)):
         mapped = None
         if parent_group_is_mapped or is_mapped(task):
             mapped = True
@@ -95,15 +95,16 @@ def task_group_to_dict_grid(task_item_or_group, parent_group_is_mapped=False):
             setup_teardown_type = "teardown"
         # we explicitly want the short task ID here, not the full doted notation if in a group
         task_display_name = task.task_display_name if task.task_display_name != task.task_id else task.label
-        return {
+        node = {
             "id": task.task_id,
             "label": task_display_name,
             "is_mapped": mapped,
             "children": None,
             "setup_teardown_type": setup_teardown_type,
         }
+        return node
 
-    task_group: TaskGroup = task_item_or_group
+    task_group = task_item_or_group
     task_group_sort = get_task_group_children_getter()
     mapped = is_mapped(task_group)
     children = [
@@ -111,9 +112,12 @@ def task_group_to_dict_grid(task_item_or_group, parent_group_is_mapped=False):
         for x in task_group_sort(task_group)
     ]
 
-    return {
+    node = {
         "id": task_group.group_id,
         "label": task_group.group_display_name or task_group.label,
         "is_mapped": mapped or None,
         "children": children or None,
     }
+    if task_group.doc_md is not None:
+        node["doc_md"] = task_group.doc_md
+    return node

@@ -31,12 +31,12 @@ Using the Operator
 ------------------
 
 There are three ways to instantiate this operator. In the first way, you can take the JSON payload that you typically use
-to call the ``api/2.1/jobs/create`` endpoint and pass it directly to our ``DatabricksCreateJobsOperator`` through the
+to call the ``api/2.2/jobs/create`` endpoint and pass it directly to our ``DatabricksCreateJobsOperator`` through the
 ``json`` parameter.  With this approach you get full control over the underlying payload to Jobs REST API, including
 execution of Databricks jobs with multiple tasks, but it's harder to detect errors because of the lack of the type checking.
 
 The second way to accomplish the same thing is to use the named parameters of the ``DatabricksCreateJobsOperator`` directly. Note that there is exactly
-one named parameter for each top level parameter in the ``api/2.1/jobs/create`` endpoint.
+one named parameter for each top level parameter in the ``api/2.2/jobs/create`` endpoint.
 
 The third way is to use both the json parameter **AND** the named parameters. They will be merged
 together. If there are conflicts during the merge, the named parameters will take precedence and
@@ -56,6 +56,41 @@ Currently the named parameters that ``DatabricksCreateJobsOperator`` supports ar
   - ``max_concurrent_runs``
   - ``git_source``
   - ``access_control_list``
+
+
+Forwarding Airflow Dag params as Databricks job parameters
+----------------------------------------------------------
+
+The Databricks ``api/2.2/jobs/create`` endpoint accepts a top-level ``parameters`` field
+that defines `job-level parameters
+<https://docs.databricks.com/api/workspace/jobs/create#parameters>`_ — a list of objects
+with a ``name`` (the parameter name) and a ``default`` (its default value), for example
+``[{"name": "env", "default": "prod"}]``.
+
+If ``parameters`` is not set in ``json`` and the operator's ``params`` dict is non-empty,
+each key/value pair in ``params`` is converted into one such ``{"name": key, "default":
+value}`` entry, so that Airflow Dag params can be forwarded as Databricks job parameters
+without hardcoding the API shape in ``json``. If ``json`` already contains ``parameters``,
+it is left untouched.
+
+.. code-block:: python
+
+  # Airflow Dag params (key/value pairs)
+  params = {"env": "prod", "batch_size": "100"}
+
+  create_job = DatabricksCreateJobsOperator(
+      task_id="create_job",
+      json={"name": "my-job", "tasks": [...]},
+      params=params,
+  )
+
+  # The Databricks job created/reset by the operator will have:
+  #   parameters=[
+  #       {"name": "env",        "default": "prod"},
+  #       {"name": "batch_size", "default": "100"},
+  #   ]
+  # i.e. each "<key>: <value>" in params becomes one
+  # {"name": "<key>", "default": "<value>"} entry in the job definition.
 
 
 Examples

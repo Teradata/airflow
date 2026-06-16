@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import re
 from functools import cached_property
 from typing import Any
 
@@ -36,6 +37,8 @@ from airflow.providers.yandex.utils.fields import get_field_from_extras
 from airflow.providers.yandex.utils.user_agent import provider_user_agent
 from airflow.secrets import BaseSecretsBackend
 from airflow.utils.log.logging_mixin import LoggingMixin
+
+TEAM_SEP_MULTIPLIER = 2
 
 
 class LockboxSecretBackend(BaseSecretsBackend, LoggingMixin):
@@ -145,11 +148,12 @@ class LockboxSecretBackend(BaseSecretsBackend, LoggingMixin):
         self.sep = sep
         self.endpoint = endpoint
 
-    def get_conn_value(self, conn_id: str) -> str | None:
+    def get_conn_value(self, conn_id: str, team_name: str | None = None) -> str | None:
         """
         Retrieve from Secrets Backend a string value representing the Connection object.
 
         :param conn_id: Connection ID
+        :param team_name: Team name associated to the task trying to access the connection (if any)
         :return: Connection Value
         """
         if self.connections_prefix is None:
@@ -158,19 +162,26 @@ class LockboxSecretBackend(BaseSecretsBackend, LoggingMixin):
         if conn_id == self.yc_connection_id:
             return None
 
-        return self._get_secret_value(self.connections_prefix, conn_id)
+        if self._is_team_specific_accessed_as_global(conn_id, team_name):
+            return None
 
-    def get_variable(self, key: str) -> str | None:
+        return self._get_secret_value(self.connections_prefix, conn_id, team_name=team_name)
+
+    def get_variable(self, key: str, team_name: str | None = None) -> str | None:
         """
         Return value for Airflow Variable.
 
         :param key: Variable Key
+        :param team_name: Team name associated to the task trying to access the variable (if any)
         :return: Variable Value
         """
         if self.variables_prefix is None:
             return None
 
-        return self._get_secret_value(self.variables_prefix, key)
+        if self._is_team_specific_accessed_as_global(key, team_name):
+            return None
+
+        return self._get_secret_value(self.variables_prefix, key, team_name=team_name)
 
     def get_config(self, key: str) -> str | None:
         """
@@ -241,12 +252,23 @@ class LockboxSecretBackend(BaseSecretsBackend, LoggingMixin):
             return key
         return f"{prefix}{self.sep}{key}"
 
-    def _get_secret_value(self, prefix: str, key: str) -> str | None:
+    def _build_team_secret_name(self, prefix: str, team_name: str, key: str) -> str:
+        team_prefix = self._build_secret_name(prefix, team_name)
+        return f"{team_prefix}{self.sep * TEAM_SEP_MULTIPLIER}{key}"
+
+    def _is_team_specific_accessed_as_global(self, secret_id: str, team_name: str | None = None) -> bool:
+        team_sep = re.escape(self.sep * TEAM_SEP_MULTIPLIER)
+        return team_name is None and bool(re.fullmatch(rf"[^{re.escape(self.sep)}]+{team_sep}.+", secret_id))
+
+    def _get_secret_value(self, prefix: str, key: str, team_name: str | None = None) -> str | None:
+        secrets = self._get_secrets()
         secret: secret_pb.Secret | None = None
-        for s in self._get_secrets():
-            if s.name == self._build_secret_name(prefix=prefix, key=key):
-                secret = s
-                break
+        if team_name:
+            secret = self._find_secret(secrets, prefix, self._build_team_secret_name("", team_name, key))
+
+        if not secret:
+            secret = self._find_secret(secrets, prefix, key)
+
         if not secret:
             return None
 
@@ -256,6 +278,12 @@ class LockboxSecretBackend(BaseSecretsBackend, LoggingMixin):
         if len(entries) == 0:
             return None
         return sorted(entries.values())[0]
+
+    def _find_secret(self, secrets: list[secret_pb.Secret], prefix: str, key: str) -> secret_pb.Secret | None:
+        for s in secrets:
+            if s.name == self._build_secret_name(prefix=prefix, key=key):
+                return s
+        return None
 
     def _get_secrets(self) -> list[secret_pb.Secret]:
         # generate client if not exists, to load folder_id from connections

@@ -24,9 +24,6 @@ from fastapi import FastAPI
 
 from airflow.api_fastapi.auth.tokens import JWTValidator
 from airflow.api_fastapi.execution_api.app import lifespan
-from airflow.api_fastapi.execution_api.deps import JWTRefresherDep, JWTReissuer
-
-from tests_common.test_utils.config import conf_vars
 
 
 @pytest.fixture
@@ -54,18 +51,17 @@ def test_expiring_token_is_reissued(
     auth = AsyncMock(spec=JWTValidator)
     auth.avalidated_claims.return_value = {
         "sub": "edb09971-4e0e-4221-ad3f-800852d38085",
+        "iat": moment,
         "exp": moment + validity,
     }
-
-    with conf_vars({("execution_api", "jwt_expiration_time"): str(validity)}):
-        exec_app.dependency_overrides[JWTRefresherDep.dependency] = JWTReissuer()
 
     time_machine.move_to(moment + age, tick=False)
 
     # Inject our fake JWTValidator object. Can be over-ridden by tests if they want
     lifespan.registry.register_value(JWTValidator, auth)
     # In order to test this we need any endpoint to hit. The easiest one to use is variable get
-    response = client.get("/execution/variables/key1")
+
+    response = client.get("/execution/variables/key1", headers={"Authorization": "Bearer dummy"})
 
     if expect_refreshed_token:
         assert "Refreshed-API-Token" in response.headers

@@ -124,7 +124,9 @@ class CronMixin:
 
         This is only for testing purposes and should not be relied on otherwise.
         """
-        if not isinstance(other, type(self)):
+        from airflow.serialization.encoders import coerce_to_core_timetable
+
+        if not isinstance(other := coerce_to_core_timetable(other), type(self)):
             return NotImplemented
         return self._expression == other._expression and self._timezone == other._timezone
 
@@ -140,6 +142,16 @@ class CronMixin:
             croniter(self._expression)
         except (CroniterBadCronError, CroniterBadDateError) as e:
             raise AirflowTimetableInvalid(str(e))
+
+    def resolve_day_bound(self, day: datetime.date) -> DateTime:
+        """
+        Return the UTC instant of *day*'s local midnight in this timetable's timezone.
+
+        Overrides the base default (midnight UTC) so day-bound comparisons are
+        evaluated in the timetable's local timezone rather than at the raw UTC
+        instant.
+        """
+        return convert_to_utc(make_aware(datetime.datetime(day.year, day.month, day.day), self._timezone))
 
     def _get_next(self, current: DateTime) -> DateTime:
         """Get the first schedule after specified time, with DST fixed."""

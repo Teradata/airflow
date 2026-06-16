@@ -256,5 +256,122 @@ class TestS3ToSFTPOperator:
         conn.delete_bucket(Bucket=self.s3_bucket)
         assert not s3_hook.check_for_bucket(self.s3_bucket)
 
+    @mock_aws
+    @conf_vars({("core", "enable_xcom_pickling"): "True"})
+    def test_s3_to_sftp_operator_sftp_remote_host(self):
+        """Test that sftp_remote_host overrides the connection host when provided."""
+        s3_hook = S3Hook(aws_conn_id=None)
+        test_remote_file_content = (
+            "This is remote file content for sftp_remote_host test \n which is also multiline "
+            "another line here \n this is last line. EOF"
+        )
+
+        # Test for creation of s3 bucket
+        conn = boto3.client("s3")
+        conn.create_bucket(Bucket=self.s3_bucket)
+        assert s3_hook.check_for_bucket(self.s3_bucket)
+
+        with open(LOCAL_FILE_PATH, "w") as file:
+            file.write(test_remote_file_content)
+        s3_hook.load_file(LOCAL_FILE_PATH, self.s3_key, bucket_name=BUCKET)
+
+        # Check if object was created in s3
+        objects_in_dest_bucket = conn.list_objects(Bucket=self.s3_bucket, Prefix=self.s3_key)
+        assert len(objects_in_dest_bucket["Contents"]) == 1
+        assert objects_in_dest_bucket["Contents"][0]["Key"] == self.s3_key
+
+        # Execute with sftp_remote_host overriding the connection host to the same localhost
+        run_task = S3ToSFTPOperator(
+            s3_bucket=BUCKET,
+            s3_key=S3_KEY,
+            sftp_path=SFTP_PATH,
+            sftp_conn_id=SFTP_CONN_ID,
+            sftp_remote_host="localhost",
+            task_id=TASK_ID + "_remote_host",
+            dag=self.dag,
+        )
+        assert run_task is not None
+
+        run_task.execute(None)
+
+        # Check that the file is created remotely with correct content
+        check_file_task = SSHOperator(
+            task_id="test_check_file_remote_host",
+            ssh_hook=self.hook,
+            command=f"cat {self.sftp_path}",
+            do_xcom_push=True,
+            dag=self.dag,
+        )
+        assert check_file_task is not None
+        result = check_file_task.execute(None)
+        assert result.strip() == test_remote_file_content.encode("utf-8")
+
+        # Clean up after finishing with test
+        conn.delete_object(Bucket=self.s3_bucket, Key=self.s3_key)
+        conn.delete_bucket(Bucket=self.s3_bucket)
+        assert not s3_hook.check_for_bucket(self.s3_bucket)
+
     def teardown_method(self):
         self.delete_remote_resource()
+
+
+class TestS3ToSFTPOperatorInit:
+    """Unit tests for S3ToSFTPOperator.__init__ that do not require an SSH server."""
+
+    @pytest.mark.parametrize(
+        ("s3_filenames", "sftp_filenames"),
+        [
+            (None, None),
+            ("*", None),
+            ("prefix_", "renamed_"),
+            (["a.csv", "b.csv"], ["x.csv", "y.csv"]),
+        ],
+    )
+    def test_multi_file_params(self, s3_filenames, sftp_filenames):
+        """s3_filenames and sftp_filenames are stored correctly."""
+        op = S3ToSFTPOperator(
+            task_id="test_multi",
+            s3_bucket=BUCKET,
+            s3_key=S3_KEY,
+            sftp_path=SFTP_PATH,
+            sftp_conn_id=SFTP_CONN_ID,
+            s3_filenames=s3_filenames,
+            sftp_filenames=sftp_filenames,
+        )
+        assert op.s3_filenames == s3_filenames
+        assert op.sftp_filenames == sftp_filenames
+
+    def test_fail_on_file_not_exist_default(self):
+        """fail_on_file_not_exist defaults to True."""
+        op = S3ToSFTPOperator(
+            task_id="test_fail_default",
+            s3_bucket=BUCKET,
+            s3_key=S3_KEY,
+            sftp_path=SFTP_PATH,
+            sftp_conn_id=SFTP_CONN_ID,
+        )
+        assert op.fail_on_file_not_exist is True
+
+    @pytest.mark.parametrize("fail_on_file_not_exist", [True, False])
+    def test_fail_on_file_not_exist_skip(self, fail_on_file_not_exist):
+        """When key is missing: raise FileNotFoundError if True, skip if False."""
+        from unittest.mock import MagicMock, patch
+
+        op = S3ToSFTPOperator(
+            task_id="test_skip",
+            s3_bucket=BUCKET,
+            s3_key=S3_KEY,
+            sftp_path=SFTP_PATH,
+            sftp_conn_id=SFTP_CONN_ID,
+            fail_on_file_not_exist=fail_on_file_not_exist,
+        )
+        mock_s3_hook = MagicMock()
+        mock_s3_hook.check_for_key.return_value = False
+
+        if fail_on_file_not_exist:
+            with pytest.raises(FileNotFoundError):
+                op._download_from_s3(MagicMock(), mock_s3_hook, S3_KEY, SFTP_PATH)
+        else:
+            with patch.object(op.log, "info") as mock_log:
+                op._download_from_s3(MagicMock(), mock_s3_hook, S3_KEY, SFTP_PATH)
+            mock_log.assert_called_once()

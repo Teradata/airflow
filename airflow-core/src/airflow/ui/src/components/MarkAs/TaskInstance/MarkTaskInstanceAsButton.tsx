@@ -16,16 +16,16 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { Box, useDisclosure } from "@chakra-ui/react";
+import { Box, HStack, useDisclosure } from "@chakra-ui/react";
 import { useState } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { useTranslation } from "react-i18next";
-import { MdArrowDropDown } from "react-icons/md";
+import { FiX } from "react-icons/fi";
+import { LuCheck } from "react-icons/lu";
 
 import type { TaskInstanceResponse, TaskInstanceState } from "openapi/requests/types.gen";
 import { StateBadge } from "src/components/StateBadge";
-import { Menu, Tooltip } from "src/components/ui";
-import ActionButton from "src/components/ui/ActionButton";
+import { IconButton, Menu, Tooltip } from "src/components/ui";
 
 import { allowedStates } from "../utils";
 import MarkTaskInstanceAsDialog from "./MarkTaskInstanceAsDialog";
@@ -33,10 +33,9 @@ import MarkTaskInstanceAsDialog from "./MarkTaskInstanceAsDialog";
 type Props = {
   readonly isHotkeyEnabled?: boolean;
   readonly taskInstance: TaskInstanceResponse;
-  readonly withText?: boolean;
 };
 
-const MarkTaskInstanceAsButton = ({ isHotkeyEnabled = false, taskInstance, withText = true }: Props) => {
+const MarkTaskInstanceAsButton = ({ isHotkeyEnabled = false, taskInstance }: Props) => {
   const { onClose, onOpen, open } = useDisclosure();
   const { t: translate } = useTranslation();
 
@@ -48,7 +47,7 @@ const MarkTaskInstanceAsButton = ({ isHotkeyEnabled = false, taskInstance, withT
       setState("failed");
       onOpen();
     },
-    { enabled: isHotkeyEnabled && taskInstance.state !== "failed" },
+    { enabled: isHotkeyEnabled },
   );
 
   useHotkeys(
@@ -57,22 +56,24 @@ const MarkTaskInstanceAsButton = ({ isHotkeyEnabled = false, taskInstance, withT
       setState("success");
       onOpen();
     },
-    { enabled: isHotkeyEnabled && taskInstance.state !== "success" },
+    { enabled: isHotkeyEnabled },
   );
+
+  const label = translate("dags:runAndTaskActions.markAs.button", {
+    type: translate("taskInstance_one"),
+  });
 
   return (
     <Box>
-      <Menu.Root positioning={{ gutter: 0, placement: "bottom" }}>
+      <Menu.Root positioning={{ gutter: 0, placement: "bottom" }} tooltipLabel={label}>
         <Menu.Trigger asChild>
-          <ActionButton
-            actionName={translate("dags:runAndTaskActions.markAs.button", {
-              type: translate("taskInstance_one"),
-            })}
-            flexDirection="row-reverse"
-            icon={<MdArrowDropDown />}
-            text={translate("dags:runAndTaskActions.markAs.button", { type: translate("taskInstance_one") })}
-            withText={withText}
-          />
+          <IconButton aria-label={label}>
+            <HStack gap={1} mx={1}>
+              <LuCheck />
+              <span>/</span>
+              <FiX />
+            </HStack>
+          </IconButton>
         </Menu.Trigger>
         <Menu.Content>
           {allowedStates.map((menuState) => {
@@ -84,19 +85,17 @@ const MarkTaskInstanceAsButton = ({ isHotkeyEnabled = false, taskInstance, withT
               <Tooltip
                 closeDelay={100}
                 content={content}
-                disabled={!isHotkeyEnabled || taskInstance.state === menuState}
+                disabled={!isHotkeyEnabled}
                 key={menuState}
                 openDelay={100}
               >
+                {/* Not disabled when state matches: re-applying lets users also flip upstream/downstream tasks */}
                 <Menu.Item
                   asChild
-                  disabled={taskInstance.state === menuState}
                   key={menuState}
                   onClick={() => {
-                    if (taskInstance.state !== menuState) {
-                      setState(menuState);
-                      onOpen();
-                    }
+                    setState(menuState);
+                    onOpen();
                   }}
                   value={menuState}
                 >
@@ -110,9 +109,7 @@ const MarkTaskInstanceAsButton = ({ isHotkeyEnabled = false, taskInstance, withT
         </Menu.Content>
       </Menu.Root>
 
-      {open ? (
-        <MarkTaskInstanceAsDialog onClose={onClose} open={open} state={state} taskInstance={taskInstance} />
-      ) : undefined}
+      <MarkTaskInstanceAsDialog onClose={onClose} open={open} state={state} taskInstance={taskInstance} />
     </Box>
   );
 };

@@ -20,6 +20,7 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of contents**
 
+- [Collect ambiguities during the release (for a follow-up doc PR)](#collect-ambiguities-during-the-release-for-a-follow-up-doc-pr)
 - [Perform review of security issues that are marked for the release](#perform-review-of-security-issues-that-are-marked-for-the-release)
 - [Prepare the Apache Airflow Helm Chart Release Candidate](#prepare-the-apache-airflow-helm-chart-release-candidate)
   - [Pre-requisites](#pre-requisites)
@@ -37,7 +38,8 @@
   - [Licence check](#licence-check)
   - [Signature check](#signature-check)
   - [SHA512 sum check](#sha512-sum-check)
-- [Verify release candidates by Contributors](#verify-release-candidates-by-contributors)
+- [Verify the release candidates by Contributors](#verify-the-release-candidates-by-contributors)
+  - [End-to-end verification with Breeze and KinD](#end-to-end-verification-with-breeze-and-kind)
 - [Publish the final release](#publish-the-final-release)
   - [Summarize the voting for the release](#summarize-the-voting-for-the-release)
   - [Publish release to SVN](#publish-release-to-svn)
@@ -57,11 +59,28 @@
   - [Announce about the release in social media](#announce-about-the-release-in-social-media)
   - [Bump chart version in Chart.yaml](#bump-chart-version-in-chartyaml)
   - [Remove old releases](#remove-old-releases)
+- [Additional processes](#additional-processes)
+  - [Fixing released documentation](#fixing-released-documentation)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
 You can find the prerequisites to release Apache Airflow in [README.md](README.md). This document
 details the steps for releasing Helm Chart.
+
+# Collect ambiguities during the release (for a follow-up doc PR)
+
+These instructions are imperfect. Every release uncovers at least one command
+that has drifted, one step that is under-documented, or one automation that
+silently did the wrong thing. As you run through this document, jot down any
+such observations in a scratch file kept **outside** the repo (anywhere that
+is not tracked by git — a note in your home directory, a scratchpad, a
+gist). Once the release has landed, turn those notes into a follow-up PR
+against this document.
+
+Keeping the scratch file out of the repo avoids accidentally committing
+release-manager notes along with the release-prep PR, and makes it obvious
+that the notes are input to the next doc PR rather than something to keep
+around long-term.
 
 # Perform review of security issues that are marked for the release
 
@@ -156,7 +175,8 @@ Once the release notes have been built, run the script to generate the changelog
 ./dev/chart/build_changelog_annotations.py
 ```
 
-Verify the output looks right (only entries from this release), then put them in `Chart.yaml`, for example:
+Verify the output looks right (only entries from this release), then put them below `artifacthub.io/changes` in `Chart.yaml`,
+replace previous change logs if a new release, append if another RC. Should look like for example:
 
 ```yaml
 annotations:
@@ -184,7 +204,7 @@ The minimum version of Kubernetes should be updated according to
 https://github.com/apache/airflow/blob/main/README.md#requirements in two places:
 
 * [../../helm-chart/README.md](../chart/README.md)
-* [../docs/helm-chart/index.rst](../docs/helm-chart/index.rst)
+* [../chart/docs/index.rst](../chart/docs/index.rst)
 
 
 ## Build RC artifacts
@@ -195,18 +215,29 @@ the same between voted release candidate and final release.
 Because of this the version in the built artifacts that will become the
 official Apache releases must not include the rcN suffix.
 
-Make sure you have `apache` remote set up pointing to the apache git repo.
+Make sure you have the `upstream` remote set up pointing to the apache git repo
+(per the standard convention `upstream` → `apache/airflow`, `origin` → your fork —
+see
+[`contributing-docs/10_working_with_git.rst`](../contributing-docs/10_working_with_git.rst#git-remote-naming-conventions)).
 If needed, add it with:
 
 ```shell
-git remote add apache git@github.com:apache/airflow.git
-git fetch apache
+git remote add upstream git@github.com:apache/airflow.git
+git fetch upstream
 ```
 
 - We currently release Helm Chart from `main` branch:
 
+For releasing 1.2x.0
+
 ```shell
-git checkout apache/main
+git checkout apache/chart/v1-2x-test
+```
+
+For releasing 2.x.x and onwards
+
+```shell
+git checkout upstream/main
 ```
 
 - Clean the checkout: (note that this step will also clean any IDE settings you might have so better to
@@ -217,20 +248,54 @@ git clean -fxd
 rm -rf dist/*
 ```
 
+- Verify your GPG signing key is ready.
+
+  Before you spend 10+ minutes building artifacts only to discover that signing
+  fails, run these checks once:
+
+  ```shell
+  # 1. The apache.org key has a secret signing subkey available locally.
+  gpg --list-secret-keys apache.org
+
+  # 2. Signing actually works (exits 0, writes a .asc, verifies cleanly).
+  echo test > /tmp/sign-check && \
+      gpg --yes --armor --local-user apache.org \
+          --output /tmp/sign-check.asc --detach-sig /tmp/sign-check && \
+      gpg --verify /tmp/sign-check.asc /tmp/sign-check && \
+      rm -f /tmp/sign-check /tmp/sign-check.asc && \
+      echo "GPG signing OK"
+
+  # 3. The fingerprint of your signing (sub)key appears in the Airflow KEYS file.
+  #    Without this, PMC verifiers cannot validate the release.
+  FINGERPRINT=$(gpg --list-keys --with-colons apache.org | awk -F: '/^fpr:/ {print $10; exit}')
+  curl -fsS https://dist.apache.org/repos/dist/release/airflow/KEYS | \
+      grep -q "${FINGERPRINT}" && echo "Key ${FINGERPRINT} is in KEYS" || \
+      echo "MISSING: add your key to KEYS before releasing"
+  ```
+
+  If any of these fail, fix them before the build step. For first-time release
+  managers, adding your key to the `KEYS` file is a separate PR against
+  `https://dist.apache.org/repos/dist/release/airflow/` (SVN).
+
+  `sign.sh` defaults to `SIGN_WITH=apache.org`. If your `apache.org` uid resolves
+  to multiple keys (rare), set `SIGN_WITH` explicitly to the fingerprint of the
+  key you want to use.
+
 - Generate the source tarball:
 
 ```shell
-breeze release-management prepare-helm-chart-tarball --version ${VERSION} --version-suffix ${VERSION_SUFFIX}
+breeze release-management prepare-helm-chart-tarball --version ${VERSION}
 ```
+
+Note: The version suffix is only used for the RC tag and tag message. The version in the tarball is without the suffix, so the tarball can be released as-is when the vote passes.
 
 - Generate the binary Helm Chart release:
 
 ```shell
-breeze release-management prepare-helm-chart-package --sign-email jedcunningham@apache.org --version-suffix ${VERSION_SUFFIX}
+VERSION_SUFFIX= breeze release-management prepare-helm-chart-package --sign-email jedcunningham@apache.org
 ```
 
-Note: The `--version-suffix` parameter is optional but recommended for RC releases to ensure proper documentation
-links generation. When specified, it will generate staging documentation links instead of production ones.
+Note: we temporarily unset VERSION_SUFFIX when preparing the package, as we do not want it set and the flag defaults to the env var
 
 Warning: you need the `helm gpg` plugin to sign the chart (instructions to install it above)
 
@@ -254,10 +319,12 @@ popd
 
   ```shell
   # First clone the repo
-  svn checkout https://dist.apache.org/repos/dist/dev/airflow airflow-dev
+  cd ${AIRFLOW_REPO_ROOT}/..
+  [ -d asf-dist ] || svn checkout --depth=immediates https://dist.apache.org/repos/dist asf-dist
+  svn update --set-depth=infinity asf-dist/dev/airflow
 
   # Create new folder for the release
-  cd airflow-dev/helm-chart
+  cd asf-dist/dev/airflow/helm-chart
   svn mkdir ${VERSION}${VERSION_SUFFIX}
 
   # Move the artifacts to svn folder
@@ -296,7 +363,7 @@ popd
 
   ```shell
   cd ${AIRFLOW_REPO_ROOT}
-  git push apache tag helm-chart/${VERSION}${VERSION_SUFFIX}
+  git push upstream tag helm-chart/${VERSION}${VERSION_SUFFIX}
   ```
 
 ## Publish rc documentation
@@ -309,31 +376,17 @@ you need to run several workflows to publish the documentation. More details abo
 [Docs README](../docs/README.md) showing the architecture and workflows including manual workflows for
 emergency cases.
 
-There are two steps to publish the documentation:
 
-1. Publish the documentation to the `staging` S3 bucket.
+You should use the `breeze` command to publish the documentation.
+The command does the following:
 
-The release manager publishes the documentation using GitHub Actions workflow
-[Publish Docs to S3](https://github.com/apache/airflow/actions/workflows/publish-docs-to-s3.yml).
+1. Triggers [Publish Docs to S3](https://github.com/apache/airflow/actions/workflows/publish-docs-to-s3.yml).
+2. Triggers workflow in apache/airflow-site to refresh
+3. Triggers S3 to GitHub Sync
 
-You can specify the RC tag to use to build the docs and 'helm-chart' passed as packages to be built.
-
-The release manager publishes the documentation using GitHub Actions workflow
-[Publish Docs to S3](https://github.com/apache/airflow/actions/workflows/publish-docs-to-s3.yml). By
-default `auto` selection should publish to the `staging` bucket - based on
-the tag you use - pre-release tags go to staging. But you can also override it and specify the destination
-manually to be `live` or `staging`.
-
-After that step, the provider documentation should be available under the https://airflow.staged.apache.org
-(same as in the helm chart documentation).
-
-2. Invalidate Fastly cache for the documentation.
-
-In order to do it, you need to run the [Build docs](https://github.com/apache/airflow-site/actions/workflows/build.yml)
-workflow in `airflow-site` repository. Make sure to use `staging` branch.
-
-After that workflow completes, the new version should be available in the drop-down list and stable links
-should be updated and Fastly cache should be invalidated.
+```shell script
+breeze workflow-run publish-docs --ref helm-chart/${VERSION}${VERSION_SUFFIX} --site-env staging helm-chart
+```
 
 ## Prepare issue for testing status of rc
 
@@ -350,7 +403,7 @@ Content is generated with:
 
 ```shell
 breeze release-management generate-issue-content-helm-chart \
---previous-release helm-chart/<PREVIOUS_RELEASE> --current-release helm-chart/${VERSION}${VERSION_SUFFIX}
+--previous-release helm-chart/${PREVIOUS_VERSION_WITH_SUFFIX} --current-release helm-chart/${VERSION}${VERSION_SUFFIX}
 ```
 
 Copy the URL of the issue.
@@ -368,7 +421,11 @@ EOF
 ```
 
 ```shell
-export VOTE_END_TIME=$(date --utc -d "now + 72 hours + 10 minutes" +'%Y-%m-%d %H:%M')
+if [ "$OS" = "Darwin" ]; then  # MacOS (BSD date)
+  export VOTE_END_TIME=$(date -u -v "+${VOTE_DURATION_IN_HOURS}H" -v "+10M" +'%Y-%m-%d %H:%M')
+else  # Linux
+  export VOTE_END_TIME=$(date --utc -d "now + $VOTE_DURATION_IN_HOURS hours + 10 minutes" +'%Y-%m-%d %H:%M')
+fi
 export TIME_DATE_URL="to?iso=$(date --utc -d "now + 72 hours + 10 minutes" +'%Y%m%dT%H%M')&p0=136&font=cursive"
 ```
 
@@ -402,6 +459,8 @@ gpg:                using RSA key E1A1E984F55B8F280BD9CBA20BB7163892A2E48E
 gpg: Good signature from "Jed Cunningham <jedcunningham@apache.org>" [ultimate]
 plugin: Chart SHA verified. sha256:b33eac716e0416a18af89fb4fa1043fcfcf24f9f903cda3912729815213525df
 
+The documentation is available at https://airflow.staged.apache.org/docs/helm-chart/${VERSION}/index.html.
+
 The vote will be open for at least 72 hours ($VOTE_END_TIME UTC) or until the necessary number of votes is reached.
 
 https://www.timeanddate.com/countdown/$TIME_DATE_URL
@@ -415,19 +474,26 @@ Please vote accordingly:
 Only votes from PMC members are binding, but members of the community are
 encouraged to test the release and vote with "(non-binding)".
 
+The test procedure for PMC members is described in:
+https://github.com/apache/airflow/blob/main/dev/README_RELEASE_HELM_CHART.md#verify-the-release-candidate-by-pmc-members
+
+The test procedure for contributors and members of the community who would like to test this RC is described in:
+https://github.com/apache/airflow/blob/main/dev/README_RELEASE_HELM_CHART.md#verify-the-release-candidates-by-contributors
+
 Consider this my (binding) +1.
 
-For license checks, the .rat-excludes files is included, so you can run the following to verify licenses (just update your path to rat):
+For license checks, the .rat-excludes files are included, so you can run the following to verify licenses (just update your path to rat):
 
 tar -xvf airflow-chart-${VERSION}-source.tar.gz
 cd airflow-chart-${VERSION}
-java -jar apache-rat-0.13.jar chart -E .rat-excludes
+java -jar apache-rat-0.18.jar chart -E .rat-excludes
 
 Please note that the version number excludes the \`rcX\` string, so it's now
 simply ${VERSION}. This will allow us to rename the artifact without modifying
 the artifact checksums when we actually release it.
 
 The status of testing the Helm Chart by the community is kept here:
+
 <TODO COPY LINK TO THE ISSUE CREATED>
 
 Thanks,
@@ -457,31 +523,13 @@ The legal checks include:
 ## SVN check
 
 The files should be present in the sub-folder of
-[Airflow dist](https://dist.apache.org/repos/dist/dev/airflow/)
+[Airflow dist - helm-chart](https://dist.apache.org/repos/dist/dev/airflow/helm-chart/)
 
 The following files should be present (7 files):
 
 * `airflow-chart-${VERSION}-source.tar.gz` + .asc + .sha512
 * `airflow-{VERSION}.tgz` + .asc + .sha512
 * `airflow-{VERSION}.tgz.prov`
-
-As a PMC member, you should be able to clone the SVN repository:
-
-```shell
-svn co https://dist.apache.org/repos/dist/dev/airflow
-```
-
-Or update it if you already checked it out:
-
-```shell
-svn update .
-```
-
-While in the directory, save the path to the repository root:
-
-```shell
-SVN_REPO_ROOT=$(pwd -P)
-```
 
 ## Source tarball reproducibility check
 
@@ -501,12 +549,13 @@ AIRFLOW_REPO_ROOT=$(pwd -P)
 ```shell
 VERSION=12.0.1
 VERSION_SUFFIX=rc1
+VERSION_RC=${VERSION}${VERSION_SUFFIX}
 ```
 
 3. Check-out the branch from which the release was made and cleanup dist folder:
 
 ```shell
-git checkout helm-chart/${VERSION}${VERSION_SUFFIX}
+git checkout helm-chart/${VERSION_RC}
 rm -rf dist/*
 ```
 
@@ -514,16 +563,41 @@ rm -rf dist/*
    check and skip tagging. There is no need to specify version as it is stored in Chart.yaml of the rc tag.
 
 ```shell
-breeze release-management prepare-helm-chart-tarball --version-suffix rc1 --ignore-version-check --skip-tagging
-breeze release-management prepare-helm-chart-package --version-suffix rc1
+breeze release-management prepare-helm-chart-tarball --version-suffix ${VERSION_SUFFIX} --ignore-version-check --skip-tagging
+VERSION_SUFFIX= breeze release-management prepare-helm-chart-package
 ```
 
+> [!NOTE]
+> In case VERSION_SUFFIX is `exported`, we temporarily unset VERSION_SUFFIX when preparing the package,
+> as we do not want it set and the flag defaults to the env var.
+
 5. Compare the produced tarball binary with ones in SVN:
+As a PMC member, you should be able to clone the SVN repository:
+
+```shell script
+cd ${AIRFLOW_REPO_ROOT}/..
+[ -d asf-dist ] || svn checkout --depth=immediates https://dist.apache.org/repos/dist asf-dist
+svn update --set-depth=infinity asf-dist/dev/airflow
+```
+
+Or update it if you already checked it out:
+
+```shell script
+cd asf-dist/dev/airflow
+svn update .
+```
+
+Set an environment variable: SVN_REPO_ROOT to the root of folder where you have asf-dist checked out:
+
+```shell script
+cd asf-dist/
+export SVN_REPO_ROOT=$(pwd -P)
+```
 
 ```shell
 
-diff ${AIRFLOW_REPO_ROOT}/dist/airflow-chart-${VERSION}-source.tar.gz ${SVN_REPO_ROOT}/dev/airflow/helm-chart/${VERSION}${VERSION_SUFFIX}/airflow-chart-${VERSION}-source.tar.gz
-diff ${AIRFLOW_REPO_ROOT}/dist/airflow-${VERSION}.tgz ${SVN_REPO_ROOT}/dev/airflow/helm-chart/${VERSION}${VERSION_SUFFIX}/airflow-${VERSION}.tgz
+diff ${AIRFLOW_REPO_ROOT}/dist/airflow-chart-${VERSION}-source.tar.gz ${SVN_REPO_ROOT}/dev/airflow/helm-chart/${VERSION_RC}/airflow-chart-${VERSION}-source.tar.gz
+diff ${AIRFLOW_REPO_ROOT}/dist/airflow-${VERSION}.tgz ${SVN_REPO_ROOT}/dev/airflow/helm-chart/${VERSION_RC}/airflow-${VERSION}.tgz
 ```
 
 There should be no differences reported. If you see "binary files differ" message, it means that
@@ -535,23 +609,66 @@ and we need to fix it (so checking the differences would be helpful also to find
 Before proceeding next you want to go to the SVN directory
 
 ```shell
-cd ${SVN_REPO_ROOT}/dev/airflow/helm-chart/${VERSION}${VERSION_SUFFIX}
+cd ${SVN_REPO_ROOT}/dev/airflow/helm-chart/${VERSION_RC}
 ```
 
 ## Licence check
 
-This can be done with the Apache RAT tool.
+You can run this command to do it for you (including checksum verification for your own security):
 
-* Download the latest jar from https://creadur.apache.org/rat/download_rat.cgi (unpack the binary,
-  the jar is inside)
+```shell script
+# Checksum value is taken from https://downloads.apache.org/creadur/apache-rat-0.18/apache-rat-0.18-bin.tar.gz.sha512
+wget -q https://archive.apache.org/dist/creadur/apache-rat-0.18/apache-rat-0.18-bin.tar.gz -O /tmp/apache-rat-0.18-bin.tar.gz
+echo "315b16536526838237c42b5e6b613d29adc77e25a6e44a866b2b7f8b162e03d3629d49c9faea86ceb864a36b2c42838b8ce43d6f2db544e961f2259e242748f4  /tmp/apache-rat-0.18-bin.tar.gz" | sha512sum -c -
+tar -xzf /tmp/apache-rat-0.18-bin.tar.gz -C /tmp
+```
+
 * Unpack the release source archive (the `<package + version>-source.tar.gz` file) to a folder
 * Enter the sources folder run the check
 
 ```shell
-java -jar ${PATH_TO_RAT}/apache-rat-0.13/apache-rat-0.13.jar chart -E .rat-excludes
+rm -rf /tmp/apache/airflow-helm-chart-src && mkdir -p /tmp/apache/airflow-helm-chart-src && tar -xzf ${SVN_REPO_ROOT}/dev/airflow/helm-chart/${VERSION_RC}/airflow-chart-*-source.tar.gz --strip-components 1 -C /tmp/apache/airflow-helm-chart-src
+```
+
+```shell
+cp ${AIRFLOW_REPO_ROOT}/.rat-excludes /tmp/apache/airflow-helm-chart-src/.rat-excludes
+java -jar /tmp/apache-rat-0.18/apache-rat-0.18.jar --input-exclude-file /tmp/apache/airflow-helm-chart-src/.rat-excludes /tmp/apache/airflow-helm-chart-src/ | grep -E "! |INFO: "
 ```
 
 where `.rat-excludes` is the file in the root of Chart source code.
+
+You should see no files reported as Unknown or with wrong licence and summary of the check similar to:
+
+```
+INFO: Apache Creadur RAT 0.18 (Apache Software Foundation)
+INFO: Excluding patterns: .git-blame-ignore-revs, .github/*, .git ...
+INFO: Excluding MISC collection.
+INFO: Excluding HIDDEN_DIR collection.
+SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+INFO: RAT summary:
+INFO:   Approved:  15615
+INFO:   Archives:  2
+INFO:   Binaries:  813
+INFO:   Document types:  5
+INFO:   Ignored:  2392
+INFO:   License categories:  2
+INFO:   License names:  2
+INFO:   Notices:  216
+INFO:   Standards:  15609
+INFO:   Unapproved:  0
+INFO:   Unknown:  0
+```
+
+There should be no files reported as Unknown or Unapproved. The files that are unknown or unapproved should be shown with a line starting with `!`.
+
+For example:
+
+```
+! Unapproved:         1    A count of unapproved licenses.
+! /CODE_OF_CONDUCT.md
+```
 
 ## Signature check
 
@@ -561,6 +678,7 @@ Make sure you have imported into your GPG the PGP key of the person signing the 
 You can import the whole KEYS file:
 
 ```shell script
+wget https://dist.apache.org/repos/dist/release/airflow/KEYS
 gpg --import KEYS
 ```
 
@@ -641,9 +759,11 @@ Checking airflow-1.0.0.tgz.sha512
 Checking airflow-chart-1.0.0-source.tar.gz.sha512
 ```
 
-# Verify release candidates by Contributors
+# Verify the release candidates by Contributors
 
-Contributors can run below commands to test the Helm Chart
+Contributors can run below commands to test the Helm Chart against any
+Kubernetes cluster they already have configured. Replace the version
+with the one being voted on:
 
 ```shell
 helm repo add apache-airflow-dev https://dist.apache.org/repos/dist/dev/airflow/helm-chart/1.1.0rc1/
@@ -654,7 +774,106 @@ helm install airflow apache-airflow-dev/airflow
 You can then perform any other verifications to check that it works as you expected by
 upgrading the Chart or installing by overriding default of `values.yaml`.
 
+## End-to-end verification with Breeze and KinD
+
+If you don't already have a Kubernetes cluster handy, the `breeze k8s`
+commands give you a clean room: a fresh KinD cluster plus the chart
+deployed from your local checkout. This runs the same chart files that
+were packaged into the RC tarball, so it doubles as a chart-content
+sanity check.
+
+1. Check out the RC tag so the local `chart/` directory is the candidate
+   under vote:
+
+   ```shell
+   git checkout helm-chart/${VERSION_RC}
+   ```
+
+2. Create the cluster, configure namespaces, build a k8s-ready airflow
+   image, and load it into KinD. On main these are bundled into a single
+   `breeze k8s deploy-cluster` (which also installs the shared k8s
+   tooling — kind, kubectl, helm — into Breeze's pinned virtualenv,
+   i.e. it includes the work `breeze k8s setup-env` would do); on older
+   tags, run `setup-env` plus the constituent commands in sequence:
+
+   ```shell
+   breeze k8s deploy-cluster --rebuild-base-image                  # main
+   # or, on older tags:
+   breeze k8s setup-env
+   breeze k8s create-cluster
+   breeze k8s configure-cluster
+   breeze ui compile-assets  # ensures the UI is built so the API server can serve index.html
+   breeze k8s build-k8s-image --rebuild-base-image
+   breeze k8s upload-k8s-image
+   ```
+
+3. Helm-install the chart into the cluster:
+
+   ```shell
+   breeze k8s deploy-airflow
+   ```
+
+   The command prints the forwarded `localhost:<port>` URL of the
+   airflow API server (default credentials `admin` / `admin`).
+
+4. Confirm the deployment is healthy:
+
+   ```shell
+   breeze k8s status                            # cluster + connection
+   curl -s http://localhost:<port>/api/v2/monitor/health
+   curl -s http://localhost:<port>/api/v2/version
+   ```
+
+   You want all four `metadatabase`, `scheduler`, `triggerer`,
+   `dag_processor` health entries to be `healthy`, and the version
+   endpoint to report the airflow version pinned by the chart's
+   `values.yaml`.
+
+5. Open the forwarded URL in your browser and poke around the UI —
+   automated health checks pass even when the UI assets fail to load
+   or auth is broken, so a human eyeball over the running deployment
+   is worth the 30 seconds. The URL `breeze k8s deploy-airflow`
+   printed in step 3 (`http://localhost:<port>`) lands on the login
+   page; sign in with `admin` / `admin`. Suggested manual sanity
+   checks:
+
+   - the login page renders (UI assets served correctly);
+   - after login, the Dags list loads and shows the example Dags
+     bundled with the image;
+   - open one example Dag, trigger a run, and watch a task instance
+     reach `success` (exercises scheduler → triggerer → executor and
+     log retrieval end-to-end);
+   - the `Admin → Connections` and `Admin → Variables` pages render
+     without backend errors.
+
+   If the forwarded port has been reclaimed (e.g. you re-ran the
+   deploy or your shell rotated), `breeze k8s status` re-prints the
+   current URL.
+
+6. Tear down the cluster when you're done:
+
+   ```shell
+   breeze k8s delete-cluster
+   ```
+
+Switch back to your working branch (`git checkout <branch>`) before
+running any other release-prep commands.
+
 # Publish the final release
+
+Re-establish your shell like when prepared
+
+```shell
+# Set Version
+export VERSION=1.1.0
+export VERSION_SUFFIX=rc1
+
+# Set AIRFLOW_REPO_ROOT to the path of your git repo
+export AIRFLOW_REPO_ROOT=$(pwd -P)
+
+breeze k8s setup-env
+breeze k8s shell
+```
 
 ## Summarize the voting for the release
 
@@ -709,21 +928,20 @@ the binaries again, and gives a clearer history in the svn commit logs):
 
 ```shell
 # First clone the repo
-export VERSION=1.1.0
-export VERSION_SUFFIX=rc1
-svn checkout https://dist.apache.org/repos/dist/release/airflow airflow-release
+cd ${AIRFLOW_REPO_ROOT}/..
+[ -d asf-dist ] || svn checkout --depth=immediates https://dist.apache.org/repos/dist asf-dist
+svn update --set-depth=infinity asf-dist/release/airflow
 
 # Create new folder for the release
-cd airflow-release/helm-chart
+cd asf-dist/release/airflow/helm-chart
 export AIRFLOW_SVN_RELEASE_HELM=$(pwd -P)
 svn mkdir ${VERSION}
 cd ${VERSION}
 
 # Move the artifacts to svn folder & commit (don't copy or copy & remove - index.yaml)
-for f in ../../../airflow-dev/helm-chart/${VERSION}${VERSION_SUFFIX}/*; do svn cp $f ${$(basename $f)/}; done
+for f in ../../../../dev/airflow/helm-chart/${VERSION}${VERSION_SUFFIX}/*; do svn cp $f $(basename $f); done
 svn rm index.yaml
 svn commit -m "Release Airflow Helm Chart Check ${VERSION} from ${VERSION}${VERSION_SUFFIX}"
-
 ```
 
 Verify that the packages appear in [Airflow Helm Chart](https://dist.apache.org/repos/dist/release/airflow/helm-chart/).
@@ -736,7 +954,7 @@ Create and push the release tag:
 cd "${AIRFLOW_REPO_ROOT}"
 git checkout helm-chart/${VERSION}${VERSION_SUFFIX}
 git tag -s helm-chart/${VERSION} -m "Apache Airflow Helm Chart ${VERSION}"
-git push apache helm-chart/${VERSION}
+git push upstream helm-chart/${VERSION}
 ```
 
 ## Publish final documentation
@@ -749,12 +967,7 @@ you need to run several workflows to publish the documentation. More details abo
 [Docs README](../docs/README.md) showing the architecture and workflows including manual workflows for
 emergency cases.
 
-There are two ways to publish the documentation - using breeze command from your local machine or
-using breeze commands from GitHub Actions. Both are actually execute remote workflows in GitHub Actions.
-
-### Using breeze commands
-
-You can use the `breeze` command to publish the documentation.
+You should use the `breeze` command to publish the documentation.
 The command does the following:
 
 1. Triggers [Publish Docs to S3](https://github.com/apache/airflow/actions/workflows/publish-docs-to-s3.yml).
@@ -762,81 +975,83 @@ The command does the following:
 3. Triggers S3 to GitHub Sync
 
 ```shell script
-breeze workflow-run publish-docs --ref <tag> --site-env <staging/live/auto> helm-chart
+breeze workflow-run publish-docs --ref helm-chart/${VERSION} --site-env live helm-chart
 ```
-
-The `--ref` parameter should be the tag of the release candidate you are publishing. This should be a
-release tag like `helm-chart/1.1.0`
-
-The `--site-env` parameter should be set to `staging` for pre-release versions or `live` for final releases.
-The default option is `auto` which should automatically select the right environment based on the tag name.
-
-Other available parameters can be found with:
-
-```shell script
-breeze workflow-run publish-docs --help
-```
-
-One of the interesting features of publishing this way is that you can also rebuild historical version of
-the documentation with patches applied to the documentation (if they can be applied cleanly).
-
-Yoy should specify the `--apply-commits` parameter with the list of commits you want to apply
-separated by commas and the workflow will apply those commits to the documentation before
-building it. (don't forget to add --skip-write-to-stable-folder if you are publishing
-previous version of the distribution). Example:
-
-```shell script
-breeze workflow-run publish-docs --ref helm-chart/1.18.0 --site-env staging \
-  --apply-commits 4ae273cbedec66c87dc40218c7a94863390a380d,e61e9618bdd6be8213d277b1427f67079fcb1d9b \
-  --skip-write-to-stable-folder \
-  helm-chart
-```
-
-### Manually using GitHub Actions
-
-There are two steps to publish the documentation:
-
-1. Publish the documentation to the `staging` S3 bucket.
-
-The release manager publishes the documentation using GitHub Actions workflow
-[Publish Docs to S3](https://github.com/apache/airflow/actions/workflows/publish-docs-to-s3.yml). By default `auto` selection should publish to the `staging` bucket - based on
-the tag you use - pre-release tags go to staging. But you can also override it and specify the destination
-manually to be `live` or `staging`.
-
-You should specify 'helm-chart' passed as packages to be built.
-
-After that step, the provider documentation should be available under https://airflow.stage.apache.org//
-URL (RC PyPI packages are build with the staging urls) but stable links and drop-down boxes are not updated yet.
-
-2. Invalidate Fastly cache, update version drop-down and stable links with the new versions of the documentation.
-
-In order to do it, you need to run the [Build docs](https://github.com/apache/airflow-site/actions/workflows/build.yml)
-workflow in `airflow-site` repository - but make sure to use `staging` branch.
-
-After that workflow completes, the new version should be available in the drop-down list and stable links
-should be updated, also Fastly cache will be updated
 
 ## Update `index.yaml` in airflow-site
 
-Regenerate `index.yaml` so it can be added to the Airflow website to allow: `helm repo add apache-airflow https://airflow.apache.org`.
+The `index.yaml` file on the Airflow website allows users to easily add the Apache Airflow Helm repository with:
+
+```shell
+helm repo add apache-airflow https://airflow.apache.org
+```
+
+The index points **every** version -- including the one just released -- at
+`archive.apache.org`, never `downloads.apache.org`. `downloads.apache.org` keeps only the
+latest release and is fronted by a CDN (Fastly) whose cache can serve a stale `200` that turns
+into a real `404` once a version is removed -- exactly the failure that strands users on
+removed-version URLs. `archive.apache.org` is append-only: once a version lands there it is
+never removed, so those URLs resolve forever, no matter how stale a cached copy of `index.yaml`
+is.
+
+This matters because `index.yaml` is itself served from `airflow.apache.org`, which is *also*
+behind Fastly, so a freshly published index can be served stale for the cache TTL. That is
+harmless **as long as every URL the index has ever contained stays resolvable** -- which the
+archive-only policy guarantees for every superseded version. The one case it does not cover
+automatically is the **just-released** version: `archive.apache.org` lags `downloads.apache.org`
+(the archive sync is [documented](https://infra.apache.org/release-distribution.html) as
+happening "about a day" after a release first appears on downloads -- but that is the worst
+case; in practice the sync is usually within minutes, at most a few hours), so its archive URL
+can 404 during that window.
+**Do not publish the index entry for the new version until that version is live on archive** --
+the steps below block until it is. (Removing superseded versions from `dist/release`, by
+contrast, needs no waiting -- they have been on archive since their own release.)
+
+To update `index.yaml` for the newly released chart version, follow these steps:
 
 ```shell
 git clone https://github.com/apache/airflow-site.git airflow-site
 cd airflow-site
+
+# archive.apache.org lags the release (worst case ~1 day; usually minutes, at most hours). Block until the
+# new version is actually downloadable from archive before referencing it in the index --
+# otherwise the index could advertise an archive URL that 404s until the sync catches up.
+until curl -fsI "https://archive.apache.org/dist/airflow/helm-chart/${VERSION}/airflow-${VERSION}.tgz" >/dev/null; do
+  echo "airflow-${VERSION}.tgz not on archive.apache.org yet; waiting 10 min..."
+  sleep 600
+done
+echo "airflow-${VERSION}.tgz is live on archive.apache.org -- proceeding to publish the index."
+
 curl https://dist.apache.org/repos/dist/dev/airflow/helm-chart/${VERSION}${VERSION_SUFFIX}/index.yaml -o index.yaml
 cp ${AIRFLOW_SVN_RELEASE_HELM}/${VERSION}/airflow-${VERSION}.tgz .
-helm repo index --merge ./index.yaml . --url "https://downloads.apache.org/airflow/helm-chart/${VERSION}"
+# Point the new entry at archive.apache.org (see rationale above) -- never downloads.apache.org.
+helm repo index --merge ./index.yaml . --url "https://archive.apache.org/dist/airflow/helm-chart/${VERSION}"
 rm airflow-${VERSION}.tgz
 mv index.yaml landing-pages/site/static/index.yaml
-git add p . # leave the license at the top
+git checkout -b feature/new-chart-release-${VERSION}
+git add .
+# Note: commit will re-add the license at the top, need to add another time
+git commit -m "Add Apache Airflow Helm Chart Release ${VERSION} to chart index file"
+git add .
 git commit -m "Add Apache Airflow Helm Chart Release ${VERSION} to chart index file"
 git push
 # and finally open a PR
 ```
 
+When the PR is merged, the [Build docs](https://github.com/apache/airflow-site/actions/workflows/build.yml)
+workflow in `airflow-site` is triggered automatically by the push to `main` and will deploy the updated site.
+
+You can check the latest chart version that is in the `index.yaml` with:
+
+```shell
+curl -s https://airflow.apache.org/index.yaml | yq '.entries.airflow[0].version' -
+```
+
+You can see when ArtifactHUB will next check for a new version by logging in and going to the [ArtifactHUB control panel](https://artifacthub.io/control-panel/repositories).
+
 ## Wait for ArtifactHUB to discover new release
 
-As we link out to ArtifactHUB in all of our release communications, we now wait until ArtifactHUB has discovered the new release. This can take 30 minutes or so to happen after the index change PR from above is merged.
+As we link out to ArtifactHUB in all of our release communications, we now wait until ArtifactHUB has discovered the new release. This can take 60 minutes or longer to happen after the index change PR from above is merged.
 
 ## Notify developers of release
 
@@ -904,20 +1119,33 @@ Update "Announcements" page at the [Official Airflow website](https://airflow.ap
 
 Create a new release on GitHub with the release notes and assets from the release svn.
 
+- Create a new release in https://github.com/apache/airflow/releases/new ("Draft new release" button)
+- Select the tag, e.g. `helm-chart/1.20.0`
+- Use title: Apache Airflow Helm Chart 1.20.0
+- Copy the release notes RST from the release. Need to convert all headings with `^^^^^` as underline to H1 in markdown with a `#` as prefix and all headings with `"""""` as underline to H2 in markdown with a `##` prefix.
+- Use binaries (all chart files, signatures and source tar) from the SVN
+- Click on "Publish release"
+
 ## Close the milestone
+
+Use: https://github.com/apache/airflow/milestones
 
 Before closing the milestone on GitHub, make sure that all PR marked for it are either part of the release (was cherry picked) or
 postponed to the next release, then close the milestone. Create the next one if it hasn't been already (it probably has been).
-Update the new milestone in the [*Currently we are working on* issue](https://github.com/apache/airflow/issues/10176)
-make sure to update the last updated timestamp as well.
 
 ## Close the testing status issue
 
 Don't forget to thank the folks who tested and close the issue tracking the testing status.
 
+```
+Thank you everyone. New Helm-Chart is released.
+
+I invite everyone to help improve the chart for the next release, a list of open issues can be found [here](https://github.com/apache/airflow/issues?q=is%3Aissue%20state%3Aopen%20label%3Aarea%3Ahelm-chart).
+```
+
 ## Update issue template with the new release
 
-Updating issue templates in `.github/ISSUE_TEMPLATE/4-airflow_helmchart_bug_report.yml` with the new version
+Updating issue templates in `.github/ISSUE_TEMPLATE/1-airflow_bug_report.yml.yml` with the new version
 
 ## Announce the release on the community slack
 
@@ -967,19 +1195,63 @@ EOF
 ## Bump chart version in Chart.yaml
 
 Bump the chart version to the next version in `chart/Chart.yaml` in main.
-
+Do not add `-dev` suffix to the version.
 
 ## Remove old releases
 
-We should keep the old version a little longer than a day or at least until the updated
-``index.yaml`` is published. This is to avoid errors for users who haven't run ``helm repo update``.
+ASF release policy requires that the distribution area (``dist/release``) holds only the
+latest release; every superseded version must be removed from ``dist/release`` once a new
+version is published. The removed releases are not lost -- they remain permanently available
+from the archive at https://archive.apache.org/dist/airflow/helm-chart/. See
+http://www.apache.org/legal/release-policy.html#when-to-archive
 
-It is probably ok if we leave last 2 versions on release svn repo too.
+By this point the published ``index.yaml`` already points every version at the archive, and it
+was published *only after* the newly released version was confirmed live on archive (the
+"Update ``index.yaml``" step blocks until then). The superseded versions have been on archive
+even longer -- since their own release -- so removing them from ``dist/release`` is safe
+immediately: there is no need to wait for ``index.yaml`` to propagate or for any CDN cache to
+expire. The archive-availability wait lives at the index step, keyed on the new version; once
+that has passed, no version this snippet removes can still be missing from archive.
+
+The snippet below removes every version except the one you just released (``${VERSION}``):
 
 ```shell
 # http://www.apache.org/legal/release-policy.html#when-to-archive
-cd airflow-release/helm-chart
-export PREVIOUS_VERSION=1.0.0
-svn rm ${PREVIOUS_VERSION}
-svn commit -m "Remove old Helm Chart release: ${PREVIOUS_VERSION}"
+cd "${AIRFLOW_SVN_RELEASE_HELM}"
+svn update
+for old_version in $(svn ls | sed 's:/$::' | grep -vx "${VERSION}"); do
+  svn rm "${old_version}"
+done
+svn commit -m "Remove superseded Helm Chart releases"
+```
+
+# Additional processes
+
+## Fixing released documentation
+
+Sometimes we want to rebuild the documentation with some fixes that were merged in main
+branch, for example when there are html layout changes or typo fixes, or formatting issue fixes.
+
+In this case the process is as follows:
+
+* When you want to re-publish `helm-chart/X.Y.Z` docs, create (or pull if already created)
+  `helm-chart/X.Y.Z-docs` branch
+* Cherry-pick changes you want to add and push to the main `apache/airflow` repo
+* Run the publishing workflow.
+
+In case you are releasing latest released version of helm-chart (which should be most of the cases), run this:
+
+```bash
+breeze workflow-run publish-docs --site-env live --ref helm-chart/X.Y.Z-docs \
+   --skip-tag-validation \
+   helm-chart
+```
+
+In case you are releasing an older version of helm-chart, you should skip writing to the stable folder
+
+```bash
+breeze workflow-run publish-docs --site-env live --ref helm-chart/X.Y.Z-docs \
+   --skip-tag-validation \
+   --skip-write-to-stable-folder \
+   helm-chart
 ```

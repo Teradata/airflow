@@ -26,7 +26,7 @@ from google.api_core.gapic_v1.method import DEFAULT, _MethodDefault
 from google.cloud.tasks_v2 import CloudTasksClient
 from google.cloud.tasks_v2.types import Queue, Task
 
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.common.consts import CLIENT_INFO
 from airflow.providers.google.common.hooks.base_google import PROVIDE_PROJECT_ID, GoogleBaseHook
 
@@ -75,7 +75,11 @@ class CloudTasksHook(GoogleBaseHook):
         :return: Google Cloud Tasks API Client
         """
         if self._client is None:
-            self._client = CloudTasksClient(credentials=self.get_credentials(), client_info=CLIENT_INFO)
+            self._client = CloudTasksClient(
+                credentials=self.get_credentials(),
+                client_info=CLIENT_INFO,
+                client_options=self.get_client_options(),
+            )
         return self._client
 
     @GoogleBaseHook.fallback_to_default_project_id

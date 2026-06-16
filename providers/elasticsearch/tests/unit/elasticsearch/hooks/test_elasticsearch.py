@@ -34,13 +34,30 @@ from airflow.providers.elasticsearch.hooks.elasticsearch import (
     ESConnection,
 )
 
-ROWS = [
+ROWS_PAGE_1 = [
     [1, "Stallone", "Sylvester", "78"],
     [2, "Statham", "Jason", "57"],
+]
+
+ROWS_PAGE_2 = [
     [3, "Li", "Jet", "61"],
     [4, "Lundgren", "Dolph", "66"],
     [5, "Norris", "Chuck", "84"],
 ]
+
+ROWS = ROWS_PAGE_1 + ROWS_PAGE_2
+
+RESPONSE = {
+    "columns": [
+        {"name": "index", "type": "long"},
+        {"name": "name", "type": "text"},
+        {"name": "firstname", "type": "text"},
+        {"name": "age", "type": "long"},
+    ],
+    "rows": ROWS_PAGE_1,
+    "cursor": "e7f8QwXUruW2mIebzudH4BwAA//8DAA==",
+}
+
 RESPONSE_WITHOUT_CURSOR = {
     "columns": [
         {"name": "index", "type": "long"},
@@ -48,9 +65,9 @@ RESPONSE_WITHOUT_CURSOR = {
         {"name": "firstname", "type": "text"},
         {"name": "age", "type": "long"},
     ],
-    "rows": ROWS,
+    "rows": ROWS_PAGE_2,
 }
-RESPONSE = {**RESPONSE_WITHOUT_CURSOR, **{"cursor": "e7f8QwXUruW2mIebzudH4BwAA//8DAA=="}}
+
 RESPONSES = [
     RESPONSE,
     RESPONSE_WITHOUT_CURSOR,
@@ -90,7 +107,7 @@ class TestElasticsearchSQLCursor:
         cursor = ElasticsearchSQLCursor(es=self.es, options={})
         cursor.execute("SELECT * FROM hollywood.actors")
 
-        assert cursor.rowcount == len(ROWS)
+        assert cursor.rowcount == len(ROWS_PAGE_1)
 
     def test_description(self):
         cursor = ElasticsearchSQLCursor(es=self.es, options={})
@@ -109,12 +126,59 @@ class TestElasticsearchSQLCursor:
 
         assert cursor.fetchone() == ROWS[0]
 
-    def test_fetchmany(self):
+    @pytest.mark.parametrize(
+        ("size", "expected"),
+        [
+            (1, ROWS[:1]),
+            (2, ROWS[:2]),
+            (5, ROWS[:5]),
+        ],
+    )
+    def test_fetchmany(self, size, expected):
         cursor = ElasticsearchSQLCursor(es=self.es, options={})
         cursor.execute("SELECT * FROM hollywood.actors")
 
-        with pytest.raises(NotImplementedError):
-            cursor.fetchmany()
+        records = cursor.fetchmany(size)
+
+        assert records == expected
+
+    def test_fetchmany_consumes_rows(self):
+        cursor = ElasticsearchSQLCursor(es=self.es, options={})
+        cursor.execute("SELECT * FROM hollywood.actors")
+
+        first_batch = cursor.fetchmany(2)
+        second_batch = cursor.fetchmany(2)
+
+        assert first_batch == ROWS[:2]
+        assert second_batch == ROWS[2:4]
+
+    def test_fetchmany_exhausts_rows(self):
+        cursor = ElasticsearchSQLCursor(es=self.es, options={})
+        cursor.execute("SELECT * FROM hollywood.actors")
+
+        records = cursor.fetchmany(100)
+
+        assert records == ROWS
+
+        # Further calls should return empty list.
+        assert cursor.fetchmany(10) == []
+
+    def test_fetchmany_uses_default_fetch_size(self):
+        cursor = ElasticsearchSQLCursor(es=self.es, fetch_size=2)
+        cursor.execute("SELECT * FROM hollywood.actors")
+
+        records = cursor.fetchmany()
+
+        assert records == ROWS[:2]
+
+    def test_fetchmany_single_page(self):
+        self.es.sql.query.side_effect = None
+        self.es.sql.query.return_value = RESPONSE_WITHOUT_CURSOR
+        cursor = ElasticsearchSQLCursor(es=self.es, options={})
+        cursor.execute("SELECT * FROM hollywood.actors")
+
+        assert cursor.fetchmany(100) == ROWS_PAGE_2
+        assert cursor.fetchmany(10) == []
 
     def test_fetchall(self):
         cursor = ElasticsearchSQLCursor(es=self.es, options={})
@@ -122,8 +186,20 @@ class TestElasticsearchSQLCursor:
 
         records = cursor.fetchall()
 
-        assert len(records) == 10
+        assert len(records) == 5
         assert records == ROWS
+
+    def test_fetchall_after_partial_fetchmany(self):
+        cursor = ElasticsearchSQLCursor(es=self.es, options={})
+        cursor.execute("SELECT * FROM hollywood.actors")
+
+        first_batch = cursor.fetchmany(2)
+
+        assert first_batch == ROWS[:2]
+
+        remaining_records = cursor.fetchall()
+
+        assert remaining_records == ROWS[2:]
 
 
 class TestElasticsearchSQLHook:
@@ -177,9 +253,28 @@ class TestElasticsearchSQLHook:
         self.spy_agency.assert_spy_called(self.cur.close)
         self.spy_agency.assert_spy_called(self.cur.execute)
 
-    def test_get_df_polars(self):
-        with pytest.raises(NotImplementedError):
-            self.db_hook.get_df("SQL", df_type="polars")
+    @mock.patch("airflow.providers.elasticsearch.hooks.elasticsearch.read_sql_to_polars")
+    def test_get_df_polars(self, mock_reader):
+        mock_reader.return_value = "df"
+
+        self.conn.es = MagicMock()
+
+        result = self.db_hook.get_df(
+            sql="SELECT 1",
+            df_type="polars",
+            fetch_size=100,
+            max_rows=10,
+        )
+
+        assert result == "df"
+
+        mock_reader.assert_called_once_with(
+            client=self.conn.es,
+            query="SELECT 1",
+            params=None,
+            fetch_size=100,
+            max_rows=10,
+        )
 
     def test_run(self):
         statement = "SELECT * FROM hollywood.actors"
@@ -190,6 +285,43 @@ class TestElasticsearchSQLHook:
         self.spy_agency.assert_spy_called(self.cur.close)
         self.spy_agency.assert_spy_called(self.cur.execute)
 
+    @mock.patch("airflow.providers.common.sql.hooks.sql.send_sql_hook_lineage")
+    def test_run_hook_lineage(self, mock_send_lineage):
+        statement = "SELECT * FROM hollywood.actors"
+        self.db_hook.run(statement, handler=fetch_all_handler)
+
+        mock_send_lineage.assert_called_once()
+        call_kw = mock_send_lineage.call_args.kwargs
+        assert call_kw["context"] is self.db_hook
+        assert call_kw["sql"] == statement
+        assert call_kw["sql_parameters"] is None
+        assert call_kw["cur"] is self.cur
+
+    @mock.patch("airflow.providers.common.sql.hooks.sql.send_sql_hook_lineage")
+    @mock.patch("airflow.providers.common.sql.hooks.sql.DbApiHook._get_pandas_df")
+    def test_get_df_hook_lineage(self, mock_get_pandas_df, mock_send_lineage):
+        statement = "SELECT 1"
+        self.db_hook.get_df(statement, df_type="pandas")
+
+        mock_send_lineage.assert_called_once()
+        call_kw = mock_send_lineage.call_args.kwargs
+        assert call_kw["context"] is self.db_hook
+        assert call_kw["sql"] == statement
+        assert call_kw["sql_parameters"] is None
+
+    @mock.patch("airflow.providers.common.sql.hooks.sql.send_sql_hook_lineage")
+    @mock.patch("airflow.providers.common.sql.hooks.sql.DbApiHook._get_pandas_df_by_chunks")
+    def test_get_df_by_chunks_hook_lineage(self, mock_get_pandas_df_by_chunks, mock_send_lineage):
+        sql = "SELECT 1"
+        parameters = ("x",)
+        self.db_hook.get_df_by_chunks(sql, parameters=parameters, chunksize=1)
+
+        mock_send_lineage.assert_called_once()
+        call_kw = mock_send_lineage.call_args.kwargs
+        assert call_kw["context"] is self.db_hook
+        assert call_kw["sql"] == sql
+        assert call_kw["sql_parameters"] == parameters
+
     @mock.patch("airflow.providers.elasticsearch.hooks.elasticsearch.Elasticsearch")
     def test_execute_sql_query(self, mock_es):
         mock_es_sql_client = MagicMock()
@@ -199,11 +331,9 @@ class TestElasticsearchSQLHook:
         es_connection = ESConnection(host="localhost", port=9200)
         response = es_connection.execute_sql("SELECT * FROM hollywood.actors")
         mock_es_sql_client.query.assert_called_once_with(
-            body={
-                "fetch_size": 1000,
-                "field_multi_value_leniency": False,
-                "query": "SELECT * FROM hollywood.actors",
-            }
+            fetch_size=1000,
+            field_multi_value_leniency=False,
+            query="SELECT * FROM hollywood.actors",
         )
 
         assert response == RESPONSE_WITHOUT_CURSOR

@@ -27,8 +27,8 @@ from urllib.parse import urlsplit
 
 import attrs
 
-from airflow.configuration import conf
 from airflow.providers.apache.hdfs.hooks.webhdfs import WebHDFSHook
+from airflow.providers.common.compat.sdk import conf
 from airflow.utils.log.file_task_handler import FileTaskHandler
 from airflow.utils.log.logging_mixin import LoggingMixin
 
@@ -46,7 +46,7 @@ class HdfsRemoteLogIO(LoggingMixin):  # noqa: D101
 
     processors = ()
 
-    def upload(self, path: os.PathLike | str, ti: RuntimeTI):
+    def upload(self, path: os.PathLike | str, ti: RuntimeTI | None = None) -> None:
         """Upload the given log path to the remote storage."""
         path = Path(path)
         if path.is_absolute():

@@ -25,6 +25,7 @@
     "requiredActions": "การดำเนินการที่จำเป็น",
     "xcoms": "XComs"
   },
+  "collapseAllExtra": "ย่อข้อมูล JSON เพิ่มเติมทั้งหมด",
   "collapseDetailsPanel": "ย่อแผงรายละเอียด",
   "createdAssetEvent_one": "อีเวนต์ของ Asset ที่สร้างแล้ว",
   "createdAssetEvent_other": "อีเวนต์ของ Assets ที่สร้างแล้ว",
@@ -32,7 +33,7 @@
   "dag_other": "Dags",
   "dagDetails": {
     "catchup": "Catchup",
-    "dagRunTimeout": "ระยะหมดเวลาของ DAG Run",
+    "dagRunTimeout": "ระยะหมดเวลาของ Dag Run",
     "defaultArgs": "ค่า Arguments เริ่มต้น",
     "description": "คำอธิบาย",
     "documentation": "เอกสารประกอบ Dag",
@@ -58,6 +59,11 @@
     "dagVersions": "เวอร์ชันของ Dag",
     "dataIntervalEnd": "สิ้นสุดช่วงข้อมูล",
     "dataIntervalStart": "เริ่มต้นช่วงข้อมูล",
+    "durationStats": {
+      "mean": "ค่าเฉลี่ย",
+      "mode": "ฐานนิยม"
+    },
+    "expectedDuration": "ระยะเวลาที่คาดหวัง",
     "lastSchedulingDecision": "การตัดสินใจกำหนดเวลาล่าสุด",
     "queuedAt": "เข้าคิวเมื่อ",
     "runAfter": "ทำงานหลังจาก",
@@ -93,6 +99,7 @@
     "hotkey": "e",
     "tooltip": "กด {{hotkey}} เพื่อสลับการขยาย"
   },
+  "expandAllExtra": "ขยายข้อมูล JSON เพิ่มเติมทั้งหมด",
   "expression": {
     "all": "ทั้งหมด",
     "and": "และ",
@@ -223,7 +230,6 @@
   },
   "task_one": "งาน",
   "task_other": "งาน",
-  "taskGroup": "กลุ่มงาน",
   "taskId": "Task ID",
   "taskInstance": {
     "dagVersion": "เวอร์ชัน Dag",

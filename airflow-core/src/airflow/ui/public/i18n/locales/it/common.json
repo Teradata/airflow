@@ -31,6 +31,7 @@
     "requiredActions": "Azioni Richieste",
     "xcoms": "XComs"
   },
+  "collapseAllExtra": "Collassa tutti i json extra",
   "collapseDetailsPanel": "Collassa i Dettagli",
   "createdAssetEvent_many": "Eventi Asset Creati",
   "createdAssetEvent_one": "Evento Asset Creato",
@@ -68,6 +69,11 @@
     "dagVersions": "Versioni del Dag",
     "dataIntervalEnd": "Data Intervallo Fine",
     "dataIntervalStart": "Data Intervallo Inizio",
+    "durationStats": {
+      "mean": "Media",
+      "mode": "Moda"
+    },
+    "expectedDuration": "Durata Prevista",
     "lastSchedulingDecision": "Ultima Decisione di Programmazione",
     "queuedAt": "In Coda il",
     "runAfter": "Esegui dopo",
@@ -110,6 +116,7 @@
     "hotkey": "e",
     "tooltip": "Premi {{hotkey}} per attivare/disattivare espansione"
   },
+  "expandAllExtra": "Espandi tutti i json extra",
   "expression": {
     "all": "Tutti",
     "and": "E",
@@ -248,7 +255,6 @@
   "task_one": "Task",
   "task_other": "Tasks",
   "task_zero": "Nessun task",
-  "taskGroup": "Gruppo di Task",
   "taskId": "ID del Task",
   "taskInstance": {
     "dagVersion": "Versione del Dag",

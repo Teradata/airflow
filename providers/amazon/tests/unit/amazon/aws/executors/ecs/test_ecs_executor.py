@@ -26,6 +26,7 @@ from collections.abc import Callable
 from functools import partial
 from unittest import mock
 from unittest.mock import MagicMock, patch
+from uuid import uuid4
 
 import pytest
 import yaml
@@ -33,8 +34,6 @@ from botocore.exceptions import ClientError
 from inflection import camelize
 from semver import VersionInfo
 
-from airflow.configuration import conf
-from airflow.exceptions import AirflowException
 from airflow.executors.base_executor import BaseExecutor
 from airflow.models import TaskInstance
 from airflow.models.taskinstancekey import TaskInstanceKey
@@ -53,6 +52,7 @@ from airflow.providers.amazon.aws.executors.ecs.utils import (
     parse_assign_public_ip,
 )
 from airflow.providers.amazon.aws.hooks.ecs import EcsHook
+from airflow.providers.common.compat.sdk import AirflowException, conf
 from airflow.utils.helpers import convert_camel_to_snake
 from airflow.utils.state import State, TaskInstanceState
 from airflow.utils.timezone import utcnow
@@ -60,7 +60,7 @@ from airflow.version import version as airflow_version_str
 
 from tests_common import RUNNING_TESTS_AGAINST_AIRFLOW_PACKAGES
 from tests_common.test_utils.config import conf_vars
-from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
+from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS, AIRFLOW_V_3_3_PLUS
 
 airflow_version = VersionInfo(*map(int, airflow_version_str.split(".")[:3]))
 
@@ -110,7 +110,7 @@ def mock_task(arn=ARN1, state=State.RUNNING):
 @pytest.fixture(autouse=True)
 def mock_airflow_key():
     def _key():
-        return mock.Mock(spec=tuple)
+        return mock.Mock(spec=TaskInstanceKey)
 
     return _key
 
@@ -379,6 +379,9 @@ class TestEcsExecutorTask:
 class TestAwsEcsExecutor:
     """Tests the AWS ECS Executor."""
 
+    def test_supports_multi_team(self):
+        assert AwsEcsExecutor.supports_multi_team
+
     @mock.patch("airflow.providers.amazon.aws.executors.ecs.ecs_executor.AwsEcsExecutor.change_state")
     def test_execute(self, change_state_mock, mock_airflow_key, mock_executor, mock_cmd):
         """Test execution from end-to-end."""
@@ -396,11 +399,11 @@ class TestAwsEcsExecutor:
             "failures": [],
         }
 
-        assert len(mock_executor.pending_tasks) == 0
+        assert len(mock_executor.pending_workloads) == 0
         mock_executor.execute_async(airflow_key, mock_cmd)
-        assert len(mock_executor.pending_tasks) == 1
+        assert len(mock_executor.pending_workloads) == 1
 
-        mock_executor.attempt_task_runs()
+        mock_executor.attempt_workload_runs()
         mock_executor.ecs.run_task.assert_called_once()
 
         # Task is stored in active worker.
@@ -439,14 +442,14 @@ class TestAwsEcsExecutor:
         }
 
         assert mock_executor.queued_tasks[workload.ti.key] == workload
-        assert len(mock_executor.pending_tasks) == 0
+        assert len(mock_executor.pending_workloads) == 0
         assert len(mock_executor.running) == 0
         mock_executor._process_workloads([workload])
         assert len(mock_executor.queued_tasks) == 0
         assert len(mock_executor.running) == 1
         assert workload.ti.key in mock_executor.running
-        assert len(mock_executor.pending_tasks) == 1
-        assert mock_executor.pending_tasks[0].command == [
+        assert len(mock_executor.pending_workloads) == 1
+        assert mock_executor.pending_workloads[0].command == [
             "python",
             "-m",
             "airflow.sdk.execution_time.execute_workload",
@@ -454,9 +457,9 @@ class TestAwsEcsExecutor:
             '{"test_key": "test_value"}',
         ]
 
-        mock_executor.attempt_task_runs()
+        mock_executor.attempt_workload_runs()
         mock_executor.ecs.run_task.assert_called_once()
-        assert len(mock_executor.pending_tasks) == 0
+        assert len(mock_executor.pending_workloads) == 0
         mock_executor.ecs.run_task.assert_called_once_with(
             cluster="some-cluster",
             count=1,
@@ -516,18 +519,18 @@ class TestAwsEcsExecutor:
             "failures": [],
         }
         mock_executor.ecs.run_task.side_effect = [run_task_exception, run_task_exception, run_task_success]
-        mock_executor.execute_async(mock_airflow_key, mock_cmd)
+        mock_executor.execute_async(mock.Mock(spec=TaskInstanceKey), mock_cmd)
         expected_retry_count = 2
 
         # Fail 2 times
         for _ in range(expected_retry_count):
-            mock_executor.attempt_task_runs()
+            mock_executor.attempt_workload_runs()
             # Task is not stored in active workers.
             assert len(mock_executor.active_workers) == 0
 
         # Pass in last attempt
-        mock_executor.attempt_task_runs()
-        assert len(mock_executor.pending_tasks) == 0
+        mock_executor.attempt_workload_runs()
+        assert len(mock_executor.pending_workloads) == 0
         assert ARN1 in mock_executor.active_workers.get_all_arns()
         assert mock_backoff.call_count == expected_retry_count
         for attempt_number in range(1, expected_retry_count):
@@ -540,7 +543,7 @@ class TestAwsEcsExecutor:
 
         # No matter what, don't schedule until run_task becomes successful.
         for _ in range(int(mock_executor.max_run_task_attempts) * 2):
-            mock_executor.attempt_task_runs()
+            mock_executor.attempt_workload_runs()
             # Task is not stored in active workers.
             assert len(mock_executor.active_workers) == 0
 
@@ -557,12 +560,12 @@ class TestAwsEcsExecutor:
 
         # No matter what, don't schedule until run_task becomes successful.
         for _ in range(int(mock_executor.max_run_task_attempts) * 2):
-            mock_executor.attempt_task_runs()
+            mock_executor.attempt_workload_runs()
             # Task is not stored in active workers.
             assert len(mock_executor.active_workers) == 0
 
     @mock.patch.object(ecs_executor, "calculate_next_attempt_delay", return_value=dt.timedelta(seconds=0))
-    def test_attempt_task_runs_attempts_when_tasks_fail(self, _, mock_executor):
+    def test_attempt_workload_runs_attempts_when_tasks_fail(self, _, mock_executor):
         """
         Test case when all tasks fail to run.
 
@@ -583,36 +586,36 @@ class TestAwsEcsExecutor:
         mock_executor.execute_async(airflow_keys[0], commands[0])
         mock_executor.execute_async(airflow_keys[1], commands[1])
 
-        assert len(mock_executor.pending_tasks) == 2
+        assert len(mock_executor.pending_workloads) == 2
         assert len(mock_executor.active_workers.get_all_arns()) == 0
 
         mock_executor.ecs.run_task.side_effect = failures
-        mock_executor.attempt_task_runs()
+        mock_executor.attempt_workload_runs()
 
         for i in range(2):
             RUN_TASK_KWARGS["overrides"]["containerOverrides"][0]["command"] = commands[i]
             assert mock_executor.ecs.run_task.call_args_list[i].kwargs == RUN_TASK_KWARGS
-        assert len(mock_executor.pending_tasks) == 2
+        assert len(mock_executor.pending_workloads) == 2
         assert len(mock_executor.active_workers.get_all_arns()) == 0
 
         mock_executor.ecs.run_task.call_args_list.clear()
 
         mock_executor.ecs.run_task.side_effect = failures
-        mock_executor.attempt_task_runs()
+        mock_executor.attempt_workload_runs()
 
         for i in range(2):
             RUN_TASK_KWARGS["overrides"]["containerOverrides"][0]["command"] = commands[i]
             assert mock_executor.ecs.run_task.call_args_list[i].kwargs == RUN_TASK_KWARGS
-        assert len(mock_executor.pending_tasks) == 2
+        assert len(mock_executor.pending_workloads) == 2
         assert len(mock_executor.active_workers.get_all_arns()) == 0
 
         mock_executor.ecs.run_task.call_args_list.clear()
 
         mock_executor.ecs.run_task.side_effect = failures
-        mock_executor.attempt_task_runs()
+        mock_executor.attempt_workload_runs()
 
         assert len(mock_executor.active_workers.get_all_arns()) == 0
-        assert len(mock_executor.pending_tasks) == 0
+        assert len(mock_executor.pending_workloads) == 0
 
         if airflow_version >= (2, 10, 0):
             events = [(x.event, x.task_id, x.try_number) for x in mock_executor._task_event_logs]
@@ -622,7 +625,7 @@ class TestAwsEcsExecutor:
             ]
 
     @mock.patch.object(ecs_executor, "calculate_next_attempt_delay", return_value=dt.timedelta(seconds=0))
-    def test_attempt_task_runs_attempts_when_some_tasks_fal(self, _, mock_executor):
+    def test_attempt_workload_runs_attempts_when_some_tasks_fal(self, _, mock_executor):
         """
         Test case when one task fail to run, and a new task gets queued.
 
@@ -651,48 +654,48 @@ class TestAwsEcsExecutor:
         mock_executor.execute_async(airflow_keys[0], airflow_commands[0])
         mock_executor.execute_async(airflow_keys[1], airflow_commands[1])
 
-        assert len(mock_executor.pending_tasks) == 2
+        assert len(mock_executor.pending_workloads) == 2
 
         mock_executor.ecs.run_task.side_effect = responses
-        mock_executor.attempt_task_runs()
+        mock_executor.attempt_workload_runs()
 
         for i in range(2):
             RUN_TASK_KWARGS["overrides"]["containerOverrides"][0]["command"] = airflow_commands[i]
             assert mock_executor.ecs.run_task.call_args_list[i].kwargs == RUN_TASK_KWARGS
 
-        assert len(mock_executor.pending_tasks) == 1
+        assert len(mock_executor.pending_workloads) == 1
         assert len(mock_executor.active_workers.get_all_arns()) == 1
 
         mock_executor.ecs.run_task.call_args_list.clear()
 
         # queue new task
-        airflow_keys[1] = mock.Mock(spec=tuple)
+        airflow_keys[1] = mock.Mock(spec=TaskInstanceKey)
         airflow_commands[1] = _generate_mock_cmd()
         mock_executor.execute_async(airflow_keys[1], airflow_commands[1])
 
-        assert len(mock_executor.pending_tasks) == 2
+        assert len(mock_executor.pending_workloads) == 2
         # assert that the order of pending tasks is preserved i.e. the first task is 1st etc.
-        assert mock_executor.pending_tasks[0].key == airflow_keys[0]
-        assert mock_executor.pending_tasks[0].command == airflow_commands[0]
+        assert mock_executor.pending_workloads[0].key == airflow_keys[0]
+        assert mock_executor.pending_workloads[0].command == airflow_commands[0]
 
         task["taskArn"] = ARN2
         success_response = {"tasks": [task], "failures": []}
         responses = [Exception("Failure 1"), success_response]
         mock_executor.ecs.run_task.side_effect = responses
-        mock_executor.attempt_task_runs()
+        mock_executor.attempt_workload_runs()
 
         for i in range(2):
             RUN_TASK_KWARGS["overrides"]["containerOverrides"][0]["command"] = airflow_commands[i]
             assert mock_executor.ecs.run_task.call_args_list[i].kwargs == RUN_TASK_KWARGS
 
-        assert len(mock_executor.pending_tasks) == 1
+        assert len(mock_executor.pending_workloads) == 1
         assert len(mock_executor.active_workers.get_all_arns()) == 2
 
         mock_executor.ecs.run_task.call_args_list.clear()
 
         responses = [Exception("Failure 1")]
         mock_executor.ecs.run_task.side_effect = responses
-        mock_executor.attempt_task_runs()
+        mock_executor.attempt_workload_runs()
 
         RUN_TASK_KWARGS["overrides"]["containerOverrides"][0]["command"] = airflow_commands[0]
         assert mock_executor.ecs.run_task.call_args_list[0].kwargs == RUN_TASK_KWARGS
@@ -707,12 +710,15 @@ class TestAwsEcsExecutor:
         Test API failure retries.
         """
         mock_executor.max_run_task_attempts = "2"
-        airflow_keys = ["TaskInstanceKey1", "TaskInstanceKey2"]
+        airflow_keys = [
+            TaskInstanceKey("dag", "task1", "run", 1, -1),
+            TaskInstanceKey("dag", "task2", "run", 1, -1),
+        ]
         airflow_commands = [_generate_mock_cmd(), _generate_mock_cmd()]
 
         mock_executor.execute_async(airflow_keys[0], airflow_commands[0])
         mock_executor.execute_async(airflow_keys[1], airflow_commands[1])
-        assert len(mock_executor.pending_tasks) == 2
+        assert len(mock_executor.pending_workloads) == 2
         caplog.set_level("WARNING")
 
         describe_tasks = [
@@ -764,19 +770,19 @@ class TestAwsEcsExecutor:
         ]
         mock_executor.ecs.describe_tasks.side_effect = [{"tasks": describe_tasks, "failures": []}]
 
-        mock_executor.attempt_task_runs()
+        mock_executor.attempt_workload_runs()
 
         for i in range(2):
             RUN_TASK_KWARGS["overrides"]["containerOverrides"][0]["command"] = airflow_commands[i]
             assert mock_executor.ecs.run_task.call_args_list[i].kwargs == RUN_TASK_KWARGS
 
-        assert len(mock_executor.pending_tasks) == 0
+        assert len(mock_executor.pending_workloads) == 0
         assert len(mock_executor.active_workers.get_all_arns()) == 2
 
-        mock_executor.sync_running_tasks()
+        mock_executor.sync_running_workloads()
         for i in range(2):
             assert (
-                f"Airflow task {airflow_keys[i]} failed due to {describe_tasks[i]['stoppedReason']}. Failure 1 out of 2"
+                f"Airflow workload {airflow_keys[i]} failed due to {describe_tasks[i]['stoppedReason']}. Failure 1 out of 2"
                 in caplog.messages[i]
             )
 
@@ -789,18 +795,18 @@ class TestAwsEcsExecutor:
         ]
         mock_executor.ecs.describe_tasks.side_effect = [{"tasks": describe_tasks, "failures": []}]
 
-        mock_executor.attempt_task_runs()
+        mock_executor.attempt_workload_runs()
 
-        mock_executor.attempt_task_runs()
+        mock_executor.attempt_workload_runs()
 
         for i in range(2):
             RUN_TASK_KWARGS["overrides"]["containerOverrides"][0]["command"] = airflow_commands[i]
             assert mock_executor.ecs.run_task.call_args_list[i].kwargs == RUN_TASK_KWARGS
 
-        mock_executor.sync_running_tasks()
+        mock_executor.sync_running_workloads()
         for i in range(2):
             assert (
-                f"Airflow task {airflow_keys[i]} has failed a maximum of 2 times. Marking as failed"
+                f"Airflow workload {airflow_keys[i]} has failed a maximum of 2 times. Marking as failed"
                 in caplog.messages[i]
             )
 
@@ -810,7 +816,7 @@ class TestAwsEcsExecutor:
         """Test sync from end-to-end."""
         self._mock_sync(mock_executor)
 
-        mock_executor.sync_running_tasks()
+        mock_executor.sync_running_workloads()
         mock_executor.ecs.describe_tasks.assert_called_once()
 
         # Task is not stored in active workers.
@@ -825,7 +831,7 @@ class TestAwsEcsExecutor:
     def test_sync_short_circuits_with_no_arns(self, _, success_mock, fail_mock, mock_executor):
         self._mock_sync(mock_executor)
 
-        mock_executor.sync_running_tasks()
+        mock_executor.sync_running_workloads()
 
         mock_executor.ecs.describe_tasks.assert_not_called()
         fail_mock.assert_not_called()
@@ -854,7 +860,7 @@ class TestAwsEcsExecutor:
         mock_executor.max_run_task_attempts = "1"
         self._mock_sync(mock_executor, expected_state=State.REMOVED, set_task_state=State.REMOVED)
 
-        mock_executor.sync_running_tasks()
+        mock_executor.sync_running_workloads()
 
         # Task is not stored in active workers.
         assert len(mock_executor.active_workers) == 0
@@ -880,11 +886,11 @@ class TestAwsEcsExecutor:
         task_key = mock_airflow_key()
         mock_executor.execute_async(task_key, mock_cmd)
         for _ in range(2):
-            assert len(mock_executor.pending_tasks) == 1
-            keys = [task.key for task in mock_executor.pending_tasks]
+            assert len(mock_executor.pending_workloads) == 1
+            keys = [task.key for task in mock_executor.pending_workloads]
             assert task_key in keys
-            mock_executor.attempt_task_runs()
-            assert len(mock_executor.pending_tasks) == 1
+            mock_executor.attempt_workload_runs()
+            assert len(mock_executor.pending_workloads) == 1
 
         mock_executor.ecs.run_task.return_value = {
             "tasks": [
@@ -897,8 +903,8 @@ class TestAwsEcsExecutor:
             ],
             "failures": [],
         }
-        mock_executor.attempt_task_runs()
-        assert len(mock_executor.pending_tasks) == 0
+        mock_executor.attempt_workload_runs()
+        assert len(mock_executor.pending_workloads) == 0
         assert ARN1 in mock_executor.active_workers.get_all_arns()
 
         mock_executor.ecs.describe_tasks.return_value = {
@@ -908,19 +914,19 @@ class TestAwsEcsExecutor:
             ],
         }
 
-        # Call sync_running_tasks and attempt_task_runs 2 times with failures.
+        # Call sync_running_workloads and attempt_workload_runs 2 times with failures.
         for _ in range(2):
-            mock_executor.sync_running_tasks()
+            mock_executor.sync_running_workloads()
 
             # Ensure task gets removed from active_workers.
             assert ARN1 not in mock_executor.active_workers.get_all_arns()
-            # Ensure task gets back on the pending_tasks queue
-            assert len(mock_executor.pending_tasks) == 1
-            keys = [task.key for task in mock_executor.pending_tasks]
+            # Ensure task gets back on the pending_workloads queue
+            assert len(mock_executor.pending_workloads) == 1
+            keys = [task.key for task in mock_executor.pending_workloads]
             assert task_key in keys
 
-            mock_executor.attempt_task_runs()
-            assert len(mock_executor.pending_tasks) == 0
+            mock_executor.attempt_workload_runs()
+            assert len(mock_executor.pending_workloads) == 0
             assert ARN1 in mock_executor.active_workers.get_all_arns()
 
         # Task is neither failed nor succeeded.
@@ -934,7 +940,7 @@ class TestAwsEcsExecutor:
 
         # 2 run_task failures + 2 describe_task failures = 4 failures
         # Last call should fail the task.
-        mock_executor.sync_running_tasks()
+        mock_executor.sync_running_workloads()
         assert ARN1 not in mock_executor.active_workers.get_all_arns()
         fail_mock.assert_called()
         success_mock.assert_not_called()
@@ -952,9 +958,9 @@ class TestAwsEcsExecutor:
     @mock.patch.object(ecs_executor, "calculate_next_attempt_delay", return_value=dt.timedelta(seconds=0))
     def test_failed_sync_api(self, _, success_mock, fail_mock, mock_executor, mock_cmd):
         """Test what happens when ECS sync fails for certain tasks repeatedly."""
-        airflow_key = "test-key"
+        airflow_key = TaskInstanceKey("dag", "task", "run", 1, -1)
         mock_executor.execute_async(airflow_key, mock_cmd)
-        assert len(mock_executor.pending_tasks) == 1
+        assert len(mock_executor.pending_workloads) == 1
 
         run_task_ret_val = {
             "taskArn": ARN1,
@@ -976,35 +982,35 @@ class TestAwsEcsExecutor:
             ],
         }
         mock_executor.ecs.describe_tasks.return_value = describe_tasks_ret_value
-        mock_executor.attempt_task_runs()
-        assert len(mock_executor.pending_tasks) == 0
+        mock_executor.attempt_workload_runs()
+        assert len(mock_executor.pending_workloads) == 0
         assert len(mock_executor.active_workers.get_all_arns()) == 1
         task_key = mock_executor.active_workers.arn_to_key[ARN1]
 
         # Call Sync 2 times with failures. The task can only fail max_run_task_attempts times.
         for check_count in range(1, int(mock_executor.max_run_task_attempts)):
-            mock_executor.sync_running_tasks()
+            mock_executor.sync_running_workloads()
             assert mock_executor.ecs.describe_tasks.call_count == check_count
 
             # Ensure task gets removed from active_workers.
             assert ARN1 not in mock_executor.active_workers.get_all_arns()
-            # Ensure task gets back on the pending_tasks queue
-            assert len(mock_executor.pending_tasks) == 1
-            keys = [task.key for task in mock_executor.pending_tasks]
+            # Ensure task gets back on the pending_workloads queue
+            assert len(mock_executor.pending_workloads) == 1
+            keys = [task.key for task in mock_executor.pending_workloads]
             assert task_key in keys
 
             # Task is neither failed nor succeeded.
             fail_mock.assert_not_called()
             success_mock.assert_not_called()
-            mock_executor.attempt_task_runs()
+            mock_executor.attempt_workload_runs()
 
-            assert len(mock_executor.pending_tasks) == 0
+            assert len(mock_executor.pending_workloads) == 0
             assert len(mock_executor.active_workers.get_all_arns()) == 1
             assert ARN1 in mock_executor.active_workers.get_all_arns()
             task_key = mock_executor.active_workers.arn_to_key[ARN1]
 
         # Last call should fail the task.
-        mock_executor.sync_running_tasks()
+        mock_executor.sync_running_workloads()
         assert ARN1 not in mock_executor.active_workers.get_all_arns()
         fail_mock.assert_called()
         success_mock.assert_not_called()
@@ -1098,7 +1104,7 @@ class TestAwsEcsExecutor:
         with pytest.raises(ValueError, match='Executor Config should never override "name" or "command"'):
             mock_executor.execute_async(mock_airflow_key, mock_cmd, executor_config=bad_config)
 
-        assert len(mock_executor.pending_tasks) == 0
+        assert len(mock_executor.pending_workloads) == 0
 
     @mock.patch.object(ecs_executor_config, "build_task_kwargs")
     def test_container_not_found(self, mock_build_task_kwargs, mock_executor):
@@ -1112,7 +1118,7 @@ class TestAwsEcsExecutor:
                 '"overrides[containerOverrides][containers][x][command]"'
             )
         )
-        assert len(mock_executor.pending_tasks) == 0
+        assert len(mock_executor.pending_workloads) == 0
 
     def _mock_sync(
         self,
@@ -1121,7 +1127,7 @@ class TestAwsEcsExecutor:
         set_task_state=TaskInstanceState.RUNNING,
     ) -> None:
         """Mock ECS to the expected state."""
-        executor.pending_tasks.clear()
+        executor.pending_workloads.clear()
         self._add_mock_task(executor, ARN1, set_task_state)
 
         response_task_json = {
@@ -1145,7 +1151,14 @@ class TestAwsEcsExecutor:
     @staticmethod
     def _add_mock_task(executor: AwsEcsExecutor, arn: str, state=TaskInstanceState.RUNNING):
         task = mock_task(arn, state)
-        executor.active_workers.add_task(task, mock.Mock(spec=tuple), mock_queue, mock_cmd, mock_config, 1)  # type:ignore[arg-type]
+        executor.active_workers.add_task(
+            task,
+            mock.Mock(spec=TaskInstanceKey),
+            mock_queue,  # type:ignore[arg-type]
+            mock_cmd,  # type:ignore[arg-type]
+            mock_config,  # type:ignore[arg-type]
+            1,
+        )
 
     def _sync_mock_with_call_counts(self, sync_func: Callable):
         """Mock won't work here, because we actually want to call the 'sync' func."""
@@ -1181,7 +1194,7 @@ class TestAwsEcsExecutor:
             ],
         }
         mock_executor.ecs.describe_tasks.return_value = {"tasks": [test_response_task_json], "failures": []}
-        mock_executor.sync_running_tasks()
+        mock_executor.sync_running_workloads()
         if expected_status != State.REMOVED:
             assert mock_executor.active_workers.tasks["arn1"].get_task_state() == expected_status
             # The task is not removed from active_workers in these states
@@ -1210,7 +1223,7 @@ class TestAwsEcsExecutor:
         )
         mock_success_function = patcher.start()
         mock_executor.ecs.describe_tasks.return_value = {"tasks": [test_response_task_json], "failures": []}
-        mock_executor.sync_running_tasks()
+        mock_executor.sync_running_workloads()
         assert len(mock_executor.active_workers) == 0
         mock_success_function.assert_called_once()
 
@@ -1239,7 +1252,7 @@ class TestAwsEcsExecutor:
         )
         mock_failed_function = patcher.start()
         mock_executor.ecs.describe_tasks.return_value = {"tasks": [test_response_task_json], "failures": []}
-        mock_executor.sync_running_tasks()
+        mock_executor.sync_running_workloads()
         assert len(mock_executor.active_workers) == 0
         mock_failed_function.assert_called_once()
         assert (
@@ -1247,7 +1260,6 @@ class TestAwsEcsExecutor:
             "test failure" in caplog.messages[0]
         )
 
-    @pytest.mark.skip(reason="Adopting task instances hasn't been ported over to Airflow 3 yet")
     def test_try_adopt_task_instances(self, mock_executor):
         """Test that executor can adopt orphaned task instances from a SchedulerJob shutdown event."""
         mock_executor.ecs.describe_tasks.return_value = {
@@ -1276,8 +1288,42 @@ class TestAwsEcsExecutor:
         orphaned_tasks[0].external_executor_id = "001"  # Matches a running task_arn
         orphaned_tasks[1].external_executor_id = "002"  # Matches a running task_arn
         orphaned_tasks[2].external_executor_id = None  # One orphaned task has no external_executor_id
-        for task in orphaned_tasks:
+
+        for idx, task in enumerate(orphaned_tasks):
             task.try_number = 1
+            task.key = mock.Mock(spec=TaskInstanceKey)
+            task.queue = "default"
+            task.executor_config = {}
+            task.id = uuid4()
+            task.dag_version_id = uuid4()
+            task.task_id = f"task_{idx}"
+            task.dag_id = "test_dag"
+            task.run_id = "test_run"
+            task.map_index = -1
+            task.pool_slots = 1
+            task.priority_weight = 1
+            task.context_carrier = {}
+            task.hostname = None
+            task.queued_dttm = dt.datetime.now()
+            # Set up nested attributes for BundleInfo
+            task.dag_model = mock.Mock()
+            task.dag_model.bundle_name = "test_bundle"
+            task.dag_model.relative_fileloc = "test_dag.py"
+            task.dag_run = mock.Mock()
+            task.dag_run.bundle_version = "1.0.0"
+            task.dag_run.context_carrier = {}
+
+            # Mock command generation based on Airflow version
+            if not AIRFLOW_V_3_0_PLUS:
+                # For Airflow 2.x, command_as_list will be called
+                task.command_as_list.return_value = [
+                    "airflow",
+                    "tasks",
+                    "run",
+                    "dag",
+                    f"task_{idx}",
+                    "2024-01-01",
+                ]
 
         not_adopted_tasks = mock_executor.try_adopt_task_instances(orphaned_tasks)
 
@@ -1884,7 +1930,173 @@ class TestEcsExecutorConfig:
 
         assert final_run_task_kwargs == expected_result
 
+    @pytest.mark.skipif(not AIRFLOW_V_3_0_PLUS, reason="Test requires Airflow 3+")
+    def test_serialize_workload_to_command(self, mock_executor):
+        """Test that _serialize_workload_to_command properly serializes an ExecuteTask workload."""
+        from airflow.executors.workloads import ExecuteTask
+
+        workload = mock.Mock(spec=ExecuteTask)
+        ser_workload = json.dumps({"test_key": "test_value"})
+        workload.model_dump_json.return_value = ser_workload
+
+        command = mock_executor._serialize_workload_to_command(workload)
+
+        assert command == [
+            "python",
+            "-m",
+            "airflow.sdk.execution_time.execute_workload",
+            "--json-string",
+            ser_workload,
+        ]
+        workload.model_dump_json.assert_called_once()
+
+    @pytest.mark.skipif(not AIRFLOW_V_3_0_PLUS, reason="Test requires Airflow 3+")
+    @mock.patch("airflow.executors.workloads.ExecuteTask")
+    def test_build_task_command_airflow3(self, mock_execute_task_class, mock_executor):
+        """Test _build_task_command for Airflow 3.x+ using Task SDK."""
+        mock_ti = mock.Mock(spec=TaskInstance)
+        mock_workload = mock.Mock()
+        ser_workload = json.dumps({"task": "data"})
+        mock_workload.model_dump_json.return_value = ser_workload
+        mock_execute_task_class.make.return_value = mock_workload
+
+        command = mock_executor._build_task_command(mock_ti)
+
+        mock_execute_task_class.make.assert_called_once_with(mock_ti)
+        assert command == [
+            "python",
+            "-m",
+            "airflow.sdk.execution_time.execute_workload",
+            "--json-string",
+            ser_workload,
+        ]
+
+    @pytest.mark.skipif(AIRFLOW_V_3_0_PLUS, reason="Test requires Airflow 2.x")
+    def test_build_task_command_airflow2(self, mock_executor):
+        """Test _build_task_command for Airflow 2.x using command_as_list."""
+        mock_ti = mock.Mock(spec=TaskInstance)
+        expected_command = ["airflow", "tasks", "run", "dag_id", "task_id", "execution_date"]
+        mock_ti.command_as_list.return_value = expected_command
+
+        command = mock_executor._build_task_command(mock_ti)
+
+        mock_ti.command_as_list.assert_called_once()
+        assert command == expected_command
+
     def test_short_import_path(self):
         from airflow.providers.amazon.aws.executors.ecs import AwsEcsExecutor as AwsEcsExecutorShortPath
 
         assert AwsEcsExecutor is AwsEcsExecutorShortPath
+
+
+class TestEcsExecutorCallbackSupport:
+    """Tests for ExecuteCallback support in the ECS Executor."""
+
+    @pytest.fixture
+    def callback_workload(self):
+        """Create a mock ExecuteCallback workload for testing."""
+        from airflow.executors.workloads import ExecuteCallback
+        from airflow.executors.workloads.base import BundleInfo
+        from airflow.executors.workloads.callback import CallbackDTO, CallbackFetchMethod
+
+        callback_data = CallbackDTO(
+            id="12345678-1234-5678-1234-567812345678",
+            fetch_method=CallbackFetchMethod.IMPORT_PATH,
+            data={"path": "test.module.alert_func", "kwargs": {}},
+        )
+        return ExecuteCallback(
+            callback=callback_data,
+            dag_rel_path="test.py",
+            bundle_info=BundleInfo(name="test_bundle", version="1.0"),
+            token="test_token",
+            log_path="test.log",
+        )
+
+    @pytest.mark.skipif(not AIRFLOW_V_3_3_PLUS, reason="Test requires Airflow 3.3+")
+    def test_supports_callbacks_attribute(self, mock_executor):
+        """Verify that the ECS executor declares callback support."""
+        assert mock_executor.supports_callbacks is True
+
+    @pytest.mark.skipif(not AIRFLOW_V_3_3_PLUS, reason="Test requires Airflow 3.3+")
+    def test_queue_callback_workload(self, mock_executor, callback_workload):
+        """Test that queue_workload correctly stores ExecuteCallback in queued_callbacks."""
+        mock_executor.queue_workload(callback_workload, session=None)
+
+        assert len(mock_executor.queued_callbacks) == 1
+        assert callback_workload.callback.key in mock_executor.queued_callbacks
+        assert mock_executor.queued_callbacks[callback_workload.callback.key] is callback_workload
+
+    @pytest.mark.skipif(not AIRFLOW_V_3_3_PLUS, reason="Test requires Airflow 3.3+")
+    def test_process_callback_workload(self, mock_executor, callback_workload):
+        """Test that _process_workloads handles ExecuteCallback correctly."""
+        callback_key = callback_workload.callback.key
+        mock_executor.queued_callbacks[callback_key] = callback_workload
+
+        mock_executor._process_workloads([callback_workload])
+
+        # Callback should be removed from queued_callbacks
+        assert callback_key not in mock_executor.queued_callbacks
+        # Callback should be added to running set
+        assert callback_key in mock_executor.running
+        # Callback should be added to pending_workloads for execution
+        assert len(mock_executor.pending_workloads) == 1
+        queued = mock_executor.pending_workloads[0]
+        assert queued.key == callback_key
+        assert queued.queue is None
+
+    @pytest.mark.skipif(not AIRFLOW_V_3_3_PLUS, reason="Test requires Airflow 3.3+")
+    def test_execute_async_callback_workload(self, mock_executor, callback_workload):
+        """Test that execute_async serializes ExecuteCallback workloads correctly."""
+        callback_key = callback_workload.callback.key
+        mock_executor.execute_async(key=callback_key, command=[callback_workload], queue=None)
+
+        assert len(mock_executor.pending_workloads) == 1
+        queued = mock_executor.pending_workloads[0]
+        assert queued.key == callback_key
+        # Command should be serialized to the execute_workload entrypoint
+        assert queued.command[0] == "python"
+        assert queued.command[2] == "airflow.sdk.execution_time.execute_workload"
+        assert queued.command[3] == "--json-string"
+
+    @pytest.mark.skipif(not AIRFLOW_V_3_3_PLUS, reason="Test requires Airflow 3.3+")
+    def test_callback_sync_running_success(self, mock_executor, callback_workload):
+        """Test that sync_running_workloads correctly handles successful callback ECS tasks."""
+        callback_key = callback_workload.callback.key
+        ecs_task = mock_task(ARN1, State.SUCCESS)
+        mock_cmd = _generate_mock_cmd()
+        mock_executor.active_workers.add_task(ecs_task, callback_key, None, mock_cmd, {}, 1)
+
+        mock_executor.ecs.describe_tasks.return_value = {
+            "tasks": [
+                {
+                    "taskArn": ARN1,
+                    "lastStatus": "STOPPED",
+                    "desiredStatus": "STOPPED",
+                    "containers": [{"name": "container-name", "exitCode": 0, "lastStatus": "STOPPED"}],
+                    "startedAt": "2024-01-01T00:00:00Z",
+                }
+            ],
+            "failures": [],
+        }
+
+        mock_executor.sync_running_workloads()
+
+        # Callback should be removed from active workers after success
+        assert len(mock_executor.active_workers) == 0
+
+    @pytest.mark.skipif(not AIRFLOW_V_3_3_PLUS, reason="Test requires Airflow 3.3+")
+    def test_collection_mixed_key_types(self):
+        """Test that EcsTaskCollection works with both TaskInstanceKey and CallbackKey workload keys."""
+        from airflow.models.callback import CallbackKey
+
+        collection = EcsTaskCollection()
+        mock_cmd = _generate_mock_cmd()
+        task_key = mock.Mock(spec=TaskInstanceKey)
+        callback_key = CallbackKey("12345678-1234-5678-1234-567812345678")
+
+        collection.add_task(mock_task(ARN1), task_key, "default", mock_cmd, {}, 1)
+        collection.add_task(mock_task(ARN2), callback_key, None, mock_cmd, {}, 1)
+
+        assert len(collection) == 2
+        assert collection.key_to_arn[task_key] == ARN1
+        assert collection.key_to_arn[callback_key] == ARN2

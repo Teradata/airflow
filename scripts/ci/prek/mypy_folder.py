@@ -27,9 +27,6 @@ import os
 import re
 import shlex
 import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).parent.resolve()))
 
 from common_prek_utils import (
     AIRFLOW_ROOT_PATH,
@@ -37,7 +34,7 @@ from common_prek_utils import (
     console,
     get_all_provider_ids,
     initialize_breeze_prek,
-    run_command_via_breeze_shell,
+    run_command_via_breeze_run,
 )
 
 initialize_breeze_prek(__name__, __file__)
@@ -47,6 +44,7 @@ ALLOWED_FOLDERS = [
     "airflow-core",
     *[f"providers/{provider_id.replace('.', '/')}" for provider_id in get_all_provider_ids()],
     "dev",
+    "scripts",
     "devel-common",
     "task-sdk",
     "airflow-ctl",
@@ -171,7 +169,7 @@ mypy_cmd = " ".join(mypy_cmd_parts)
 
 cmd = ["bash", "-c", mypy_cmd]
 
-res = run_command_via_breeze_shell(
+res = run_command_via_breeze_run(
     cmd=cmd,
     warn_image_upgrade_needed=True,
     extra_env={
@@ -190,7 +188,7 @@ if res.returncode != 0:
                 "[yellow]You are running mypy with the folders selected. If you want to "
                 "reproduce it locally, you need to run the following command:\n"
             )
-            console.print("prek --hook-stage manual mypy-<folder> --all-files\n")
+            console.print(f"prek --stage manual mypy-{mypy_folders[0]} --all-files\n")
         upgrading = os.environ.get("UPGRADE_TO_NEWER_DEPENDENCIES", "false") != "false"
         if upgrading:
             console.print(
@@ -211,7 +209,7 @@ if res.returncode != 0:
                 "You are running mypy with the folders selected. If you want to "
                 "reproduce it locally, you need to run the following command:\n"
             )
-            print("prek --hook-stage manual mypy-<folder> --all-files\n")
+            print(f"prek --stage manual mypy-{mypy_folders[0]} --all-files\n")
         upgrading = os.environ.get("UPGRADE_TO_NEWER_DEPENDENCIES", "false") != "false"
         if upgrading:
             print("You are running mypy with the image that has dependencies upgraded automatically.\n")

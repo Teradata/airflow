@@ -48,7 +48,9 @@ Execution API server is because:
 
 from __future__ import annotations
 
+import asyncio
 import itertools
+import threading
 from collections.abc import Iterator
 from datetime import datetime
 from functools import cached_property
@@ -60,25 +62,29 @@ from uuid import UUID
 import attrs
 import msgspec
 import structlog
-from fastapi import Body
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, field_serializer
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, TypeAdapter
 
 from airflow.sdk.api.datamodels._generated import (
     AssetEventDagRunReference,
     AssetEventResponse,
     AssetEventsResponse,
     AssetResponse,
+    AssetStateStoreResponse,
     BundleInfo,
     ConnectionResponse,
+    DagResponse,
     DagRun,
     DagRunStateResponse,
     HITLDetailRequest,
     InactiveAssetsResponse,
+    PreviousTIResponse,
     PrevSuccessfulDagRunResponse,
     TaskBreadcrumbsResponse,
     TaskInstance,
     TaskInstanceState,
     TaskStatesResponse,
+    TaskStateStoreResponse,
+    TIAwaitingInputStatePayload,
     TIDeferredStatePayload,
     TIRescheduleStatePayload,
     TIRetryStatePayload,
@@ -99,6 +105,10 @@ try:
 except ImportError:
     # Available on Unix and Windows (so "everywhere") but lets be safe
     recv_fds = None  # type: ignore[assignment]
+
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
+_trace_propagator = TraceContextTextMapPropagator()
 
 
 if TYPE_CHECKING:
@@ -130,23 +140,14 @@ def _new_encoder() -> msgspec.msgpack.Encoder:
     return msgspec.msgpack.Encoder(enc_hook=_msgpack_enc_hook)
 
 
-class _RequestFrame(msgspec.Struct, array_like=True, frozen=True, omit_defaults=True):
-    id: int
-    """
-    The request id, set by the sender.
-
-    This is used to allow "pipeling" of requests and to be able to tie response to requests, which is
-    particularly useful in the Triggerer where multiple async tasks can send a requests concurrently.
-    """
-    body: dict[str, Any] | None
-
-    req_encoder: ClassVar[msgspec.msgpack.Encoder] = _new_encoder()
+class _FrameMixin:
+    _encoder: ClassVar[msgspec.msgpack.Encoder] = _new_encoder()
 
     def as_bytes(self) -> bytearray:
         # https://jcristharif.com/msgspec/perf-tips.html#length-prefix-framing for inspiration
         buffer = bytearray(256)
 
-        self.req_encoder.encode_into(self, buffer, 4)
+        self._encoder.encode_into(self, buffer, 4)  # type: ignore[arg-type]
 
         n = len(buffer) - 4
         if n >= 2**32:
@@ -156,7 +157,25 @@ class _RequestFrame(msgspec.Struct, array_like=True, frozen=True, omit_defaults=
         return buffer
 
 
-class _ResponseFrame(_RequestFrame, frozen=True):
+class _RequestFrame(_FrameMixin, msgspec.Struct, array_like=True, frozen=True, omit_defaults=True):  # type: ignore[call-arg]
+    id: int
+    """
+    The request id, set by the sender.
+
+    This is used to allow "pipeling" of requests and to be able to tie response to requests, which is
+    particularly useful in the Triggerer where multiple async tasks can send a requests concurrently.
+    """
+    body: dict[str, Any] | None
+    context_carrier: dict[str, str] | None = None
+    """W3C trace context carrier (traceparent + tracestate) of the task runner's active span.
+
+    The supervisor extracts this to restore the task runner's trace context before making outbound HTTP
+    calls, so that server-side spans (e.g. POST /xcoms/…) appear as children of the correct task span
+    rather than under the supervisor's own span.
+    """
+
+
+class _ResponseFrame(_FrameMixin, msgspec.Struct, array_like=True, frozen=True, omit_defaults=True):  # type: ignore[call-arg]
     id: int
     """
     The id of the request this is a response to
@@ -185,31 +204,72 @@ class CommsDecoder(Generic[ReceiveMsgType, SendMsgType]):
 
     err_decoder: TypeAdapter[ErrorResponse] = attrs.field(factory=lambda: TypeAdapter(ToTask), repr=False)
 
+    # Threading lock for sync operations
+    _thread_lock: threading.Lock = attrs.field(factory=threading.Lock, repr=False)
+    # Async lock for async operations
+    _async_lock: asyncio.Lock = attrs.field(factory=asyncio.Lock, repr=False)
+
+    def _make_frame(self, msg: SendMsgType) -> _RequestFrame:
+        carrier: dict[str, str] = {}
+        _trace_propagator.inject(carrier)
+        return _RequestFrame(id=next(self.id_counter), body=msg.model_dump(), context_carrier=carrier or None)
+
     def send(self, msg: SendMsgType) -> ReceiveMsgType | None:
         """Send a request to the parent and block until the response is received."""
-        frame = _RequestFrame(id=next(self.id_counter), body=msg.model_dump())
-        frame_bytes = frame.as_bytes()
+        frame_bytes = self._make_frame(msg).as_bytes()
 
-        self.socket.sendall(frame_bytes)
-        if isinstance(msg, ResendLoggingFD):
-            if recv_fds is None:
-                return None
-            # We need special handling here! The server can't send us the fd number, as the number on the
-            # supervisor will be different to in this process, so we have to mutate the message ourselves here.
-            frame, fds = self._read_frame(maxfds=1)
-            resp = self._from_frame(frame)
-            if TYPE_CHECKING:
-                assert isinstance(resp, SentFDs)
-            resp.fds = fds
-            # Since we know this is an expliclt SendFDs, and since this class is generic SendFDs might not
-            # always be in the return type union
-            return resp  # type: ignore[return-value]
+        # We must make sure sockets aren't intermixed between sync and async calls,
+        # thus we need a dual locking mechanism to ensure that.
+        with self._thread_lock:
+            self.socket.sendall(frame_bytes)
+            if isinstance(msg, ResendLoggingFD):
+                if recv_fds is None:
+                    return None
+                # We need special handling here! The server can't send us the fd number, as the number on the
+                # supervisor will be different to in this process, so we have to mutate the message ourselves here.
+                frame, fds = self._read_frame(maxfds=1)
+                resp = self._from_frame(frame)
+                if TYPE_CHECKING:
+                    assert isinstance(resp, SentFDs)
+                resp.fds = fds
+                # Since we know this is an expliclt SendFDs, and since this class is generic SendFDs might not
+                # always be in the return type union
+                return resp  # type: ignore[return-value]
 
-        return self._get_response()
+            return self._get_response()
 
     async def asend(self, msg: SendMsgType) -> ReceiveMsgType | None:
-        """Send a request to the parent without blocking."""
-        raise NotImplementedError
+        """
+        Send a request to the parent without blocking.
+
+        Uses async lock for coroutine safety and thread lock for socket safety.
+        """
+        frame_bytes = self._make_frame(msg).as_bytes()
+
+        async with self._async_lock:
+            # Acquire the threading lock without blocking the event loop
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._thread_lock.acquire)
+            try:
+                # Async write to socket
+                await loop.sock_sendall(self.socket, frame_bytes)
+
+                if isinstance(msg, ResendLoggingFD):
+                    if recv_fds is None:
+                        return None
+                    # Blocking read in a thread
+                    frame, fds = await asyncio.to_thread(self._read_frame, maxfds=1)
+                    resp = self._from_frame(frame)
+                    if TYPE_CHECKING:
+                        assert isinstance(resp, SentFDs)
+                    resp.fds = fds
+                    return resp  # type: ignore[return-value]
+
+                # Normal blocking read in a thread
+                frame = await asyncio.to_thread(self._read_frame)
+                return self._from_frame(frame)
+            finally:
+                self._thread_lock.release()
 
     @overload
     def _read_frame(self, maxfds: None = None) -> _ResponseFrame: ...
@@ -307,22 +367,33 @@ class AssetResult(AssetResponse):
 class AssetEventSourceTaskInstance:
     """Used in AssetEventResult."""
 
-    dag_id: str
+    dag_run: DagRun
     task_id: str
-    run_id: str
     map_index: int
 
-    def xcom_pull(
-        self,
-        *,
-        key: str = "return_value",
-        default: Any = None,
-    ) -> Any:
+    @property
+    def dag_id(self) -> str:
+        return self.dag_run.dag_id
+
+    @property
+    def run_id(self) -> str:
+        return self.dag_run.run_id
+
+    def xcom_pull(self, *, key: str = "return_value", default: Any = None) -> Any:
         from airflow.sdk.execution_time.xcom import XCom
 
         if (value := XCom.get_value(ti_key=self, key=key)) is None:
             return default
         return value
+
+
+def _fetch_dag_run(*, dag_id: str, run_id: str) -> DagRun:
+    from airflow.sdk.execution_time.task_runner import SUPERVISOR_COMMS
+
+    response = SUPERVISOR_COMMS.send(GetDagRun(dag_id=dag_id, run_id=run_id))
+    if TYPE_CHECKING:
+        assert isinstance(response, DagRunResult)
+    return response
 
 
 class AssetEventResult(AssetEventResponse):
@@ -333,16 +404,20 @@ class AssetEventResult(AssetEventResponse):
         return cls(**asset_event_response.model_dump(exclude_defaults=True))
 
     @cached_property
-    def source_task_instance(self) -> AssetEventSourceTaskInstance | None:
-        if not (self.source_task_id and self.source_dag_id and self.source_run_id):
+    def source_dag_run(self) -> DagRun | None:
+        if not self.source_dag_id or not self.source_run_id:
             return None
-        if self.source_map_index is None:
-            return None
+        return _fetch_dag_run(dag_id=self.source_dag_id, run_id=self.source_run_id)
 
+    @cached_property
+    def source_task_instance(self) -> AssetEventSourceTaskInstance | None:
+        if self.source_task_id is None or self.source_map_index is None:
+            return None
+        if (dag_run := self.source_dag_run) is None:
+            return None
         return AssetEventSourceTaskInstance(
-            dag_id=self.source_dag_id,
+            dag_run=dag_run,
             task_id=self.source_task_id,
-            run_id=self.source_run_id,
             map_index=self.source_map_index,
         )
 
@@ -381,16 +456,20 @@ class AssetEventDagRunReferenceResult(AssetEventDagRunReference):
         return cls(**asset_event_dag_run_reference.model_dump(exclude_defaults=True))
 
     @cached_property
-    def source_task_instance(self) -> AssetEventSourceTaskInstance | None:
-        if not (self.source_task_id and self.source_dag_id and self.source_run_id):
+    def source_dag_run(self) -> DagRun | None:
+        if not self.source_dag_id or not self.source_run_id:
             return None
-        if self.source_map_index is None:
-            return None
+        return _fetch_dag_run(dag_id=self.source_dag_id, run_id=self.source_run_id)
 
+    @cached_property
+    def source_task_instance(self) -> AssetEventSourceTaskInstance | None:
+        if self.source_task_id is None or self.source_map_index is None:
+            return None
+        if (dag_run := self.source_dag_run) is None:
+            return None
         return AssetEventSourceTaskInstance(
-            dag_id=self.source_dag_id,
+            dag_run=dag_run,
             task_id=self.source_task_id,
-            run_id=self.source_run_id,
             map_index=self.source_map_index,
         )
 
@@ -431,7 +510,7 @@ class XComResult(XComResponse):
 
 class XComCountResponse(BaseModel):
     len: int
-    type: Literal["XComLengthResponse"] = "XComLengthResponse"
+    type: Literal["XComCountResponse"] = "XComCountResponse"
 
 
 class XComSequenceIndexResult(BaseModel):
@@ -485,6 +564,61 @@ class VariableResult(VariableResponse):
         return cls(**variable_response.model_dump(exclude_defaults=True), type="VariableResult")
 
 
+class TaskStateStoreResult(TaskStateStoreResponse):
+    """Response to GetTaskStateStore; wraps the generated API response for supervisor to worker comms."""
+
+    type: Literal["TaskStateStoreResult"] = "TaskStateStoreResult"
+
+    @classmethod
+    def from_task_state_store_response(cls, resp: TaskStateStoreResponse) -> TaskStateStoreResult:
+        return cls(**resp.model_dump(exclude_defaults=True), type="TaskStateStoreResult")
+
+
+class AssetStateStoreResult(AssetStateStoreResponse):
+    """Response to GetAssetStateStore; wraps the generated API response for supervisor to worker comms."""
+
+    type: Literal["AssetStateStoreResult"] = "AssetStateStoreResult"
+
+    @classmethod
+    def from_asset_state_store_response(cls, resp: AssetStateStoreResponse) -> AssetStateStoreResult:
+        return cls(**resp.model_dump(exclude_defaults=True), type="AssetStateStoreResult")
+
+
+class AssetsByAliasResult(BaseModel):
+    """Response to GetAssetsByAlias; list of concrete assets resolved from an alias."""
+
+    assets: list[AssetResult]
+    type: Literal["AssetsByAliasResult"] = "AssetsByAliasResult"
+
+    @classmethod
+    def from_asset_responses(cls, asset_responses: list[AssetResponse]) -> AssetsByAliasResult:
+        return cls(
+            assets=[AssetResult.from_asset_response(a) for a in asset_responses],
+            type="AssetsByAliasResult",
+        )
+
+
+class VariableKeysResult(BaseModel):
+    keys: list[str]
+    total_entries: int
+    type: Literal["VariableKeysResult"] = "VariableKeysResult"
+
+
+class DagRunResult(DagRun):
+    type: Literal["DagRunResult"] = "DagRunResult"
+
+    @classmethod
+    def from_api_response(cls, dr_response: DagRun) -> DagRunResult:
+        """
+        Create result class from API Response.
+
+        API Response is autogenerated from the API schema, so we need to convert it to Result
+        for communication between the Supervisor and the task process since it needs a
+        discriminator field.
+        """
+        return cls(**dr_response.model_dump(exclude_defaults=True), type="DagRunResult")
+
+
 class DagRunStateResult(DagRunStateResponse):
     type: Literal["DagRunStateResult"] = "DagRunStateResult"
 
@@ -507,6 +641,13 @@ class PreviousDagRunResult(BaseModel):
 
     dag_run: DagRun | None = None
     type: Literal["PreviousDagRunResult"] = "PreviousDagRunResult"
+
+
+class PreviousTIResult(BaseModel):
+    """Response containing previous task instance data."""
+
+    task_instance: PreviousTIResponse | None = None
+    type: Literal["PreviousTIResult"] = "PreviousTIResult"
 
 
 class PrevSuccessfulDagRunResult(PrevSuccessfulDagRunResponse):
@@ -613,21 +754,43 @@ class HITLDetailRequestResult(HITLDetailRequest):
         return cls(**hitl_request.model_dump(exclude_defaults=True), type="HITLDetailRequestResult")
 
 
+class DagResult(DagResponse):
+    type: Literal["DagResult"] = "DagResult"
+
+    @classmethod
+    def from_api_response(cls, dag_response: DagResponse) -> DagResult:
+        """
+        Create result class from API Response.
+
+        API Response is autogenerated from the API schema, so we need to convert it to Result
+        for communication between the Supervisor and the task process since it needs a
+        discriminator field.
+        """
+        return cls(**dag_response.model_dump(exclude_defaults=True), type="DagResult")
+
+
 ToTask = Annotated[
     AssetResult
+    | AssetsByAliasResult
     | AssetEventsResult
+    | AssetStateStoreResult
     | ConnectionResult
+    | DagRunResult
     | DagRunStateResult
     | DRCount
+    | DagResult
     | ErrorResponse
     | PrevSuccessfulDagRunResult
+    | PreviousTIResult
     | SentFDs
     | StartupDetails
     | TaskRescheduleStartDate
+    | TaskStateStoreResult
     | TICount
     | TaskBreadcrumbsResult
     | TaskStatesResult
     | VariableResult
+    | VariableKeysResult
     | XComCountResponse
     | XComResult
     | XComSequenceIndexResult
@@ -671,18 +834,11 @@ class DeferTask(TIDeferredStatePayload):
 
     type: Literal["DeferTask"] = "DeferTask"
 
-    @field_serializer("trigger_kwargs", "next_kwargs", check_fields=True)
-    def _serde_kwarg_fields(self, val: str | dict[str, Any] | None, _info):
-        from airflow.serialization.serialized_objects import BaseSerialization
 
-        if not isinstance(val, dict):
-            # None, or an encrypted string
-            return val
+class AwaitInputTask(TIAwaitingInputStatePayload):
+    """Park a task instance awaiting human input (Human-in-the-loop), without a trigger."""
 
-        if val.keys() == {"__type", "__var"}:
-            # Already encoded.
-            return val
-        return BaseSerialization.serialize(val or {})
+    type: Literal["AwaitInputTask"] = "AwaitInputTask"
 
 
 class RetryTask(TIRetryStatePayload):
@@ -720,7 +876,7 @@ class GetXComCount(BaseModel):
     dag_id: str
     run_id: str
     task_id: str
-    type: Literal["GetNumberXComs"] = "GetNumberXComs"
+    type: Literal["GetXComCount"] = "GetXComCount"
 
 
 class GetXComSequenceItem(BaseModel):
@@ -746,32 +902,12 @@ class GetXComSequenceSlice(BaseModel):
 
 class SetXCom(BaseModel):
     key: str
-    value: Annotated[
-        # JsonValue can handle non JSON stringified dicts, lists and strings, which is better
-        # for the task intuitibe to send to the supervisor
-        JsonValue,
-        Body(
-            description="A JSON-formatted string representing the value to set for the XCom.",
-            openapi_examples={
-                "simple_value": {
-                    "summary": "Simple value",
-                    "value": "value1",
-                },
-                "dict_value": {
-                    "summary": "Dictionary value",
-                    "value": {"key2": "value2"},
-                },
-                "list_value": {
-                    "summary": "List value",
-                    "value": ["value1"],
-                },
-            },
-        ),
-    ]
+    value: JsonValue
     dag_id: str
     run_id: str
     task_id: str
     map_index: int | None = None
+    dag_result: bool = False
     mapped_length: int | None = None
     type: Literal["SetXCom"] = "SetXCom"
 
@@ -785,6 +921,80 @@ class DeleteXCom(BaseModel):
     type: Literal["DeleteXCom"] = "DeleteXCom"
 
 
+class GetTaskStateStore(BaseModel):
+    ti_id: UUID
+    key: str
+    type: Literal["GetTaskStateStore"] = "GetTaskStateStore"
+
+
+class SetTaskStateStore(BaseModel):
+    ti_id: UUID
+    key: str
+    value: JsonValue
+    expires_at: AwareDatetime | None
+    type: Literal["SetTaskStateStore"] = "SetTaskStateStore"
+
+
+class DeleteTaskStateStore(BaseModel):
+    ti_id: UUID
+    key: str
+    type: Literal["DeleteTaskStateStore"] = "DeleteTaskStateStore"
+
+
+class ClearTaskStateStore(BaseModel):
+    ti_id: UUID
+    all_map_indices: bool = False
+    type: Literal["ClearTaskStateStore"] = "ClearTaskStateStore"
+
+
+class GetAssetStateStoreByName(BaseModel):
+    name: str
+    key: str
+    type: Literal["GetAssetStateStoreByName"] = "GetAssetStateStoreByName"
+
+
+class GetAssetStateStoreByUri(BaseModel):
+    uri: str
+    key: str
+    type: Literal["GetAssetStateStoreByUri"] = "GetAssetStateStoreByUri"
+
+
+class SetAssetStateStoreByName(BaseModel):
+    name: str
+    key: str
+    value: JsonValue
+    type: Literal["SetAssetStateStoreByName"] = "SetAssetStateStoreByName"
+
+
+class SetAssetStateStoreByUri(BaseModel):
+    uri: str
+    key: str
+    value: JsonValue
+    type: Literal["SetAssetStateStoreByUri"] = "SetAssetStateStoreByUri"
+
+
+class DeleteAssetStateStoreByName(BaseModel):
+    name: str
+    key: str
+    type: Literal["DeleteAssetStateStoreByName"] = "DeleteAssetStateStoreByName"
+
+
+class DeleteAssetStateStoreByUri(BaseModel):
+    uri: str
+    key: str
+    type: Literal["DeleteAssetStateStoreByUri"] = "DeleteAssetStateStoreByUri"
+
+
+class ClearAssetStateStoreByName(BaseModel):
+    name: str
+    type: Literal["ClearAssetStateStoreByName"] = "ClearAssetStateStoreByName"
+
+
+class ClearAssetStateStoreByUri(BaseModel):
+    uri: str
+    type: Literal["ClearAssetStateStoreByUri"] = "ClearAssetStateStoreByUri"
+
+
 class GetConnection(BaseModel):
     conn_id: str
     type: Literal["GetConnection"] = "GetConnection"
@@ -793,6 +1003,13 @@ class GetConnection(BaseModel):
 class GetVariable(BaseModel):
     key: str
     type: Literal["GetVariable"] = "GetVariable"
+
+
+class GetVariableKeys(BaseModel):
+    prefix: str | None = None
+    limit: int = 1000
+    offset: int = 0
+    type: Literal["GetVariableKeys"] = "GetVariableKeys"
 
 
 class PutVariable(BaseModel):
@@ -834,6 +1051,12 @@ class TriggerDagRun(TriggerDAGRunPayload):
     type: Literal["TriggerDagRun"] = "TriggerDagRun"
 
 
+class GetDagRun(BaseModel):
+    dag_id: str
+    run_id: str
+    type: Literal["GetDagRun"] = "GetDagRun"
+
+
 class GetDagRunState(BaseModel):
     dag_id: str
     run_id: str
@@ -847,6 +1070,17 @@ class GetPreviousDagRun(BaseModel):
     type: Literal["GetPreviousDagRun"] = "GetPreviousDagRun"
 
 
+class GetPreviousTI(BaseModel):
+    """Request to get previous task instance."""
+
+    dag_id: str
+    task_id: str
+    logical_date: AwareDatetime | None = None
+    map_index: int = -1
+    state: TaskInstanceState | None = None
+    type: Literal["GetPreviousTI"] = "GetPreviousTI"
+
+
 class GetAssetByName(BaseModel):
     name: str
     type: Literal["GetAssetByName"] = "GetAssetByName"
@@ -855,6 +1089,11 @@ class GetAssetByName(BaseModel):
 class GetAssetByUri(BaseModel):
     uri: str
     type: Literal["GetAssetByUri"] = "GetAssetByUri"
+
+
+class GetAssetsByAlias(BaseModel):
+    alias_name: str
+    type: Literal["GetAssetsByAlias"] = "GetAssetsByAlias"
 
 
 class GetAssetEventByAsset(BaseModel):
@@ -952,23 +1191,43 @@ class MaskSecret(BaseModel):
     type: Literal["MaskSecret"] = "MaskSecret"
 
 
+class GetDag(BaseModel):
+    dag_id: str
+    type: Literal["GetDag"] = "GetDag"
+
+
 ToSupervisor = Annotated[
-    DeferTask
+    AwaitInputTask
+    | ClearAssetStateStoreByName
+    | ClearAssetStateStoreByUri
+    | ClearTaskStateStore
+    | DeferTask
+    | DeleteAssetStateStoreByName
+    | DeleteAssetStateStoreByUri
+    | DeleteTaskStateStore
     | DeleteXCom
     | GetAssetByName
     | GetAssetByUri
+    | GetAssetsByAlias
     | GetAssetEventByAsset
     | GetAssetEventByAssetAlias
+    | GetAssetStateStoreByName
+    | GetAssetStateStoreByUri
     | GetConnection
+    | GetDagRun
     | GetDagRunState
     | GetDRCount
+    | GetDag
     | GetPrevSuccessfulDagRun
     | GetPreviousDagRun
+    | GetPreviousTI
     | GetTaskRescheduleStartDate
+    | GetTaskStateStore
     | GetTICount
     | GetTaskBreadcrumbs
     | GetTaskStates
     | GetVariable
+    | GetVariableKeys
     | GetXCom
     | GetXComCount
     | GetXComSequenceItem
@@ -976,8 +1235,11 @@ ToSupervisor = Annotated[
     | PutVariable
     | RescheduleTask
     | RetryTask
+    | SetAssetStateStoreByName
+    | SetAssetStateStoreByUri
     | SetRenderedFields
     | SetRenderedMapIndex
+    | SetTaskStateStore
     | SetXCom
     | SkipDownstreamTasks
     | SucceedTask

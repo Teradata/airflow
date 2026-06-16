@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 from contextlib import nullcontext
+from typing import Literal
 
 import pytest
 
@@ -137,6 +138,39 @@ class TestParam:
         with pytest.raises(ParamValidationError, match="is not a 'date'"):
             Param(date_string, type="string", format="date").resolve()
 
+    @pytest.mark.parametrize(
+        "duration",
+        [
+            pytest.param("PT15M", id="minutes-only"),
+            pytest.param("P1Y", id="years-only"),
+            pytest.param("P1W", id="weeks-only"),
+            pytest.param("P1D", id="days-only"),
+            pytest.param("PT1H", id="hours-only"),
+            pytest.param("PT30S", id="seconds-only"),
+            pytest.param("P1DT2H", id="days-and-hours"),
+            pytest.param("P1Y2M3DT4H5M6S", id="full-duration"),
+            pytest.param("PT1.5H", id="fractional-hours-dot"),
+        ],
+    )
+    def test_string_duration_format(self, duration):
+        """Test valid ISO 8601 duration strings."""
+        assert Param(duration, type="string", format="duration").resolve() == duration
+
+    @pytest.mark.parametrize(
+        "duration",
+        [
+            pytest.param("P", id="bare-P"),
+            pytest.param("PT", id="bare-PT"),
+            pytest.param("invalid", id="plain-text"),
+            pytest.param("15M", id="missing-P-prefix"),
+            pytest.param("1Y2M", id="no-P-prefix"),
+        ],
+    )
+    def test_string_duration_format_error(self, duration):
+        """Test invalid ISO 8601 duration strings."""
+        with pytest.raises(ParamValidationError, match="is not a 'duration'"):
+            Param(duration, type="string", format="duration").resolve()
+
     def test_int_param(self):
         p = Param(5)
         assert p.resolve() == 5
@@ -207,10 +241,13 @@ class TestParam:
     def test_dump(self):
         p = Param("hello", description="world", type="string", minLength=2)
         dump = p.dump()
-        assert dump["__class"] == "airflow.sdk.definitions.param.Param"
-        assert dump["value"] == "hello"
-        assert dump["description"] == "world"
-        assert dump["schema"] == {"type": "string", "minLength": 2}
+        assert dump == {
+            "__class": "airflow.sdk.definitions.param.Param",
+            "value": "hello",
+            "description": "world",
+            "schema": {"type": "string", "minLength": 2},
+            "source": None,
+        }
 
     @pytest.mark.parametrize(
         "param",
@@ -307,3 +344,47 @@ class TestParamsDict:
     def test_repr(self):
         pd = ParamsDict({"key": Param("value", type="string")})
         assert repr(pd) == "{'key': 'value'}"
+
+    @pytest.mark.parametrize("source", ("dag", "task"))
+    def test_fill_missing_param_source(self, source: Literal["dag", "task"]):
+        pd = ParamsDict(
+            {
+                "key": Param("value", type="string"),
+                "key2": "value2",
+            }
+        )
+        pd._fill_missing_param_source(source)
+        for param in pd.values():
+            assert param.source == source
+
+    def test_fill_missing_param_source_not_overwrite_existing(self):
+        pd = ParamsDict(
+            {
+                "key": Param("value", type="string", source="dag"),
+                "key2": "value2",
+                "key3": "value3",
+            }
+        )
+        pd._fill_missing_param_source("task")
+        for key, expected_source in (
+            ("key", "dag"),
+            ("key2", "task"),
+            ("key3", "task"),
+        ):
+            assert pd.get_param(key).source == expected_source
+
+    def test_filter_params_by_source(self):
+        pd = ParamsDict(
+            {
+                "key": Param("value", type="string", source="dag"),
+                "key2": Param("value", source="task"),
+            }
+        )
+        assert ParamsDict.filter_params_by_source(pd, "dag") == ParamsDict(
+            {"key": Param("value", type="string", source="dag")},
+        )
+        assert ParamsDict.filter_params_by_source(pd, "task") == ParamsDict(
+            {
+                "key2": Param("value", source="task"),
+            }
+        )

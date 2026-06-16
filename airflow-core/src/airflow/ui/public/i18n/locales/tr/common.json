@@ -18,14 +18,21 @@
   "asset_other": "Varlıklar",
   "assetEvent_one": "Varlık Etkinliği",
   "assetEvent_other": "Varlık Etkinlikleri",
+  "assetInactive": {
+    "tooltip": "Yukarı akış varlığı devre dışı bırakıldı; zamanlayıcı yeniden etkinleştirilene kadar bölüm değerlendirmesini bekletiyor."
+  },
   "backfill_one": "Geriye Dönük Çalıştırma",
   "backfill_other": "Geriye Dönük Çalıştırmalar",
   "browse": {
     "auditLog": "Denetim Günlüğü",
+    "deadlines": "Son Tarihler",
+    "jobs": "İşler",
     "requiredActions": "Gerekli Eylemler",
     "xcoms": "XCom'lar"
   },
+  "collapseAllExtra": "Tüm ek JSON'ları daralt",
   "collapseDetailsPanel": "Detay Panelini Daralt",
+  "consumingAsset": "Tüketen Varlık",
   "createdAssetEvent_one": "Oluşturulan Varlık Etkinliği",
   "createdAssetEvent_other": "Oluşturulan Varlık Etkinlikleri",
   "dag_one": "Dag",
@@ -58,7 +65,14 @@
     "dagVersions": "Dag Versiyonu(ları)",
     "dataIntervalEnd": "Veri Aralığı Sonu",
     "dataIntervalStart": "Veri Aralığı Başlangıcı",
+    "durationStats": {
+      "mean": "Ortalama",
+      "mode": "Tepe Değer"
+    },
+    "expectedDuration": "Beklenen Süre",
     "lastSchedulingDecision": "Son Zamanlama Kararı",
+    "mappedPartitionKey": "Haritalanmış Bölüm Anahtarı",
+    "partitionKey": "Bölüm Anahtarı",
     "queuedAt": "Kuyruğa Alınma Zamanı",
     "runAfter": "Sonra Çalıştır",
     "runType": "Çalıştırma Tipi",
@@ -72,6 +86,11 @@
   "dagWarnings": "Dag Uyarıları/Hataları",
   "defaultToGraphView": "Varsayılan olarak grafik görünümü",
   "defaultToGridView": "Varsayılan olarak ızgara görünümü",
+  "delete": "Sil",
+  "diff": "Fark modu",
+  "diffCompareWith": "ile karşılaştır",
+  "diffExit": "Fark modundan çık",
+  "diffSelectVersionToCompare": "Karşılaştırmak için bir versiyon seçin",
   "direction": "Yön",
   "docs": {
     "documentation": "Dokümantasyon",
@@ -84,13 +103,21 @@
     "tooltip": "{{hotkey}} tuşuna basarak indir"
   },
   "duration": "Süre",
+  "edit": "Güncelle",
   "endDate": "Bitiş Tarihi",
   "error": {
     "back": "Geri",
     "defaultMessage": "Beklenmeyen bir hata oluştu",
     "home": "Ana Sayfa",
+    "invalidUrl": "Sayfa Bulunamadı. Lütfen URL'yi kontrol edin ve tekrar deneyin.",
     "notFound": "Sayfa Bulunamadı",
     "title": "Hata"
+  },
+  "errors": {
+    "forbidden": {
+      "description": "Bu eylemi gerçekleştirme izniniz yok.",
+      "title": "Erişim Reddedildi"
+    }
   },
   "expand": {
     "collapse": "Daralt",
@@ -98,6 +125,7 @@
     "hotkey": "e",
     "tooltip": "{{hotkey}} tuşuna basarak genişletmeyi değiştir"
   },
+  "expandAllExtra": "Tüm ek JSON'ları genişlet",
   "expression": {
     "all": "Tümü",
     "and": "VE",
@@ -108,22 +136,29 @@
   "filters": {
     "durationFrom": "Süre Başlangıcı",
     "durationTo": "Süre Bitişi",
+    "endTime": "Bitiş Zamanı",
     "logicalDateFrom": "Mantıksal tarih başlangıcı",
     "logicalDateTo": "Mantıksal tarih bitişi",
     "runAfterFrom": "Şu tarihten sonra çalıştır (başlangıç)",
-    "runAfterTo": "Şu tarihten sonra çalıştır (bitiş)"
+    "runAfterTo": "Şu tarihten sonra çalıştır (bitiş)",
+    "searchAsset": "Varlık Ara",
+    "selectDateRange": "Lütfen bir tarih aralığı seçin",
+    "startTime": "Başlangıç Zamanı"
   },
+  "generateToken": "Jeton Oluştur",
   "logicalDate": "Mantıksal Tarih",
   "logout": "Çıkış",
   "logoutConfirmation": "Uygulamadan çıkış yapmak üzeresiniz.",
   "mapIndex": "Harita İndeksi",
   "modal": {
+    "add": "Ekle",
     "cancel": "İptal",
     "confirm": "Onayla",
     "delete": {
       "button": "Sil",
       "confirmation": "{{resourceName}} öğesini silmek istediğinizden emin misiniz? Bu işlem geri alınamaz."
-    }
+    },
+    "save": "Kaydet"
   },
   "nav": {
     "admin": "Yönetici",
@@ -144,18 +179,17 @@
     "placeholder": "Not ekle...",
     "taskInstance": "Görev Örneği Notu"
   },
-  "pools": {
-    "deferred": "Ertelenmiş",
-    "open": "Açık",
-    "pools_one": "Havuz",
-    "pools_other": "Havuzlar",
-    "queued": "Kuyrukta",
-    "running": "Çalışıyor",
-    "scheduled": "Planlanmış"
+  "partitionedDagRun_one": "Haritalanmış Dag Çalıştırması",
+  "partitionedDagRun_other": "Haritalanmış Dag Çalıştırmaları",
+  "partitionedDagRunDetail": {
+    "receivedAssetEvents": "Varlık Etkinlikleri Alındı"
   },
+  "pendingDagRun_one": "{{count}} Bekleyen Dag Çalıştırması",
+  "pendingDagRun_other": "{{count}} Bekleyen Dag Çalıştırması",
   "reset": "Sıfırla",
   "runId": "Çalıştırma Kimliği",
   "runTypes": {
+    "asset_materialization": "Varlık Materyalizasyonu",
     "asset_triggered": "Varlık Tetiklemeli",
     "backfill": "Geriye Dönük Çalıştırma",
     "manual": "Manuel",
@@ -168,6 +202,12 @@
     },
     "tooltip": "{{direction}} kaydırmak için {{hotkey}} tuşuna basın"
   },
+  "search": {
+    "advanced": {
+      "description": "Değerin herhangi bir yerinde eşleştir (alt dize araması). Varsayılan B-tree indeksini kullanamadığı için büyük dağıtımlarda daha yavaştır. Ayrıntılar için özel meta veri indeksleri ile ilgili dokümantasyon bölümüne bakın.",
+      "title": "Herhangi bir yerde eşleştir"
+    }
+  },
   "security": {
     "actions": "Eylemler",
     "permissions": "İzinler",
@@ -176,7 +216,9 @@
     "users": "Kullanıcılar"
   },
   "selectLanguage": "Dil Seçin",
+  "selected": "Seçili",
   "showDetailsPanel": "Detay Panelini Göster",
+  "signedInAs": "olarak giriş yapıldı",
   "source": {
     "hide": "Kaynağı Gizle",
     "hotkey": "s",
@@ -187,10 +229,12 @@
   "startDate": "Başlangıç Tarihi",
   "state": "Durum",
   "states": {
+    "awaiting_input": "Girdi Bekleniyor",
     "deferred": "Ertelenmiş",
     "failed": "Başarısız",
     "no_status": "Durum Yok",
     "none": "Durum Yok",
+    "open": "Açık",
     "planned": "Planlanmış",
     "queued": "Kuyrukta",
     "removed": "Kaldırılmış",
@@ -228,7 +272,11 @@
   },
   "task_one": "Görev",
   "task_other": "Görevler",
-  "taskGroup": "Görev Grubu",
+  "taskGroup": {
+    "documentation": "Görev Grubu Dokümantasyonu"
+  },
+  "taskGroup_one": "Görev Grubu",
+  "taskGroup_other": "Görev Grupları",
   "taskId": "Görev Kimliği",
   "taskInstance": {
     "dagVersion": "Dag Versiyonu",
@@ -242,6 +290,7 @@
     "priorityWeight": "Öncelik Ağırlığı",
     "queue": "Kuyruk",
     "queuedWhen": "Kuyruğa Alınma",
+    "renderedMapIndex": "İşlenmiş Harita İndeksi",
     "scheduledWhen": "Planlanma",
     "triggerer": {
       "assigned": "Atanmış tetikleyici",
@@ -274,11 +323,25 @@
     "utc": "UTC (Koordineli Evrensel Saat)"
   },
   "toaster": {
+    "bulkClear": {
+      "error": "Toplu {{resourceName}} Temizleme İsteği Başarısız",
+      "success": {
+        "description": "{{count}} {{resourceName}} başarıyla temizlendi. Anahtarlar: {{keys}}",
+        "title": "Toplu {{resourceName}} Temizleme İsteği Gönderildi"
+      }
+    },
     "bulkDelete": {
       "error": "Toplu {{resourceName}} Silme İsteği Başarısız",
       "success": {
         "description": "{{count}} {{resourceName}} başarıyla silindi. Anahtarlar: {{keys}}",
         "title": "Toplu {{resourceName}} Silme İsteği Gönderildi"
+      }
+    },
+    "bulkUpdate": {
+      "error": "Toplu {{resourceName}} Güncelleme İsteği Başarısız",
+      "success": {
+        "description": "{{count}} {{resourceName}} başarıyla güncellendi. Anahtarlar: {{keys}}",
+        "title": "Toplu {{resourceName}} Güncelleme İsteği Gönderildi"
       }
     },
     "create": {
@@ -310,10 +373,26 @@
       }
     }
   },
+  "tokenGeneration": {
+    "apiToken": "API Jetonu",
+    "cliToken": "CLI Jetonu",
+    "errorDescription": "Jeton oluşturulurken bir hata oluştu. Lütfen tekrar deneyin.",
+    "errorTitle": "Jeton Oluşturma Başarısız",
+    "generate": "Oluştur",
+    "selectType": "Oluşturulacak jeton türünü seçin.",
+    "title": "Jeton Oluştur",
+    "tokenExpiresIn": "Bu jeton {{duration}} içinde sona erecek.",
+    "tokenGenerated": "Jetonunuz oluşturuldu.",
+    "tokenShownOnce": "Bu jeton yalnızca bir kez gösterilecek. Şimdi kopyalayın."
+  },
   "total": "Tümü {{state}}",
   "triggered": "Tetiklendi",
   "tryNumber": "Deneme Sayısı",
   "user": "Kullanıcı",
+  "validation": {
+    "mustBeAtLeast": "En az {{min}} olmalıdır.",
+    "mustBeValidNumber": "Geçerli bir sayı olmalıdır."
+  },
   "wrap": {
     "hotkey": "w",
     "tooltip": "Kaydırmayı açıp kapatmak için {{hotkey}} tuşuna basın",

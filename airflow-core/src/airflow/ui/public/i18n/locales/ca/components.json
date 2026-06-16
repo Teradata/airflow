@@ -10,8 +10,12 @@
     "maxRuns": "Màxim d'execucions actives",
     "missingAndErroredRuns": "Execucions absents i amb errors",
     "missingRuns": "Execucions absents",
+    "overrideExistingParams": "Substituir paràmetres en les execucions existents",
+    "permissionDenied": "Execució de prova fallida: l'usuari no té permís per crear reompliments.",
     "reprocessBehavior": "Comportament de reprocessament",
     "run": "Executar reompliment",
+    "scheduleNotBackfillable": "La programació d'aquest Dag no permet reompliments",
+    "schedulerPriorityHint": "Les execucions de Dag de reompliment s'ordenen després de les execucions de Dag que no són de reompliment en cada cicle del programador. Les execucions de reompliment poden romandre en cua més temps si hi ha altres execucions que no són de reompliment.",
     "selectDescription": "Executar aquest Dag per a un interval de dates",
     "selectLabel": "Reompliment",
     "title": "Execució de reompliment",
@@ -21,7 +25,6 @@
         "title": "Reompliment generat"
       }
     },
-    "tooltip": "El reompliment necessita una programació",
     "unpause": "Reactivar {{dag_display_name}} a l'executar",
     "validation": {
       "datesRequired": "S'ha de proporcionar tant la data d'inici com la data de finalització.",
@@ -45,10 +48,16 @@
   },
   "dagWarnings": {
     "error_one": "1 Error",
-    "error_other": "{{count}} Errors",
     "errorAndWarning": "1 Error i {{warningText}}",
     "warning_one": "1 Advertència",
     "warning_other": "{{count}} Advertències"
+  },
+  "dateRangeFilter": {
+    "validation": {
+      "invalidDateFormat": "Format de data no vàlid.",
+      "invalidTimeFormat": "Format d'hora no vàlid.",
+      "startBeforeEnd": "La data/hora d'inici ha de ser anterior a la data/hora de finalització"
+    }
   },
   "durationChart": {
     "duration": "Duració (segons)",
@@ -65,6 +74,7 @@
     "files_other": "{{count}} fitxers"
   },
   "flexibleForm": {
+    "durationPlaceholder": "Introduïu la durada en format ISO 8601",
     "placeholder": "Seleccionar valor",
     "placeholderArray": "Escriu cada cadena en una nova línia",
     "placeholderExamples": "Comença a escriure per veure opcions",
@@ -72,6 +82,7 @@
     "validationErrorArrayNotArray": "El valor ha de ser un array.",
     "validationErrorArrayNotNumbers": "Tots els elements de l'array han de ser números.",
     "validationErrorArrayNotObject": "Tots els elements de l'array han de ser objectes.",
+    "validationErrorDuration": "Format de durada ISO 8601 no vàlid",
     "validationErrorRequired": "Aquest camp és obligatori"
   },
   "graph": {
@@ -85,7 +96,8 @@
     "otherDagRuns": "+Altres execucions de Dag",
     "taskCount_one": "{{count}} Tasca",
     "taskCount_other": "{{count}} Tasques",
-    "taskGroup": "Grup de tasques"
+    "taskGroup": "Grup de tasques",
+    "zoomToTask": "Zoom a la tasca seleccionada"
   },
   "limitedList": "+{{count}} més",
   "limitedList.allItems": "Tots els {{count}} elements:",
@@ -105,22 +117,40 @@
   "sortedDescending": "ordenat de manera descendent",
   "sortedUnsorted": "no ordenat",
   "taskTries": "Reintents de tasca",
+  "taskTryPlaceholder": "Intent de tasca",
+  "team": {
+    "selector": {
+      "helperText": "Opcional. Restringir l'ús a un equip específic.",
+      "label": "Equip",
+      "placeHolder": "Selecciona un equip"
+    }
+  },
   "toggleCardView": "Mostrar vista de targeta",
   "toggleTableView": "Mostrar vista de taula",
   "triggerDag": {
     "button": "Executar",
+    "dataInterval": "Interval de dades",
+    "dataIntervalAuto": "Inferit a partir de la data lògica i el calendari",
+    "dataIntervalManual": "Especificar manualment",
+    "intervalEnd": "Fi",
+    "intervalStart": "Inici",
     "loading": "Carregant informació del Dag...",
     "loadingFailed": "No s'ha pogut carregar la informació del Dag. Si us plau, torneu-ho a intentar.",
+    "manualRunDenied": "Aquest Dag no permet execucions manuals",
     "runIdHelp": "Opcional - es generarà si no es proporciona",
     "selectDescription": "Executar una única execució d'aquest Dag",
     "selectLabel": "Execució única",
     "title": "Executar Dag",
     "toaster": {
+      "error": {
+        "title": "No s'ha pogut executar el Dag"
+      },
       "success": {
         "description": "El Dag s'ha executat correctament.",
         "title": "Execució del Dag correcta"
       }
     },
+    "triggerAgainWithConfig": "Tornar a executar amb aquesta configuració",
     "unpause": "Reactivar {{dagDisplayName}} a l'executar"
   },
   "trimText": {
@@ -136,6 +166,7 @@
     "versionId": "ID de la versió"
   },
   "versionSelect": {
+    "allVersions": "Totes les versions",
     "dagVersion": "Versió del Dag",
     "versionCode": "v{{versionCode}}"
   }

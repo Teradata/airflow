@@ -21,10 +21,10 @@ from __future__ import annotations
 from sqlalchemy import select
 
 from airflow.models import Connection, Trigger, Variable
+from airflow.models.connection_test import ConnectionTestRequest
 from airflow.utils import cli as cli_utils
 from airflow.utils.providers_configuration_loader import providers_configuration_loaded
 from airflow.utils.session import create_session
-from airflow.utils.sqlalchemy import is_sqlalchemy_v1
 
 
 @cli_utils.action_cli
@@ -32,40 +32,28 @@ from airflow.utils.sqlalchemy import is_sqlalchemy_v1
 def rotate_fernet_key(args):
     """Rotates all encrypted connection credentials, triggers and variables."""
     batch_size = 100
-    rotate_method = rotate_items_in_batches_v1 if is_sqlalchemy_v1() else rotate_items_in_batches_v2
     with create_session() as session:
         with session.begin():  # Start a single transaction
-            rotate_method(
+            rotate_items_in_batches(
                 session,
                 Connection,
                 filter_condition=Connection.is_encrypted | Connection.is_extra_encrypted,
                 batch_size=batch_size,
             )
-            rotate_method(session, Variable, filter_condition=Variable.is_encrypted, batch_size=batch_size)
-            rotate_method(session, Trigger, filter_condition=None, batch_size=batch_size)
+            rotate_items_in_batches(
+                session, Variable, filter_condition=Variable.is_encrypted, batch_size=batch_size
+            )
+            rotate_items_in_batches(session, Trigger, filter_condition=None, batch_size=batch_size)
+            rotate_items_in_batches(
+                session,
+                ConnectionTestRequest,
+                filter_condition=ConnectionTestRequest.is_encrypted
+                | ConnectionTestRequest.is_extra_encrypted,
+                batch_size=batch_size,
+            )
 
 
-def rotate_items_in_batches_v1(session, model_class, filter_condition=None, batch_size=100):
-    """
-    Rotates Fernet keys for items of a given model in batches to avoid excessive memory usage.
-
-    This function is a replacement for yield_per, which is not available in SQLAlchemy 1.x.
-    """
-    offset = 0
-    while True:
-        query = select(model_class)
-        if filter_condition is not None:
-            query = query.where(filter_condition)
-        query = query.offset(offset).limit(batch_size)
-        items = session.scalars(query).all()
-        if not items:
-            break  # No more items to process
-        for item in items:
-            item.rotate_fernet_key()
-        offset += batch_size
-
-
-def rotate_items_in_batches_v2(session, model_class, filter_condition=None, batch_size=100):
+def rotate_items_in_batches(session, model_class, filter_condition=None, batch_size=100):
     """
     Rotates Fernet keys for items of a given model in batches to avoid excessive memory usage.
 

@@ -298,6 +298,10 @@
                     "hook-class-name": {
                         "description": "Hook class name that implements the connection type",
                         "type": "string"
+                    },
+                    "hook-name": {
+                        "description": "Display name for the connection type in the UI",
+                        "type": "string"
                     }
                 },
                 "required": [
@@ -327,6 +331,25 @@
                 "type": "string"
             }
         },
+        "remote-logging": {
+            "type": "array",
+            "description": "Remote logging IO handlers contributed by the provider. Each entry registers a RemoteLogIO implementation that ProvidersManager dispatches by URL scheme.",
+            "items": {
+                "type": "object",
+                "required": ["classpath", "scheme"],
+                "additionalProperties": false,
+                "properties": {
+                    "classpath": {
+                        "type": "string",
+                        "description": "Fully-qualified class name of the RemoteLogIO implementation."
+                    },
+                    "scheme": {
+                        "type": "string",
+                        "description": "URL scheme (without ://) of [logging] remote_base_log_folder that this handler claims."
+                    }
+                }
+            }
+        },
         "auth-backends": {
             "type": "array",
             "description": "API Auth Backend module names",
@@ -351,6 +374,20 @@
         "executors": {
             "type": "array",
             "description": "Executor class names",
+            "items": {
+                "type": "string"
+            }
+        },
+        "db-managers": {
+            "type": "array",
+            "description": "DB manager class names",
+            "items": {
+                "type": "string"
+            }
+        },
+        "cli": {
+            "type": "array",
+            "description": "CLI command functions exposed by the provider",
             "items": {
                 "type": "string"
             }

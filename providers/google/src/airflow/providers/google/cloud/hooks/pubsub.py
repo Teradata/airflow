@@ -82,6 +82,7 @@ class PubSubHook(GoogleBaseHook):
         gcp_conn_id: str = "google_cloud_default",
         impersonation_chain: str | Sequence[str] | None = None,
         enable_message_ordering: bool = False,
+        enable_open_telemetry_tracing: bool = False,
         **kwargs,
     ) -> None:
         super().__init__(
@@ -90,6 +91,7 @@ class PubSubHook(GoogleBaseHook):
             **kwargs,
         )
         self.enable_message_ordering = enable_message_ordering
+        self.enable_open_telemetry_tracing = enable_open_telemetry_tracing
         self._client = None
 
     def get_conn(self) -> PublisherClient:
@@ -104,7 +106,9 @@ class PubSubHook(GoogleBaseHook):
                 client_info=CLIENT_INFO,
                 publisher_options=PublisherOptions(
                     enable_message_ordering=self.enable_message_ordering,
+                    enable_open_telemetry_tracing=self.enable_open_telemetry_tracing,
                 ),
+                client_options=self.get_client_options(),
             )
         return self._client
 
@@ -115,7 +119,11 @@ class PubSubHook(GoogleBaseHook):
 
         :return: Google Cloud Pub/Sub client object.
         """
-        return SubscriberClient(credentials=self.get_credentials(), client_info=CLIENT_INFO)
+        return SubscriberClient(
+            credentials=self.get_credentials(),
+            client_info=CLIENT_INFO,
+            client_options=self.get_client_options(),
+        )
 
     @GoogleBaseHook.fallback_to_default_project_id
     def publish(
@@ -162,7 +170,7 @@ class PubSubHook(GoogleBaseHook):
                     b64decode(message["data"])
                     warnings.warn(
                         "The base 64 encoded string as 'data' field has been deprecated. "
-                        "You should pass bytestring (utf-8 encoded).",
+                        "You should pass bytestring (utf-8 encoded). Planned removal date: October 5, 2026.",
                         AirflowProviderDeprecationWarning,
                         stacklevel=4,
                     )
@@ -608,8 +616,12 @@ class PubSubAsyncHook(GoogleBaseAsyncHook):
         :return: Google Pub/Sub asynchronous client.
         """
         if not self._client:
-            credentials = (await self.get_sync_hook()).get_credentials()
-            self._client = SubscriberAsyncClient(credentials=credentials, client_info=CLIENT_INFO)
+            sync_hook = await self.get_sync_hook()
+            credentials = sync_hook.get_credentials()
+            client_options = sync_hook.get_client_options()
+            self._client = SubscriberAsyncClient(
+                credentials=credentials, client_info=CLIENT_INFO, client_options=client_options
+            )
         return self._client
 
     @GoogleBaseHook.fallback_to_default_project_id

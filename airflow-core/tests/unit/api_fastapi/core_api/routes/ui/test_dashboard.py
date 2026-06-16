@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from unittest import mock
 
 import pendulum
 import pytest
@@ -70,6 +71,7 @@ def make_dag_runs(dag_maker, session, time_machine):
         run_type=DagRunType.SCHEDULED,
         logical_date=date,
         start_date=date,
+        run_after=date,
     )
 
     run2 = dag_maker.create_dagrun(
@@ -78,6 +80,7 @@ def make_dag_runs(dag_maker, session, time_machine):
         run_type=DagRunType.ASSET_TRIGGERED,
         logical_date=date + timedelta(days=1),
         start_date=date + timedelta(days=1),
+        run_after=date + timedelta(days=1),
     )
 
     run3 = dag_maker.create_dagrun(
@@ -86,6 +89,7 @@ def make_dag_runs(dag_maker, session, time_machine):
         run_type=DagRunType.SCHEDULED,
         logical_date=date + timedelta(days=2),
         start_date=date + timedelta(days=2),
+        run_after=date + timedelta(days=2),
     )
 
     run3.end_date = None
@@ -95,6 +99,7 @@ def make_dag_runs(dag_maker, session, time_machine):
         state=DagRunState.QUEUED,
         run_type=DagRunType.SCHEDULED,
         logical_date=date + timedelta(days=3),
+        run_after=date + timedelta(days=3),
     )
 
     for ti in run1.task_instances:
@@ -244,8 +249,8 @@ class TestHistoricalMetricsDataEndpoint:
                 {"start_date": "2023-01-01T00:00", "end_date": "2023-08-02T00:00"},
                 {
                     "dag_run_states": {"failed": 1, "queued": 1, "running": 1, "success": 1},
-                    "dag_run_types": {"backfill": 0, "asset_triggered": 1, "manual": 0, "scheduled": 3},
                     "task_instance_states": {
+                        "awaiting_input": 0,
                         "deferred": 0,
                         "failed": 2,
                         "no_status": 4,
@@ -260,17 +265,18 @@ class TestHistoricalMetricsDataEndpoint:
                         "up_for_retry": 0,
                         "upstream_failed": 0,
                     },
+                    "state_count_limit": 1000,
                 },
             ),
             (
-                {"start_date": "2023-02-02T00:00", "end_date": "2023-06-02T00:00"},
+                {"start_date": "2023-02-02T00:00", "end_date": "2023-02-03T12:00"},
                 {
-                    "dag_run_states": {"failed": 1, "queued": 0, "running": 0, "success": 0},
-                    "dag_run_types": {"backfill": 0, "asset_triggered": 1, "manual": 0, "scheduled": 0},
+                    "dag_run_states": {"failed": 1, "queued": 0, "running": 1, "success": 0},
                     "task_instance_states": {
+                        "awaiting_input": 0,
                         "deferred": 0,
                         "failed": 2,
-                        "no_status": 0,
+                        "no_status": 2,
                         "queued": 0,
                         "removed": 0,
                         "restarting": 0,
@@ -282,14 +288,15 @@ class TestHistoricalMetricsDataEndpoint:
                         "up_for_retry": 0,
                         "upstream_failed": 0,
                     },
+                    "state_count_limit": 1000,
                 },
             ),
             (
                 {"start_date": "2023-02-02T00:00"},
                 {
                     "dag_run_states": {"failed": 1, "queued": 1, "running": 1, "success": 0},
-                    "dag_run_types": {"backfill": 0, "asset_triggered": 1, "manual": 0, "scheduled": 2},
                     "task_instance_states": {
+                        "awaiting_input": 0,
                         "deferred": 0,
                         "failed": 2,
                         "no_status": 4,
@@ -304,6 +311,7 @@ class TestHistoricalMetricsDataEndpoint:
                         "up_for_retry": 0,
                         "upstream_failed": 0,
                     },
+                    "state_count_limit": 1000,
                 },
             ),
         ],
@@ -314,6 +322,30 @@ class TestHistoricalMetricsDataEndpoint:
             response = test_client.get("/dashboard/historical_metrics_data", params=params)
         assert response.status_code == 200
         assert response.json() == expected
+
+    @pytest.mark.usefixtures("freeze_time_for_dagruns", "make_dag_runs")
+    def test_state_counts_are_capped(self, test_client):
+        """State counts are capped at STATE_COUNT_CAP; fixture creates 4 dag runs and 8 TIs."""
+        with mock.patch("airflow.api_fastapi.core_api.routes.ui.dashboard.STATE_COUNT_CAP", 1):
+            response = test_client.get(
+                "/dashboard/historical_metrics_data",
+                params={"start_date": "2023-01-01T00:00", "end_date": "2023-08-02T00:00"},
+            )
+        assert response.status_code == 200
+        data = response.json()
+
+        assert data["state_count_limit"] == 1
+
+        dr_states = data["dag_run_states"]
+        assert dr_states["success"] == 1
+        assert dr_states["failed"] == 1
+        assert dr_states["running"] == 1
+        assert dr_states["queued"] == 1
+
+        ti_states = data["task_instance_states"]
+        assert ti_states["success"] == 1
+        assert ti_states["failed"] == 1
+        assert ti_states["no_status"] == 1
 
     def test_should_response_401(self, unauthenticated_test_client):
         response = unauthenticated_test_client.get(

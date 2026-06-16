@@ -16,56 +16,46 @@
 # under the License.
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
-from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, runtime_checkable
+import datetime
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol, TypedDict, runtime_checkable
 
-from airflow.sdk.definitions.asset import AssetUniqueKey, BaseAsset
+from typing_extensions import NotRequired
+
+from airflow._shared.module_loading import qualname
+from airflow._shared.timezones import timezone
+from airflow.serialization.definitions.assets import SerializedAssetBase
 
 if TYPE_CHECKING:
-    from pendulum import DateTime
-    from sqlalchemy.orm import Session
+    from collections.abc import Iterable, Iterator, Sequence
 
-    from airflow.sdk.definitions.asset import Asset, AssetAlias, AssetRef
+    from pendulum import DateTime
+
+    from airflow.models.dag import DagModel
+    from airflow.models.dagrun import DagRun
+    from airflow.partition_mappers import PartitionMapper
     from airflow.serialization.dag_dependency import DagDependency
+    from airflow.serialization.definitions.assets import (
+        SerializedAsset,
+        SerializedAssetAlias,
+        SerializedAssetRef,
+        SerializedAssetUniqueKey,
+    )
     from airflow.utils.types import DagRunType
 
 
-class _NullAsset(BaseAsset):
+class PartitionMapperInfo(TypedDict):
     """
-    Sentinel type that represents "no assets".
+    JSON-serializable snapshot of one asset's partition mapper attributes.
 
-    This is only implemented to make typing easier in timetables, and not
-    expected to be used anywhere else.
-
-    :meta private:
+    Stored as ``DagModel.partition_mapper_info`` (a list of these) so the UI can
+    resolve mapper attributes without deserializing the timetable on each request.
+    Either ``name``, ``uri``, or both identify the asset; ``Asset.ref(name=...)``
+    omits ``uri`` and ``Asset.ref(uri=...)`` omits ``name``.
     """
 
-    def __bool__(self) -> bool:
-        return False
-
-    def __or__(self, other: BaseAsset) -> BaseAsset:
-        return NotImplemented
-
-    def __and__(self, other: BaseAsset) -> BaseAsset:
-        return NotImplemented
-
-    def as_expression(self) -> Any:
-        return None
-
-    def evaluate(self, statuses: dict[AssetUniqueKey, bool], *, session: Session | None = None) -> bool:
-        return False
-
-    def iter_assets(self) -> Iterator[tuple[AssetUniqueKey, Asset]]:
-        return iter(())
-
-    def iter_asset_aliases(self) -> Iterator[tuple[str, AssetAlias]]:
-        return iter(())
-
-    def iter_asset_refs(self) -> Iterator[AssetRef]:
-        return iter(())
-
-    def iter_dag_dependencies(self, source, target) -> Iterator[DagDependency]:
-        return iter(())
+    is_rollup: bool
+    name: NotRequired[str]
+    uri: NotRequired[str]
 
 
 class DataInterval(NamedTuple):
@@ -107,6 +97,35 @@ class TimeRestriction(NamedTuple):
     catchup: bool
 
 
+class _NullAsset(SerializedAssetBase):
+    """
+    Sentinel type that represents "no assets".
+
+    This is only implemented to make typing easier in timetables, and not
+    expected to be used anywhere else.
+
+    :meta private:
+    """
+
+    def __bool__(self) -> bool:
+        return False
+
+    def as_expression(self) -> Any:
+        return None
+
+    def iter_assets(self) -> Iterator[tuple[SerializedAssetUniqueKey, SerializedAsset]]:
+        return iter(())
+
+    def iter_asset_aliases(self) -> Iterator[tuple[str, SerializedAssetAlias]]:
+        return iter(())
+
+    def iter_asset_refs(self) -> Iterator[SerializedAssetRef]:
+        return iter(())
+
+    def iter_dag_dependencies(self, source, target) -> Iterator[DagDependency]:
+        return iter(())
+
+
 class DagRunInfo(NamedTuple):
     """
     Information to schedule a DagRun.
@@ -121,13 +140,21 @@ class DagRunInfo(NamedTuple):
     This **MUST** be "aware", i.e. contain timezone information.
     """
 
-    data_interval: DataInterval
+    data_interval: DataInterval | None
     """The data interval this DagRun to operate over."""
+
+    partition_date: DateTime | None = None
+    partition_key: str | None = None
 
     @classmethod
     def exact(cls, at: DateTime) -> DagRunInfo:
         """Represent a run on an exact time."""
-        return cls(run_after=at, data_interval=DataInterval.exact(at))
+        return cls(
+            run_after=at,
+            data_interval=DataInterval.exact(at),
+            partition_key=None,
+            partition_date=None,
+        )
 
     @classmethod
     def interval(cls, start: DateTime, end: DateTime) -> DagRunInfo:
@@ -138,17 +165,22 @@ class DagRunInfo(NamedTuple):
         one ends, and each run is scheduled right after the interval ends. This
         applies to all schedules prior to AIP-39 except ``@once`` and ``None``.
         """
-        return cls(run_after=end, data_interval=DataInterval(start, end))
+        return cls(
+            run_after=end,
+            data_interval=DataInterval(start, end),
+            partition_key=None,
+            partition_date=None,
+        )
 
     @property
-    def logical_date(self: DagRunInfo) -> DateTime:
+    def logical_date(self: DagRunInfo) -> DateTime | None:
         """
         Infer the logical date to represent a DagRun.
 
         This replaces ``execution_date`` in Airflow 2.1 and prior. The idea is
         essentially the same, just a different name.
         """
-        return self.data_interval.start
+        return self.data_interval.start if self.data_interval else None
 
 
 @runtime_checkable
@@ -169,6 +201,7 @@ class Timetable(Protocol):
     like ``schedule=None`` and ``"@once"`` set it to *False*.
     """
 
+    # TODO (GH-52141): Find a way to keep this and one in Core in sync.
     can_be_scheduled: bool = True
     """
     Whether this timetable can actually schedule runs in an automated manner.
@@ -184,6 +217,7 @@ class Timetable(Protocol):
     This should be a list of field names on the DAG run object.
     """
 
+    # TODO (GH-52141): Find a way to keep this and one in Core in sync.
     active_runs_limit: int | None = None
     """Maximum active runs that can be active at one time for a DAG.
 
@@ -193,12 +227,82 @@ class Timetable(Protocol):
     as for :class:`~airflow.timetable.simple.ContinuousTimetable`.
     """
 
-    asset_condition: BaseAsset = _NullAsset()
-    """The asset condition that triggers a DAG using this timetable.
+    asset_condition: SerializedAssetBase = _NullAsset()
+    """The asset condition that triggers a DAG using this timetable."""
 
-    If this is not *None*, this should be an asset, or a combination of, that
-    controls the DAG's asset triggers.
+    partitioned: bool = False
+    """Whether this timetable considers asset partitions.
+
+    This is *True* for timetables that switch scheduling to use partitions
+    instead of the traditional logic based on logical dates and data intervals.
     """
+
+    partitioned_at_runtime: bool = False
+    """Whether this timetable defers partition selection to task runtime.
+
+    *True* for :class:`~airflow.timetables.simple.PartitionAtRuntime`;
+    downstream code can branch on this flag instead of using ``isinstance``.
+    """
+
+    def get_partition_mapper(self, *, name: str = "", uri: str = "") -> PartitionMapper:
+        """
+        Return the partition mapper for the asset identified by *name* or *uri*.
+
+        Only called by the scheduler when ``partitioned`` is *True*. The default
+        implementation raises :exc:`NotImplementedError`; timetables that set
+        ``partitioned = True`` must override this.
+        """
+        msg = (
+            f"{type(self).__name__} is not partitioned and does not define a "
+            f"partition mapper (asset name={name!r}, uri={uri!r})."
+        )
+        raise NotImplementedError(msg)
+
+    def iter_partition_dagrun_infos(
+        self,
+        *,
+        earliest_date: datetime.date,
+        latest_date: datetime.date,
+    ) -> Iterable[DagRunInfo]:
+        """
+        Yield one DagRunInfo per partition for calendar days in ``[earliest_date, latest_date]`` (both inclusive).
+
+        Only called for partitioned timetables (``partitioned is True``). The default
+        implementation raises :exc:`NotImplementedError`; timetables that set
+        ``partitioned = True`` must override this.
+        """
+        if self.partitioned:
+            msg = f"{type(self).__name__} is partitioned but does not implement iter_partition_dagrun_infos."
+        else:
+            msg = f"{type(self).__name__} is not partitioned"
+        raise NotImplementedError(msg)
+
+    def resolve_day_bound(self, day: datetime.date) -> DateTime:
+        """
+        Return the UTC instant of *day*'s start (midnight).
+
+        By default a calendar day starts at midnight UTC. Timetables with a local
+        timezone (e.g. :class:`~airflow.timetables._cron.CronMixin` subclasses)
+        override this to anchor at local midnight in their timezone, converted to
+        UTC. Callers pass *day* for an inclusive lower bound and
+        ``day + timedelta(days=1)`` for a half-open upper bound (e.g. ``dag_clear``
+        uses it to bound ``partition_date`` queries).
+        """
+        return timezone.coerce_datetime(
+            datetime.datetime(day.year, day.month, day.day, tzinfo=datetime.timezone.utc)
+        )
+
+    @property
+    def partition_mapper_info(self) -> list[PartitionMapperInfo]:
+        """
+        JSON-serializable per-asset partition mapper attributes.
+
+        Empty list for timetables without asset-level partition mappers (the
+        default, including non-partitioned timetables and cron-driven partitioned
+        timetables). Asset-driven partitioned timetables override this with one
+        entry per asset (or asset ref) — see :class:`PartitionMapperInfo`.
+        """
+        return []
 
     @classmethod
     def deserialize(cls, data: dict[str, Any]) -> Timetable:
@@ -243,6 +347,33 @@ class Timetable(Protocol):
         default implementation returns the timetable's type name.
         """
         return type(self).__name__
+
+    @property
+    def type_name(self) -> str:
+        """
+        This is primarily intended for filtering dags based on timetable type.
+
+        For built-in timetables (defined in airflow.timetables or
+        airflow.sdk.definitions.timetables), this returns the class name only.
+        For custom timetables (user-defined via plugins), this returns the full
+        import path to avoid confusion between multiple implementations with the
+        same class name.
+
+        For example, built-in timetables return:
+        ``"NullTimetable"`` or ``"CronDataIntervalTimetable"``
+        while custom timetables return the full path:
+        ``"my_company.timetables.CustomTimetable"``
+        """
+        module = self.__class__.__module__
+
+        # Built-in timetables from Core or SDK use class name only
+        if module.startswith("airflow.timetables.") or module.startswith(
+            "airflow.sdk.definitions.timetables."
+        ):
+            return self.__class__.__name__
+
+        # Custom timetables use full import path
+        return qualname(self.__class__)
 
     def infer_manual_data_interval(self, *, run_after: DateTime) -> DataInterval:
         """
@@ -293,3 +424,95 @@ class Timetable(Protocol):
         :param data_interval: The data interval of the DAG run.
         """
         return run_type.generate_run_id(suffix=run_after.isoformat())
+
+    def next_dagrun_info_v2(
+        self, *, last_dagrun_info: DagRunInfo | None, restriction: TimeRestriction
+    ) -> DagRunInfo | None:
+        """
+        Provide information to schedule the next DagRun.
+
+        The default implementation raises ``NotImplementedError``.
+
+        :param last_dagrun_info: The DagRunInfo object of the
+            Dag's last scheduled or backfilled run.
+        :param restriction: Restriction to apply when scheduling the Dag run.
+            See documentation of :class:`TimeRestriction` for details.
+
+        :return: Information on when the next DagRun can be scheduled. None
+            means a DagRun should not be created. This does not mean no more runs
+            will be scheduled ever again for this Dag; the timetable can return
+            a DagRunInfo object when asked at another time.
+        """
+        return self.next_dagrun_info(
+            last_automated_data_interval=last_dagrun_info and last_dagrun_info.data_interval,
+            restriction=restriction,
+        )
+
+    def next_run_info_from_dag_model(self, *, dag_model: DagModel) -> DagRunInfo | None:
+        from airflow.models.dag import get_next_data_interval
+
+        if (run_after := timezone.coerce_datetime(dag_model.next_dagrun_create_after)) is None:
+            return None
+        return DagRunInfo(
+            run_after=run_after,
+            data_interval=get_next_data_interval(self, dag_model),
+            partition_date=timezone.coerce_datetime(dag_model.next_dagrun_partition_date),
+            partition_key=dag_model.next_dagrun_partition_key,
+        )
+
+    def run_info_from_dag_run(self, *, dag_run: DagRun) -> DagRunInfo:
+        from airflow.models.dag import get_run_data_interval
+
+        return DagRunInfo(
+            run_after=timezone.coerce_datetime(dag_run.run_after),
+            data_interval=get_run_data_interval(self, dag_run),
+            partition_date=timezone.coerce_datetime(dag_run.partition_date),
+            partition_key=dag_run.partition_key,
+        )
+
+
+def compute_rollup_fingerprint(timetable: Timetable) -> dict:
+    """
+    Return the rollup-definition fingerprint for *timetable*.
+
+    The fingerprint is a ``dict[str, Any]`` mapping ``"{name}|{uri}"`` to the
+    JSON-encoded partition mapper for each partitioned asset reachable from the
+    timetable's ``asset_condition``. Keys are inserted in sorted order so the
+    dict is stable across Python runs.
+
+    Non-partitioned timetables (``timetable.partitioned is False``) return an
+    empty dict. The scheduler stamps this on :class:`AssetPartitionDagRun` at
+    creation time and compares it on the next tick; only mapper / window changes
+    trigger cleanup of a stale partition Dag run, leaving unrelated Dag edits
+    untouched.
+
+    Both the creation side (``assets/manager.py``) and the cleanup side
+    (``jobs/scheduler_job_runner.py``) call this helper to guarantee the two
+    fingerprints are computed by identical logic.
+    """
+    if not timetable.partitioned:
+        return {}
+
+    # Local import to avoid a circular dependency: encoders.py already imports
+    # Timetable from this module at the top level, so a top-level import of
+    # encode_partition_mapper here would create a cycle.
+    from airflow.serialization.definitions.assets import SerializedAssetNameRef, SerializedAssetUriRef
+    from airflow.serialization.encoders import encode_partition_mapper
+
+    entries: dict[str, dict[str, Any]] = {}
+    for unique_key, _ in timetable.asset_condition.iter_assets():
+        mapper = timetable.get_partition_mapper(name=unique_key.name, uri=unique_key.uri)
+        key = f"{unique_key.name}|{unique_key.uri}"
+        entries[key] = encode_partition_mapper(mapper)
+
+    for s_asset_ref in timetable.asset_condition.iter_asset_refs():
+        if isinstance(s_asset_ref, SerializedAssetNameRef):
+            mapper = timetable.get_partition_mapper(name=s_asset_ref.name)
+            key = f"{s_asset_ref.name}|"
+            entries[key] = encode_partition_mapper(mapper)
+        elif isinstance(s_asset_ref, SerializedAssetUriRef):
+            mapper = timetable.get_partition_mapper(uri=s_asset_ref.uri)
+            key = f"|{s_asset_ref.uri}"
+            entries[key] = encode_partition_mapper(mapper)
+
+    return dict(sorted(entries.items()))

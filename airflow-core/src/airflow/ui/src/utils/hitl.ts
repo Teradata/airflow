@@ -18,7 +18,7 @@
  */
 import type { TFunction } from "i18next";
 
-import type { HITLDetail } from "openapi/requests/types.gen";
+import type { HITLDetail, HITLDetailHistory, TaskInstanceState } from "openapi/requests/types.gen";
 import type { ParamSchema, ParamsSpec } from "src/queries/useDagParams";
 
 export type HITLResponseParams = {
@@ -26,14 +26,20 @@ export type HITLResponseParams = {
   params_input?: Record<string, unknown>;
 };
 
-const getChosenOptionsValue = (hitlDetail: HITLDetail) => {
+// A HITL task is "pending a response" while parked: pre-3.3 it parks in "deferred", from 3.3 it
+// parks in "awaiting_input". Either way an unanswered parked task is "response required", not
+// "no response received" (which is reserved for tasks no longer parked, e.g. cleared/finished).
+export const isHITLPending = (state?: TaskInstanceState | null): boolean =>
+  state === "deferred" || state === "awaiting_input";
+
+const getChosenOptionsValue = (hitlDetail: HITLDetailHistory) => {
   // if response_received is true, display the chosen_options, otherwise display the defaults
   const sourceValues = hitlDetail.response_received ? hitlDetail.chosen_options : hitlDetail.defaults;
 
   return hitlDetail.multiple ? sourceValues : sourceValues?.[0];
 };
 
-export const getPreloadHITLFormData = (searchParams: URLSearchParams, hitlDetail: HITLDetail) => {
+export const getPreloadHITLFormData = (searchParams: URLSearchParams, hitlDetail: HITLDetailHistory) => {
   const preloadedHITLParams: Record<string, number | string> = Object.fromEntries(
     [...searchParams.entries()]
       .filter(([key]) => key !== "_options")
@@ -65,12 +71,12 @@ export const getPreloadHITLFormData = (searchParams: URLSearchParams, hitlDetail
 };
 
 export const getHITLParamsDict = (
-  hitlDetail: HITLDetail,
+  hitlDetail: HITLDetailHistory,
   translate: TFunction,
   searchParams: URLSearchParams,
 ): ParamsSpec => {
   const paramsDict: ParamsSpec = {};
-  const { preloadedHITLOptions, preloadedHITLParams } = getPreloadHITLFormData(searchParams, hitlDetail);
+  const { preloadedHITLOptions } = getPreloadHITLFormData(searchParams, hitlDetail);
   const isApprovalTask =
     hitlDetail.options.includes("Approve") &&
     hitlDetail.options.includes("Reject") &&
@@ -114,7 +120,7 @@ export const getHITLParamsDict = (
       const paramData = hitlDetail.params[key] as ParamsSpec | undefined;
 
       // Check if there's a preloaded value from URL params
-      let finalValue = preloadedHITLParams[key] ?? value;
+      let finalValue = hitlDetail.params_input?.[key] ?? paramData?.value ?? value;
 
       // If preloaded value is a string that might be JSON, try to parse it
       if (typeof finalValue === "string" && finalValue.trim().startsWith("{")) {
@@ -164,7 +170,7 @@ export const getHITLParamsDict = (
       paramsDict[key] = {
         description,
         schema,
-        value: paramData?.value ?? finalValue,
+        value: finalValue ?? paramData?.value,
       };
     });
   }
@@ -211,11 +217,9 @@ export const getHITLState = (translate: TFunction, hitlDetail: HITLDetail) => {
     task_instance: { state: taskInstanceState },
   } = hitlDetail;
 
-  const isNotDeferred = taskInstanceState !== "deferred";
-
   let stateType: [string, string] = ["responseRequired", "responseReceived"];
 
-  if (!responseReceived && isNotDeferred) {
+  if (!responseReceived && !isHITLPending(taskInstanceState)) {
     return translate("state.noResponseReceived");
   }
 

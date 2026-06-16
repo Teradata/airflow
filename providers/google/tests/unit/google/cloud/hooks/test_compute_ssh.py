@@ -21,12 +21,13 @@ import logging
 from unittest import mock
 
 import httplib2
+import paramiko
 import pytest
 from googleapiclient.errors import HttpError
 from paramiko.ssh_exception import SSHException
 
-from airflow.exceptions import AirflowException
 from airflow.models import Connection
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.cloud.hooks.compute_ssh import ComputeEngineSSHHook
 from airflow.providers.google.cloud.hooks.os_login import OSLoginHook
 
@@ -560,3 +561,39 @@ class TestComputeEngineHookWithPassedProjectId:
             mock_set_instance_metadata.call_args.kwargs["metadata"]["items"].sort(key=lambda x: x["key"])
             expected_metadata["items"].sort(key=lambda x: x["key"])
             assert mock_set_instance_metadata.call_args.kwargs["metadata"] == expected_metadata
+
+
+class TestHostKeyPolicyResolution:
+    """Tests for the ``host_key_policy`` constructor argument."""
+
+    def test_default_is_auto_add(self):
+        hook = ComputeEngineSSHHook()
+
+        assert hook.host_key_policy == "auto_add"
+        assert isinstance(hook._resolve_host_key_policy(), paramiko.AutoAddPolicy)
+
+    def test_string_aliases(self):
+        assert isinstance(
+            ComputeEngineSSHHook(host_key_policy="auto_add")._resolve_host_key_policy(),
+            paramiko.AutoAddPolicy,
+        )
+        assert isinstance(
+            ComputeEngineSSHHook(host_key_policy="reject")._resolve_host_key_policy(),
+            paramiko.RejectPolicy,
+        )
+        assert isinstance(
+            ComputeEngineSSHHook(host_key_policy="warning")._resolve_host_key_policy(),
+            paramiko.WarningPolicy,
+        )
+
+    def test_custom_policy_instance_is_returned_unchanged(self):
+        custom_policy = paramiko.RejectPolicy()
+        hook = ComputeEngineSSHHook(host_key_policy=custom_policy)
+
+        assert hook._resolve_host_key_policy() is custom_policy
+
+    def test_unknown_string_raises_value_error(self):
+        hook = ComputeEngineSSHHook(host_key_policy="strict")
+
+        with pytest.raises(ValueError, match=r"Unknown host_key_policy 'strict'"):
+            hook._resolve_host_key_policy()

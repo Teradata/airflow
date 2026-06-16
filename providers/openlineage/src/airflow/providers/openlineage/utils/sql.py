@@ -25,9 +25,11 @@ from typing import TYPE_CHECKING
 from attrs import define
 from openlineage.client.event_v2 import Dataset
 from openlineage.client.facet_v2 import schema_dataset
-from sqlalchemy import Column, MetaData, Table, and_, or_, union_all
+
+from airflow.providers.common.compat.sdk import AirflowOptionalProviderFeatureException
 
 if TYPE_CHECKING:
+    from sqlalchemy import Table
     from sqlalchemy.engine import Engine
     from sqlalchemy.sql.elements import ColumnElement
 
@@ -77,6 +79,32 @@ class TableSchema:
         )
 
 
+def _prefer_default_schema_for_duplicate_tables(
+    table_schemas: list[TableSchema],
+    default_schema: str,
+) -> list[TableSchema]:
+    """
+    When the same table appears in multiple schemas, keep only the default schema match.
+
+    This handles the case where a SQL query references a table by bare name (without
+    schema qualifier) and the information_schema query returns results from multiple
+    schemas. In that case, only the entry matching the connection's default schema
+    should be kept.
+    """
+    table_groups: dict[tuple, list[TableSchema]] = defaultdict(list)
+    for ts in table_schemas:
+        table_groups[(ts.database, ts.table)].append(ts)
+
+    result = []
+    for group in table_groups.values():
+        if len(group) == 1:
+            result.append(group[0])
+        else:
+            matching = [ts for ts in group if ts.schema == default_schema]
+            result.extend(matching if matching else group)
+    return result
+
+
 def get_table_schemas(
     hook: BaseHook,
     namespace: str,
@@ -99,12 +127,18 @@ def get_table_schemas(
     with closing(hook.get_conn()) as conn, closing(conn.cursor()) as cursor:
         if in_query:
             cursor.execute(in_query)
-            in_datasets = [x.to_dataset(namespace, database, schema) for x in parse_query_result(cursor)]
+            in_table_schemas = parse_query_result(cursor)
+            if schema:
+                in_table_schemas = _prefer_default_schema_for_duplicate_tables(in_table_schemas, schema)
+            in_datasets = [x.to_dataset(namespace, database, schema) for x in in_table_schemas]
         else:
             in_datasets = []
         if out_query:
             cursor.execute(out_query)
-            out_datasets = [x.to_dataset(namespace, database, schema) for x in parse_query_result(cursor)]
+            out_table_schemas = parse_query_result(cursor)
+            if schema:
+                out_table_schemas = _prefer_default_schema_for_duplicate_tables(out_table_schemas, schema)
+            out_datasets = [x.to_dataset(namespace, database, schema) for x in out_table_schemas]
         else:
             out_datasets = []
     log.debug("Got table schema query result from database.")
@@ -157,6 +191,13 @@ def create_information_schema_query(
     sqlalchemy_engine: Engine | None = None,
 ) -> str:
     """Create query for getting table schemas from information schema."""
+    try:
+        from sqlalchemy import Column, MetaData, Table, union_all
+    except ImportError:
+        raise AirflowOptionalProviderFeatureException(
+            "sqlalchemy is required for SQL schema query generation. "
+            "Install it with: pip install 'apache-airflow-providers-openlineage[sqlalchemy]'"
+        )
     metadata = MetaData()
     select_statements = []
     # Don't iterate over tables hierarchy, just pass it to query single information schema table
@@ -217,6 +258,13 @@ def create_filter_clauses(
         therefore it is expected the table has them defined.
     :param uppercase_names: if True use schema and table names uppercase
     """
+    try:
+        from sqlalchemy import and_, or_
+    except ImportError:
+        raise AirflowOptionalProviderFeatureException(
+            "sqlalchemy is required for SQL filter clause generation. "
+            "Install it with: pip install 'apache-airflow-providers-openlineage[sqlalchemy]'"
+        )
     table_schema_column_name = information_schema_table.columns[ColumnIndex.SCHEMA].name
     table_name_column_name = information_schema_table.columns[ColumnIndex.TABLE_NAME].name
     try:

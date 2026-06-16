@@ -24,7 +24,9 @@ import { FieldAdvancedArray } from "./FieldAdvancedArray";
 import { FieldBool } from "./FieldBool";
 import { FieldDateTime } from "./FieldDateTime";
 import { FieldDropdown } from "./FieldDropdown";
+import { FieldDuration } from "./FieldDuration";
 import { FieldMultiSelect } from "./FieldMultiSelect";
+import { FieldMultiType } from "./FieldMultiType";
 import { FieldMultilineText } from "./FieldMultilineText";
 import { FieldNumber } from "./FieldNumber";
 import { FieldObject } from "./FieldObject";
@@ -47,6 +49,11 @@ const inferType = (param: ParamSpec) => {
     return "array";
   }
 
+  // Missing value, return 'null' as typeof(null) = 'dict'
+  if (param.value === null) {
+    return "null";
+  }
+
   return typeof param.value;
 };
 
@@ -61,7 +68,10 @@ const isFieldDate = (fieldType: string, fieldSchema: ParamSchema) =>
 const isFieldDateTime = (fieldType: string, fieldSchema: ParamSchema) =>
   fieldType === "string" && fieldSchema.format === "date-time";
 
-const enumTypes = ["string", "number", "integer"];
+const isFieldDuration = (fieldType: string, fieldSchema: ParamSchema) =>
+  fieldType === "string" && fieldSchema.format === "duration";
+
+const enumTypes = ["null", "string", "number", "integer"];
 
 const isFieldDropdown = (fieldType: string, fieldSchema: ParamSchema) =>
   enumTypes.includes(fieldType) && Array.isArray(fieldSchema.enum);
@@ -81,8 +91,13 @@ const isFieldNumber = (fieldType: string) => {
 const isFieldObject = (fieldType: string) => fieldType === "object";
 
 const isFieldStringArray = (fieldType: string, fieldSchema: ParamSchema) =>
-  fieldType === "array" &&
-  (!fieldSchema.items || fieldSchema.items.type === undefined || fieldSchema.items.type === "string");
+  fieldType === "array" && (fieldSchema.items?.type === undefined || fieldSchema.items.type === "string");
+
+const isFieldMultiType = (fieldSchema: ParamSchema) =>
+  Array.isArray(fieldSchema.type) &&
+  fieldSchema.type.filter((type) => type !== "null").length > 1 &&
+  !Array.isArray(fieldSchema.enum) &&
+  !Array.isArray(fieldSchema.examples);
 
 const isFieldTime = (fieldType: string, fieldSchema: ParamSchema) =>
   fieldType === "string" && fieldSchema.format === "time";
@@ -100,6 +115,12 @@ export const FieldSelector = ({ name, namespace = "default", onUpdate }: Flexibl
     ...initialParam,
     value: currentParam?.value ?? initialParam.value,
   };
+
+  // Check for multiple non-null types before inferring a single type —
+  // inferType picks only the first, discarding the others.
+  if (isFieldMultiType(param.schema)) {
+    return <FieldMultiType name={name} namespace={namespace} onUpdate={onUpdate} />;
+  }
 
   const fieldType = inferType(param);
 
@@ -123,6 +144,8 @@ export const FieldSelector = ({ name, namespace = "default", onUpdate }: Flexibl
     return <FieldObject name={name} namespace={namespace} onUpdate={onUpdate} />;
   } else if (isFieldNumber(fieldType)) {
     return <FieldNumber name={name} namespace={namespace} onUpdate={onUpdate} />;
+  } else if (isFieldDuration(fieldType, param.schema)) {
+    return <FieldDuration name={name} namespace={namespace} onUpdate={onUpdate} />;
   } else if (isFieldMultilineText(fieldType, param.schema)) {
     return <FieldMultilineText name={name} namespace={namespace} onUpdate={onUpdate} />;
   } else {

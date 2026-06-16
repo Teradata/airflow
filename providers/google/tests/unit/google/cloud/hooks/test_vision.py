@@ -34,7 +34,7 @@ from google.cloud.vision_v1 import (
 )
 from google.protobuf.json_format import MessageToDict
 
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.cloud.hooks.vision import ERR_DIFF_NAMES, ERR_UNABLE_TO_CREATE, CloudVisionHook
 from airflow.providers.google.common.consts import CLIENT_INFO
 
@@ -95,11 +95,16 @@ class TestGcpVisionHook:
         ):
             self.hook = CloudVisionHook(gcp_conn_id="test")
 
+    @mock.patch("airflow.providers.google.cloud.hooks.vision.CloudVisionHook.get_client_options")
     @mock.patch("airflow.providers.google.cloud.hooks.vision.CloudVisionHook.get_credentials")
     @mock.patch("airflow.providers.google.cloud.hooks.vision.ProductSearchClient")
-    def test_product_search_client_creation(self, mock_client, mock_get_creds):
+    def test_product_search_client_creation(self, mock_client, mock_get_creds, mock_get_client_options):
         result = self.hook.get_conn()
-        mock_client.assert_called_once_with(credentials=mock_get_creds.return_value, client_info=CLIENT_INFO)
+        mock_client.assert_called_once_with(
+            credentials=mock_get_creds.return_value,
+            client_info=CLIENT_INFO,
+            client_options=mock_get_client_options.return_value,
+        )
         assert mock_client.return_value == result
         assert self.hook._client == result
 

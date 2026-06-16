@@ -240,11 +240,13 @@ def upgrade():
         op.execute(mysql_uuid7_fn)
 
         # Migrate existing rows with UUID v7
-        op.execute("""
+        op.execute(
+            """
             UPDATE task_instance
             SET id = uuid_generate_v7(coalesce(queued_dttm, start_date, NOW(3)))
             WHERE id IS NULL
-        """)
+        """
+        )
 
         # Drop this function as it is no longer needed
         op.execute(mysql_uuid7_fn_drop)
@@ -255,20 +257,20 @@ def upgrade():
     elif dialect_name == "sqlite":
         from uuid6 import uuid7
 
-        stmt = text("SELECT COUNT(*) FROM task_instance WHERE id IS NULL")
         conn = op.get_bind()
-        task_instances = conn.execute(stmt).scalar()
-        uuid_values = [str(uuid7()) for _ in range(task_instances)]
 
-        # Ensure `uuid_values` is a list or iterable with the UUIDs for the update.
-        stmt = text("""
-            UPDATE task_instance
-            SET id = :uuid
-            WHERE id IS NULL
-        """)
+        stmt = text("SELECT rowid FROM task_instance WHERE id IS NULL")
+        rows = conn.execute(stmt).fetchall()
 
-        for uuid_value in uuid_values:
-            conn.execute(stmt.bindparams(uuid=uuid_value))
+        update_stmt = text("UPDATE task_instance SET id = :uuid WHERE rowid = :rowid")
+
+        for row in rows:
+            conn.execute(
+                update_stmt.bindparams(
+                    uuid=str(uuid7()),
+                    rowid=row.rowid,
+                )
+            )
 
         with op.batch_alter_table("task_instance") as batch_op:
             batch_op.drop_constraint("task_instance_pkey", type_="primary")

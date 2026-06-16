@@ -16,115 +16,114 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { Box, Flex, IconButton } from "@chakra-ui/react";
+import { Box, Flex } from "@chakra-ui/react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import dayjs from "dayjs";
 import dayjsDuration from "dayjs/plugin/duration";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
-import { FiChevronsRight } from "react-icons/fi";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useRef } from "react";
+import type { RefObject } from "react";
+import { useParams, useSearchParams } from "react-router-dom";
 
-import { useStructureServiceStructureData } from "openapi/queries";
 import type { DagRunState, DagRunType, GridRunsResponse } from "openapi/requests";
-import { useOpenGroups } from "src/context/openGroups";
-import { useNavigation } from "src/hooks/navigation";
-import useSelectedVersion from "src/hooks/useSelectedVersion";
+import type { VersionIndicatorOptions } from "src/constants/showVersionIndicatorOptions";
+import { useGroups } from "src/context/groups";
+import { NavigationModes, useNavigation } from "src/hooks/navigation";
 import { useGridRuns } from "src/queries/useGridRuns.ts";
 import { useGridStructure } from "src/queries/useGridStructure.ts";
+import { useGridTiSummariesStream } from "src/queries/useGridTISummaries.ts";
 import { isStatePending } from "src/utils";
 
 import { Bar } from "./Bar";
 import { DurationAxis } from "./DurationAxis";
 import { DurationTick } from "./DurationTick";
+import { GridPaginationButtons } from "./GridPaginationButtons";
+import { TaskInstancesColumn } from "./TaskInstancesColumn";
 import { TaskNames } from "./TaskNames";
-import { flattenNodes } from "./utils";
+import { GANTT_ROW_OFFSET_PX, GRID_HEADER_HEIGHT_PX, GRID_HEADER_PADDING_PX, ROW_HEIGHT } from "./constants";
+import { useGridPagination } from "./useGridPagination";
+import { useGridRunsWithVersionFlags } from "./useGridRunsWithVersionFlags";
+import { estimateTaskNameColumnWidthPx, flattenNodes } from "./utils";
 
 dayjs.extend(dayjsDuration);
 
 type Props = {
   readonly dagRunState?: DagRunState | undefined;
   readonly limit: number;
+  readonly offset: number;
+  readonly onJumpToLatest: () => void;
+  readonly runAfterGte?: string;
+  readonly runAfterLte?: string;
   readonly runType?: DagRunType | undefined;
+  readonly setOffset: (value: number) => void;
+  readonly sharedScrollContainerRef?: RefObject<HTMLDivElement | null>;
   readonly showGantt?: boolean;
+  readonly showVersionIndicatorMode?: VersionIndicatorOptions;
   readonly triggeringUser?: string | undefined;
 };
 
-export const Grid = ({ dagRunState, limit, runType, showGantt, triggeringUser }: Props) => {
-  const { t: translate } = useTranslation("dag");
-  const gridRef = useRef<HTMLDivElement>(null);
+const GRID_INNER_SCROLL_PADDING_START_PX = GRID_HEADER_PADDING_PX + GRID_HEADER_HEIGHT_PX;
 
-  const [selectedIsVisible, setSelectedIsVisible] = useState<boolean | undefined>();
-  const { openGroupIds, toggleGroupId } = useOpenGroups();
-  const { dagId = "", runId = "" } = useParams();
+export const Grid = ({
+  dagRunState,
+  limit,
+  offset,
+  onJumpToLatest,
+  runAfterGte,
+  runAfterLte,
+  runType,
+  setOffset,
+  sharedScrollContainerRef,
+  showGantt,
+  showVersionIndicatorMode,
+  triggeringUser,
+}: Props) => {
+  const gridRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement | null>(null);
+
+  const usesSharedScroll = Boolean(sharedScrollContainerRef && showGantt);
+
+  const { openGroupIds, toggleGroupId } = useGroups();
+  const { dagId = "" } = useParams();
   const [searchParams] = useSearchParams();
 
   const filterRoot = searchParams.get("root") ?? undefined;
   const includeUpstream = searchParams.get("upstream") === "true";
   const includeDownstream = searchParams.get("downstream") === "true";
+  const depthParam = searchParams.get("depth");
+  const depth = depthParam !== null && depthParam !== "" ? parseInt(depthParam, 10) : undefined;
 
-  const { data: gridRuns, isLoading } = useGridRuns({ dagRunState, limit, runType, triggeringUser });
-
-  // Check if the selected dag run is inside of the grid response, if not, we'll update the grid filters
-  // Eventually we should redo the api endpoint to make this work better
-  useEffect(() => {
-    if (gridRuns && runId) {
-      const run = gridRuns.find((dr: GridRunsResponse) => dr.run_id === runId);
-
-      if (!run) {
-        setSelectedIsVisible(false);
-      }
-    }
-  }, [runId, gridRuns, selectedIsVisible, setSelectedIsVisible]);
-
-  const { data: dagStructure } = useGridStructure({
+  // Over fetch gridRuns and then truncate to limit, in order to check pagination
+  const { data: dataGridRuns, isLoading } = useGridRuns({
     dagRunState,
-    hasActiveRun: gridRuns?.some((dr) => isStatePending(dr.state)),
-    limit,
+    limit: limit + 1,
+    offset,
+    runAfterGte,
+    runAfterLte,
     runType,
     triggeringUser,
   });
+  const gridRuns = dataGridRuns?.slice(0, limit);
 
-  const selectedVersion = useSelectedVersion();
+  const { handleNewerRuns, handleOlderRuns, hasNewerRuns, hasOlderRuns, latestNotVisible } =
+    useGridPagination({ gridRuns: dataGridRuns, limit, offset, setOffset });
 
-  const hasActiveFilter = includeUpstream || includeDownstream;
+  const { summariesByRunId } = useGridTiSummariesStream({
+    dagId,
+    runIds: gridRuns?.map((dr: GridRunsResponse) => dr.run_id) ?? [],
+    states: gridRuns?.map((dr: GridRunsResponse) => dr.state),
+  });
 
-  // fetch filtered structure when filter is active
-  const { data: taskStructure } = useStructureServiceStructureData(
-    {
-      dagId,
-      externalDependencies: false,
-      includeDownstream,
-      includeUpstream,
-      root: hasActiveFilter && filterRoot !== undefined ? filterRoot : undefined,
-      versionNumber: selectedVersion,
-    },
-    undefined,
-    {
-      enabled: selectedVersion !== undefined && hasActiveFilter && filterRoot !== undefined,
-    },
-  );
-
-  // extract allowed task IDs from task structure when filter is active
-  const allowedTaskIds = useMemo(() => {
-    if (!hasActiveFilter || filterRoot === undefined || taskStructure === undefined) {
-      return undefined;
-    }
-
-    const taskIds = new Set<string>();
-
-    const addNodeAndChildren = <T extends { children?: Array<T> | null; id: string }>(currentNode: T) => {
-      taskIds.add(currentNode.id);
-      if (currentNode.children) {
-        currentNode.children.forEach((child) => addNodeAndChildren(child));
-      }
-    };
-
-    taskStructure.nodes.forEach((node) => {
-      addNodeAndChildren(node);
-    });
-
-    return taskIds;
-  }, [hasActiveFilter, filterRoot, taskStructure]);
+  const { data: dagStructure } = useGridStructure({
+    dagRunState,
+    depth,
+    hasActiveRun: gridRuns?.some((dr) => isStatePending(dr.state)),
+    includeDownstream,
+    includeUpstream,
+    limit,
+    root: filterRoot,
+    runType,
+    triggeringUser,
+  });
 
   // calculate dag run bar heights relative to max
   const max = Math.max.apply(
@@ -136,19 +135,30 @@ export const Grid = ({ dagRunState, limit, runType, showGantt, triggeringUser }:
           .filter((duration: number | null): duration is number => duration !== null),
   );
 
-  const { flatNodes } = useMemo(() => {
-    const nodes = flattenNodes(dagStructure, openGroupIds);
+  // calculate version change flags
+  const runsWithVersionFlags = useGridRunsWithVersionFlags({
+    gridRuns,
+    showVersionIndicatorMode,
+  });
 
-    // filter nodes based on task stream filter if active
-    if (allowedTaskIds !== undefined) {
-      return {
-        ...nodes,
-        flatNodes: nodes.flatNodes.filter((node) => allowedTaskIds.has(node.id)),
-      };
-    }
+  const { flatNodes } = flattenNodes(dagStructure, openGroupIds);
 
-    return nodes;
-  }, [dagStructure, openGroupIds, allowedTaskIds]);
+  const taskNameColumnWidthPx = showGantt ? estimateTaskNameColumnWidthPx(flatNodes) : undefined;
+
+  const taskNameColumnStyles =
+    showGantt && taskNameColumnWidthPx !== undefined
+      ? {
+          flexGrow: 0,
+          flexShrink: 0,
+          maxW: `${taskNameColumnWidthPx}px`,
+          minW: `${taskNameColumnWidthPx}px`,
+          width: `${taskNameColumnWidthPx}px`,
+        }
+      : {
+          flexGrow: 1,
+          flexShrink: 0,
+          minW: "200px",
+        };
 
   const { setMode } = useNavigation({
     onToggleGroup: toggleGroupId,
@@ -156,63 +166,115 @@ export const Grid = ({ dagRunState, limit, runType, showGantt, triggeringUser }:
     tasks: flatNodes,
   });
 
-  return (
-    <Flex
-      justifyContent="flex-start"
-      outline="none"
-      position="relative"
-      pt={20}
-      ref={gridRef}
-      tabIndex={0}
-      width={showGantt ? "1/2" : "full"}
-    >
-      <Box display="flex" flexDirection="column" flexGrow={1} justifyContent="end" minWidth="200px">
-        <TaskNames nodes={flatNodes} onRowClick={() => setMode("task")} />
-      </Box>
-      <Box position="relative">
-        <Flex position="relative">
-          <DurationAxis top="100px" />
-          <DurationAxis top="50px" />
-          <DurationAxis top="4px" />
-          <Flex flexDirection="column-reverse" height="100px" position="relative">
+  const handleRowClick = () => setMode(NavigationModes.TASK);
+  const handleCellClick = () => setMode(NavigationModes.TI);
+  const handleColumnClick = () => setMode(NavigationModes.RUN);
+
+  const rowVirtualizer = useVirtualizer({
+    count: flatNodes.length,
+    estimateSize: () => ROW_HEIGHT,
+    // @tanstack/react-virtual: pass element resolver inline; hook tracks scroll container via its own subscriptions.
+    getScrollElement: () =>
+      usesSharedScroll ? (sharedScrollContainerRef?.current ?? null) : scrollContainerRef.current,
+    overscan: 5,
+    scrollPaddingStart: usesSharedScroll ? GANTT_ROW_OFFSET_PX : GRID_INNER_SCROLL_PADDING_START_PX,
+  });
+
+  const virtualItems = rowVirtualizer.getVirtualItems();
+
+  const gridHeaderAndBody = (
+    <>
+      {/* Grid header, both bgs are needed to hide elements during horizontal and vertical scroll */}
+      <Flex bg="bg" display="flex" position="sticky" pt={`${GRID_HEADER_PADDING_PX}px`} top={0} zIndex={2}>
+        <Box bg="bg" left={0} position="sticky" zIndex={1} {...taskNameColumnStyles}>
+          <Flex flexDirection="column-reverse" height={`${GRID_HEADER_HEIGHT_PX}px`} position="relative">
             {Boolean(gridRuns?.length) && (
               <>
-                <DurationTick bottom="92px" duration={max} />
-                <DurationTick bottom="46px" duration={max / 2} />
-                <DurationTick bottom="-4px" duration={0} />
+                <DurationTick bottom={`${GRID_HEADER_HEIGHT_PX - 8}px`} duration={max} />
+                <DurationTick bottom={`${GRID_HEADER_HEIGHT_PX / 2 - 4}px`} duration={max / 2} />
               </>
             )}
           </Flex>
-          <Flex flexDirection="row-reverse">
-            {gridRuns?.map((dr: GridRunsResponse) => (
-              <Bar
-                key={dr.run_id}
-                max={max}
-                nodes={flatNodes}
-                onCellClick={() => setMode("TI")}
-                onColumnClick={() => setMode("run")}
-                run={dr}
-              />
-            ))}
+        </Box>
+        {/* Duration bars */}
+        <Flex flexDirection="row-reverse" flexShrink={0}>
+          <Flex flexShrink={0} position="relative">
+            <DurationAxis top={`${GRID_HEADER_HEIGHT_PX}px`} />
+            <DurationAxis top={`${GRID_HEADER_HEIGHT_PX / 2}px`} />
+            <DurationAxis top="4px" />
+            <Flex flexDirection="row-reverse">
+              {runsWithVersionFlags?.map((dr) => (
+                <Bar
+                  key={dr.run_id}
+                  max={max}
+                  onClick={handleColumnClick}
+                  run={dr}
+                  showVersionIndicatorMode={showVersionIndicatorMode}
+                />
+              ))}
+            </Flex>
+            <GridPaginationButtons
+              hasNewerRuns={hasNewerRuns}
+              hasOlderRuns={hasOlderRuns}
+              isLoading={isLoading}
+              latestNotVisible={latestNotVisible}
+              onJumpToLatest={onJumpToLatest}
+              onNewerRuns={handleNewerRuns}
+              onOlderRuns={handleOlderRuns}
+            />
           </Flex>
-          {selectedIsVisible === undefined || !selectedIsVisible ? undefined : (
-            <Link to={`/dags/${dagId}`}>
-              <IconButton
-                aria-label={translate("grid.buttons.resetToLatest")}
-                height="98px"
-                loading={isLoading}
-                minW={0}
-                ml={1}
-                title={translate("grid.buttons.resetToLatest")}
-                variant="surface"
-                zIndex={1}
-              >
-                <FiChevronsRight />
-              </IconButton>
-            </Link>
-          )}
         </Flex>
-      </Box>
+      </Flex>
+
+      {/* Grid body */}
+      <Flex height={`${rowVirtualizer.getTotalSize()}px`} position="relative">
+        <Box bg="bg" left={0} position="sticky" zIndex={1} {...taskNameColumnStyles}>
+          <TaskNames nodes={flatNodes} onRowClick={handleRowClick} virtualItems={virtualItems} />
+        </Box>
+        <Flex flexDirection="row-reverse" flexShrink={0}>
+          {gridRuns?.map((dr: GridRunsResponse) => (
+            <TaskInstancesColumn
+              key={dr.run_id}
+              nodes={flatNodes}
+              onCellClick={handleCellClick}
+              run={dr}
+              showVersionIndicatorMode={showVersionIndicatorMode}
+              tiSummaries={summariesByRunId.get(dr.run_id)}
+              virtualItems={virtualItems}
+            />
+          ))}
+        </Flex>
+      </Flex>
+    </>
+  );
+
+  return (
+    <Flex
+      flexDirection="column"
+      flexGrow={showGantt ? 0 : 1}
+      flexShrink={showGantt ? 0 : undefined}
+      height={showGantt ? undefined : "100%"}
+      justifyContent="flex-start"
+      position="relative"
+      ref={gridRef}
+      tabIndex={0}
+      w={showGantt ? "fit-content" : "full"}
+    >
+      {usesSharedScroll ? (
+        gridHeaderAndBody
+      ) : (
+        <Box
+          flex={1}
+          marginRight={showGantt ? 0 : 1}
+          minH={0}
+          overflow="auto"
+          paddingRight={showGantt ? 0 : 6}
+          position="relative"
+          ref={scrollContainerRef}
+        >
+          {gridHeaderAndBody}
+        </Box>
+      )}
     </Flex>
   );
 };

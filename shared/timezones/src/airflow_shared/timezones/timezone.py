@@ -37,6 +37,12 @@ _PENDULUM3 = version.parse(metadata.version("pendulum")).major == 3
 utc = pendulum.UTC
 
 
+class _Timezone:
+    """Keep track of current timezone w/o global variable."""
+
+    initialized_timezone: FixedTimezone | Timezone = utc
+
+
 def is_localized(value: dt.datetime) -> bool:
     """
     Determine if a given datetime.datetime is aware.
@@ -87,9 +93,7 @@ def convert_to_utc(value: dt.datetime | None) -> DateTime | None:
         return value
 
     if not is_localized(value):
-        from airflow.settings import TIMEZONE
-
-        value = pendulum.instance(value, TIMEZONE)
+        value = pendulum.instance(value, _Timezone.initialized_timezone)
 
     return pendulum.instance(value.astimezone(utc))
 
@@ -103,7 +107,9 @@ def make_aware(value: DateTime, timezone: dt.tzinfo | None = None) -> DateTime: 
 
 
 @overload
-def make_aware(value: dt.datetime, timezone: dt.tzinfo | None = None) -> dt.datetime: ...
+def make_aware(  # type: ignore[overload-cannot-match]
+    value: dt.datetime, timezone: dt.tzinfo | None = None
+) -> dt.datetime: ...
 
 
 def make_aware(value: dt.datetime | None, timezone: dt.tzinfo | None = None) -> dt.datetime | None:
@@ -115,9 +121,7 @@ def make_aware(value: dt.datetime | None, timezone: dt.tzinfo | None = None) -> 
     :return: localized datetime in settings.TIMEZONE or timezone
     """
     if timezone is None:
-        from airflow.settings import TIMEZONE
-
-        timezone = TIMEZONE
+        timezone = _Timezone.initialized_timezone
 
     if not value:
         return None
@@ -150,9 +154,7 @@ def make_naive(value, timezone=None):
     :return: naive datetime
     """
     if timezone is None:
-        from airflow.settings import TIMEZONE
-
-        timezone = TIMEZONE
+        timezone = _Timezone.initialized_timezone
 
     # Emulate the behavior of astimezone() on Python < 3.6.
     if is_naive(value):
@@ -175,9 +177,7 @@ def datetime(*args, **kwargs):
     :return: datetime.datetime
     """
     if "tzinfo" not in kwargs:
-        from airflow.settings import TIMEZONE
-
-        kwargs["tzinfo"] = TIMEZONE
+        kwargs["tzinfo"] = _Timezone.initialized_timezone
 
     return dt.datetime(*args, **kwargs)
 
@@ -190,9 +190,7 @@ def parse(string: str, timezone=None, *, strict=False) -> DateTime:
     :param timezone: the timezone
     :param strict: if False, it will fall back on the dateutil parser if unable to parse with pendulum
     """
-    from airflow.settings import TIMEZONE
-
-    return pendulum.parse(string, tz=timezone or TIMEZONE, strict=strict)  # type: ignore
+    return pendulum.parse(string, tz=timezone or _Timezone.initialized_timezone, strict=strict)  # type: ignore
 
 
 @overload
@@ -204,7 +202,9 @@ def coerce_datetime(v: DateTime, tz: dt.tzinfo | None = None) -> DateTime: ...
 
 
 @overload
-def coerce_datetime(v: dt.datetime, tz: dt.tzinfo | None = None) -> DateTime: ...
+def coerce_datetime(  # type: ignore[overload-cannot-match]
+    v: dt.datetime, tz: dt.tzinfo | None = None
+) -> DateTime: ...
 
 
 def coerce_datetime(v: dt.datetime | None, tz: dt.tzinfo | None = None) -> DateTime | None:
@@ -232,7 +232,7 @@ def td_format(td_object: None | dt.timedelta | float | int) -> str | None:
     For example timedelta(seconds=3752) would become `1h:2M:32s`.
     If the time is less than a second, the return will be `<1s`.
     """
-    if not td_object:
+    if td_object is None:
         return None
     if isinstance(td_object, dt.timedelta):
         delta = relativedelta() + td_object
@@ -287,6 +287,18 @@ def local_timezone() -> FixedTimezone | Timezone:
     :meta private:
     """
     return pendulum.tz.local_timezone()
+
+
+def initialize(default_timezone: str) -> None:
+    """
+    Initialize the default timezone for the timezone library.
+
+    Automatically called by airflow-core and task-sdk during their initialization.
+    """
+    if default_timezone == "system":
+        _Timezone.initialized_timezone = local_timezone()
+    else:
+        _Timezone.initialized_timezone = parse_timezone(default_timezone)
 
 
 def from_timestamp(timestamp: int | float, tz: str | FixedTimezone | Timezone = utc) -> DateTime:

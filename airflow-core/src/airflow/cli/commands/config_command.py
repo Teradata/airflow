@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import shutil
+import sys
 from dataclasses import dataclass
 from io import StringIO
 from typing import Any, NamedTuple
@@ -37,6 +38,11 @@ from airflow.utils.providers_configuration_loader import providers_configuration
 @providers_configuration_loaded
 def show_config(args):
     """Show current application configuration."""
+    if not args.show_values:
+        print(
+            "Values are hidden by default. Use `--show-values` to display them (may include sensitive data).",
+            file=sys.stderr,
+        )
     with StringIO() as output:
         conf.write(
             output,
@@ -48,6 +54,8 @@ def show_config(args):
             include_providers=not args.exclude_providers,
             comment_out_everything=args.comment_out_everything or args.defaults,
             only_defaults=args.defaults,
+            hide_sensitive=args.hide_sensitive,
+            show_values=args.show_values,
         )
         code = output.getvalue()
     if should_use_colors(args):
@@ -633,6 +641,11 @@ CONFIGS_CHANGES = [
         config=ConfigParameter("webserver", "navbar_logo_text_color"),
         was_deprecated=False,
     ),
+    # api
+    ConfigChange(
+        config=ConfigParameter("api", "page_size"),
+        renamed_to=ConfigParameter("api", "fallback_page_limit"),
+    ),
     # scheduler
     ConfigChange(
         config=ConfigParameter("scheduler", "dependency_detector"),
@@ -990,6 +1003,11 @@ def update_config(args) -> None:
         include_secret=True,
         display_sensitive=True,
     )
+    update_sections_lower = {s.lower() for s in update_sections} if update_sections is not None else None
+    update_options_lower = {opt.lower() for opt in update_options} if update_options is not None else None
+    ignore_sections_lower = {s.lower() for s in ignore_sections}
+    ignore_options_lower = {opt.lower() for opt in ignore_options}
+
     for change in CONFIGS_CHANGES:
         if not include_all and not change.breaking:
             continue
@@ -997,13 +1015,11 @@ def update_config(args) -> None:
         conf_option = change.config.option.lower()
         full_key = f"{conf_section}.{conf_option}"
 
-        if update_sections is not None and conf_section not in [s.lower() for s in update_sections]:
+        if update_sections_lower is not None and conf_section not in update_sections_lower:
             continue
-        if update_options is not None and full_key not in [opt.lower() for opt in update_options]:
+        if update_options_lower is not None and full_key not in update_options_lower:
             continue
-        if conf_section in [s.lower() for s in ignore_sections] or full_key in [
-            opt.lower() for opt in ignore_options
-        ]:
+        if conf_section in ignore_sections_lower or full_key in ignore_options_lower:
             continue
 
         if conf_section not in config_dict or conf_option not in config_dict[conf_section]:

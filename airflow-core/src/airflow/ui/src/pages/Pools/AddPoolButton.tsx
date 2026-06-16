@@ -16,11 +16,11 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { Heading, useDisclosure } from "@chakra-ui/react";
+import { Button, Heading, useDisclosure } from "@chakra-ui/react";
 import { useTranslation } from "react-i18next";
-import { FiPlusCircle } from "react-icons/fi";
+import { MdAdd } from "react-icons/md";
 
-import { Button, Dialog, Toaster } from "src/components/ui";
+import { Dialog, Toaster } from "src/components/ui";
 import { useAddPool } from "src/queries/useAddPool";
 
 import PoolForm, { type PoolBody } from "./PoolForm";
@@ -37,6 +37,7 @@ const AddPoolButton = () => {
     include_deferred: false,
     name: "",
     slots: 0,
+    team_name: "",
   };
 
   const handleClose = () => {
@@ -47,11 +48,11 @@ const AddPoolButton = () => {
   return (
     <>
       <Toaster />
-      <Button colorPalette="brand" onClick={onOpen}>
-        <FiPlusCircle /> {translate("pools.add")}
+      <Button onClick={onOpen}>
+        <MdAdd /> {translate("pools.add")}
       </Button>
 
-      <Dialog.Root onOpenChange={handleClose} open={open} size="xl">
+      <Dialog.Root onOpenChange={handleClose} open={open}>
         <Dialog.Content backdrop>
           <Dialog.Header>
             <Heading size="xl">{translate("pools.add")}</Heading>

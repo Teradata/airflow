@@ -31,7 +31,7 @@ from google.cloud.dataform_v1beta1.types import (
     WriteFileResponse,
 )
 
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.common.hooks.base_google import GoogleBaseHook
 
 if TYPE_CHECKING:
@@ -44,7 +44,7 @@ class DataformHook(GoogleBaseHook):
 
     def get_dataform_client(self) -> DataformClient:
         """Retrieve client library object that allow access to Cloud Dataform service."""
-        return DataformClient(credentials=self.get_credentials())
+        return DataformClient(credentials=self.get_credentials(), client_options=self.get_client_options())
 
     @GoogleBaseHook.fallback_to_default_project_id
     def wait_for_workflow_invocation(

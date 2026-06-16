@@ -28,6 +28,7 @@
     "requiredActions": "Acciones Requeridas",
     "xcoms": "XComs"
   },
+  "collapseAllExtra": "Colapsar todos los extra json",
   "collapseDetailsPanel": "Colapsar Detalles del Panel",
   "createdAssetEvent_many": "Eventos de Asset Creados",
   "createdAssetEvent_one": "Evento de Asset Creado",
@@ -63,6 +64,11 @@
     "dagVersions": "Versión(es) del Dag",
     "dataIntervalEnd": "Intervalo de Datos Final",
     "dataIntervalStart": "Intervalo de Datos Inicial",
+    "durationStats": {
+      "mean": "Media",
+      "mode": "Moda"
+    },
+    "expectedDuration": "Duración Esperada",
     "lastSchedulingDecision": "Última Decisión de Programación",
     "queuedAt": "En Cola en",
     "runAfter": "Ejecutar Después",
@@ -104,6 +110,7 @@
     "hotkey": "e",
     "tooltip": "Presiona {{hotkey}} para alternar expandir"
   },
+  "expandAllExtra": "Expandir todos los extra json",
   "expression": {
     "all": "Todos",
     "and": "Y",
@@ -161,7 +168,7 @@
     "scheduled": "Programado"
   },
   "reset": "Restablecer",
-  "runId": "ID de la corrida",
+  "runId": "ID de la ejecución",
   "runTypes": {
     "asset_triggered": "Asset Activado",
     "backfill": "Backfill",
@@ -238,7 +245,6 @@
   "task_many": "Tareas",
   "task_one": "Tarea",
   "task_other": "Tareas",
-  "taskGroup": "Grupo de Tareas",
   "taskId": "ID de la Tarea",
   "taskInstance": {
     "dagVersion": "Versión del Dag",

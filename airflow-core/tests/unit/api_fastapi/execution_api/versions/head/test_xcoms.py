@@ -17,13 +17,12 @@
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import urllib.parse
 
-import httpx
 import pytest
 from fastapi import FastAPI, HTTPException, Path, Request, status
+from sqlalchemy import delete, select
 
 from airflow._shared.timezones import timezone
 from airflow.api_fastapi.execution_api.datamodels.xcom import XComResponse
@@ -41,14 +40,14 @@ pytestmark = pytest.mark.db_test
 def reset_db():
     """Reset XCom entries."""
     with create_session() as session:
-        session.query(DagRun).delete()
-        session.query(XComModel).delete()
+        session.execute(delete(DagRun))
+        session.execute(delete(XComModel))
 
 
 @pytest.fixture
 def access_denied(client):
-    from airflow.api_fastapi.execution_api.deps import JWTBearerDep
     from airflow.api_fastapi.execution_api.routes.xcoms import has_xcom_access
+    from airflow.api_fastapi.execution_api.security import CurrentTIToken
 
     last_route = client.app.routes[-1]
     assert isinstance(last_route.app, FastAPI)
@@ -60,7 +59,7 @@ def access_denied(client):
         run_id: str = Path(),
         task_id: str = Path(),
         xcom_key: str = Path(alias="key"),
-        token=JWTBearerDep,
+        token=CurrentTIToken,
     ):
         await has_xcom_access(dag_id, run_id, task_id, xcom_key, request, token)
         raise HTTPException(
@@ -354,9 +353,17 @@ class TestXComsSetEndpoint:
         assert response.status_code == 201
         assert response.json() == {"message": "XCom successfully set"}
 
-        xcom = session.query(XComModel).filter_by(task_id=ti.task_id, dag_id=ti.dag_id, key="xcom_1").first()
+        xcom = session.scalars(
+            select(XComModel).where(
+                XComModel.task_id == ti.task_id,
+                XComModel.dag_id == ti.dag_id,
+                XComModel.key == "xcom_1",
+            )
+        ).first()
         assert xcom.value == expected_value
-        task_map = session.query(TaskMap).filter_by(task_id=ti.task_id, dag_id=ti.dag_id).one_or_none()
+        task_map = session.scalars(
+            select(TaskMap).where(TaskMap.task_id == ti.task_id, TaskMap.dag_id == ti.dag_id)
+        ).one_or_none()
         assert task_map is None, "Should not be mapped"
 
     @pytest.mark.parametrize(
@@ -385,7 +392,7 @@ class TestXComsSetEndpoint:
         Test that deserialization works when XCom values are stored directly in the DB with API Server.
 
         This tests the case where the XCom value is stored from the Task API where the value is serialized
-        via Client SDK into JSON object and passed via the API Server to the DB. It by-passes
+        via Client SDK into JSON object and passed via the API Server to the DB. It bypasses
         the XComModel.serialize_value and stores valid Python JSON compatible objects to DB.
 
         This test is to ensure that the deserialization works correctly in this case as well as
@@ -438,13 +445,18 @@ class TestXComsSetEndpoint:
         assert response.status_code == 201
         assert response.json() == {"message": "XCom successfully set"}
 
-        xcom = (
-            session.query(XComModel)
-            .filter_by(task_id=ti.task_id, dag_id=ti.dag_id, key="xcom_1", map_index=-1)
-            .first()
-        )
+        xcom = session.scalars(
+            select(XComModel).where(
+                XComModel.task_id == ti.task_id,
+                XComModel.dag_id == ti.dag_id,
+                XComModel.key == "xcom_1",
+                XComModel.map_index == -1,
+            )
+        ).first()
         assert xcom.value == "value1"
-        task_map = session.query(TaskMap).filter_by(task_id=ti.task_id, dag_id=ti.dag_id).one_or_none()
+        task_map = session.scalars(
+            select(TaskMap).where(TaskMap.task_id == ti.task_id, TaskMap.dag_id == ti.dag_id)
+        ).one_or_none()
         assert task_map is not None, "Should be mapped"
         assert task_map.dag_id == "dag"
         assert task_map.run_id == "test"
@@ -453,21 +465,15 @@ class TestXComsSetEndpoint:
         assert task_map.length == 3
 
     @pytest.mark.parametrize(
-        ("length", "err_context"),
+        ("length", "expected_status"),
         [
-            pytest.param(
-                20,
-                contextlib.nullcontext(),
-                id="20-success",
-            ),
-            pytest.param(
-                2000,
-                pytest.raises(httpx.HTTPStatusError),
-                id="2000-too-long",
-            ),
+            pytest.param(20, 201, id="20-success"),
+            pytest.param(2000, 400, id="2000-too-long"),
         ],
     )
-    def test_xcom_set_downstream_of_mapped(self, client, create_task_instance, session, length, err_context):
+    def test_xcom_set_downstream_of_mapped(
+        self, client, create_task_instance, session, length, expected_status
+    ):
         """
         Test that XCom value is set correctly. The value is passed as a JSON string in the request body.
         XCom.set then uses json.dumps to serialize it and store the value in the database.
@@ -476,15 +482,17 @@ class TestXComsSetEndpoint:
         ti = create_task_instance()
         session.commit()
 
-        with err_context:
-            response = client.post(
-                f"/execution/xcoms/{ti.dag_id}/{ti.run_id}/{ti.task_id}/xcom_1",
-                json='"valid json"',
-                params={"mapped_length": length},
-            )
-            response.raise_for_status()
+        response = client.post(
+            f"/execution/xcoms/{ti.dag_id}/{ti.run_id}/{ti.task_id}/xcom_1",
+            json='"valid json"',
+            params={"mapped_length": length},
+        )
+        assert response.status_code == expected_status
 
-            task_map = session.query(TaskMap).filter_by(task_id=ti.task_id, dag_id=ti.dag_id).one_or_none()
+        if expected_status < 400:
+            task_map = session.scalars(
+                select(TaskMap).where(TaskMap.task_id == ti.task_id, TaskMap.dag_id == ti.dag_id)
+            ).one_or_none()
             assert task_map.length == length
 
     @pytest.mark.usefixtures("access_denied")
@@ -530,17 +538,39 @@ class TestXComsSetEndpoint:
             json=value,
         )
 
-        xcom = (
-            session.query(XComModel)
-            .filter_by(task_id=ti.task_id, dag_id=ti.dag_id, key="test_xcom_roundtrip")
-            .first()
-        )
+        xcom = session.scalars(
+            select(XComModel).where(
+                XComModel.task_id == ti.task_id,
+                XComModel.dag_id == ti.dag_id,
+                XComModel.key == "test_xcom_roundtrip",
+            )
+        ).first()
         assert xcom.value == expected_value
 
         response = client.get(f"/execution/xcoms/{ti.dag_id}/{ti.run_id}/{ti.task_id}/test_xcom_roundtrip")
 
         assert response.status_code == 200
         assert XComResponse.model_validate_json(response.read()).value == expected_value
+
+    def test_xcom_dag_result(self, client, create_task_instance, session):
+        """
+        Test that the dag_result flag propagates to XComModel.
+        """
+        ti = create_task_instance()
+        client.post(
+            f"/execution/xcoms/{ti.dag_id}/{ti.run_id}/{ti.task_id}/return_value",
+            params={"dag_result": True},
+            json=123,
+        )
+
+        dag_result = session.scalar(
+            select(XComModel.dag_result).where(
+                XComModel.task_id == ti.task_id,
+                XComModel.dag_id == ti.dag_id,
+                XComModel.key == "return_value",
+            )
+        )
+        assert dag_result is True
 
 
 class TestXComsDeleteEndpoint:
@@ -553,7 +583,7 @@ class TestXComsDeleteEndpoint:
         ti1.xcom_push(key="xcom_1", value='"value2"', session=session)
         session.commit()
 
-        xcoms = session.query(XComModel).filter_by(key="xcom_1").all()
+        xcoms = session.scalars(select(XComModel).where(XComModel.key == "xcom_1")).all()
         assert xcoms is not None
         assert len(xcoms) == 2
 
@@ -562,12 +592,20 @@ class TestXComsDeleteEndpoint:
         assert response.status_code == 200
         assert response.json() == {"message": "XCom with key: xcom_1 successfully deleted."}
 
-        xcom_ti = (
-            session.query(XComModel).filter_by(task_id=ti.task_id, dag_id=ti.dag_id, key="xcom_1").first()
-        )
+        xcom_ti = session.scalars(
+            select(XComModel).where(
+                XComModel.task_id == ti.task_id,
+                XComModel.dag_id == ti.dag_id,
+                XComModel.key == "xcom_1",
+            )
+        ).first()
         assert xcom_ti is None
 
-        xcom_ti = (
-            session.query(XComModel).filter_by(task_id=ti1.task_id, dag_id=ti1.dag_id, key="xcom_1").first()
-        )
+        xcom_ti = session.scalars(
+            select(XComModel).where(
+                XComModel.task_id == ti1.task_id,
+                XComModel.dag_id == ti1.dag_id,
+                XComModel.key == "xcom_1",
+            )
+        ).first()
         assert xcom_ti is not None

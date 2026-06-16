@@ -23,7 +23,9 @@ Dynamic Task Mapping
 
 Dynamic Task Mapping allows a way for a workflow to create a number of tasks at runtime based upon current data, rather than the Dag author having to know in advance how many tasks would be needed.
 
-This is similar to defining your tasks in a for loop, but instead of having the Dag file fetch the data and do that itself, the scheduler can do this based on the output of a previous task. Right before a mapped task is executed the scheduler will create *n* copies of the task, one for each input.
+This is similar to defining your tasks in a for loop, but instead of having the DAG file fetch the data and do that itself, the scheduler can do this based on the output of a previous task.
+Unlike a Python for-loop executed at DAG parse time, dynamic task mapping defers task creation until runtime, allowing the scheduler to determine the exact number of task instances based on upstream task outputs.
+Right before a mapped task is executed the scheduler will create *n* copies of the task, one for each input.
 
 It is also possible to have a task operate on the collected output of a mapped task, commonly known as map and reduce.
 
@@ -187,7 +189,6 @@ By default, mapped tasks are assigned an integer index. It is possible to overri
 
     from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 
-
     # The two expanded task instances will be named "2024-01-01" and "2024-01-02".
     SQLExecuteQueryOperator.partial(
         ...,
@@ -257,7 +258,6 @@ In this example, you have a regular data delivery to an S3 bucket and want to ap
     from airflow.sdk import task
     from airflow.providers.amazon.aws.hooks.s3 import S3Hook
     from airflow.providers.amazon.aws.operators.s3 import S3ListOperator
-
 
     with DAG(dag_id="mapped_s3", start_date=datetime(2020, 4, 7)) as dag:
         list_filenames = S3ListOperator(
@@ -676,3 +676,33 @@ Automatically skipping zero-length maps
 =======================================
 
 If the input is empty (zero length), no new tasks will be created and the mapped task will be marked as ``SKIPPED``.
+
+This can be useful when a Dag discovers work to do at runtime, but sometimes there is no work for that run.
+For example, a scan-and-repair Dag can return an empty list when it does not find anything to repair.
+In that case, the mapped task is skipped, and a downstream summary task can still treat the run as a successful no-op if it uses a trigger rule that allows skipped upstream tasks.
+
+.. code-block:: python
+
+    from airflow.sdk import TriggerRule, task
+
+
+    @task
+    def find_work_items():
+        # Return an empty list when no files, records, or partitions need repair.
+        return []
+
+
+    @task
+    def repair(item): ...
+
+
+    @task(trigger_rule=TriggerRule.NONE_FAILED)
+    def summarize(repaired_items):
+        if not repaired_items:
+            print("No work found; nothing to repair.")
+            return
+        print(f"Repaired {len(repaired_items)} item(s).")
+
+
+    repaired_items = repair.expand(item=find_work_items())
+    summarize(repaired_items)

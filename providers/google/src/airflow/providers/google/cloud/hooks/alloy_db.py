@@ -27,7 +27,7 @@ import tenacity
 from google.api_core.gapic_v1.method import DEFAULT, _MethodDefault
 from google.cloud import alloydb_v1
 
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.common.consts import CLIENT_INFO
 from airflow.providers.google.common.hooks.base_google import PROVIDE_PROJECT_ID, GoogleBaseHook
 
@@ -51,6 +51,7 @@ class AlloyDbHook(GoogleBaseHook):
             self._client = alloydb_v1.AlloyDBAdminClient(
                 credentials=self.get_credentials(),
                 client_info=CLIENT_INFO,
+                client_options=self.get_client_options(),
             )
         return self._client
 

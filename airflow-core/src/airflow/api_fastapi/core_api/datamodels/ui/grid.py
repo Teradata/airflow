@@ -18,9 +18,9 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
-from pydantic import BaseModel
-
+from airflow.api_fastapi.core_api.base import BaseModel
 from airflow.utils.state import TaskInstanceState
 
 
@@ -28,10 +28,12 @@ class LightGridTaskInstanceSummary(BaseModel):
     """Task Instance Summary model for the Grid UI."""
 
     task_id: str
+    task_display_name: str
     state: TaskInstanceState | None
-    child_states: dict[TaskInstanceState | None, int] | None
+    child_states: dict[TaskInstanceState | Literal["none"], int] | None
     min_start_date: datetime | None
     max_end_date: datetime | None
+    dag_version_number: int | None = None
 
 
 class GridTISummaries(BaseModel):

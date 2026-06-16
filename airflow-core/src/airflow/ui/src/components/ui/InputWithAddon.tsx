@@ -21,12 +21,13 @@ import { Box, Input, Text } from "@chakra-ui/react";
 import * as React from "react";
 
 export type InputWithAddonProps = {
+  readonly endAddon?: React.ReactNode;
   readonly label: string;
   readonly width?: string;
 } & InputProps;
 
 export const InputWithAddon = React.forwardRef<HTMLInputElement, InputWithAddonProps>((props, ref) => {
-  const { label, width = "220px", ...inputProps } = props;
+  const { endAddon, label, width = "220px", ...inputProps } = props;
 
   return (
     <Box
@@ -36,7 +37,8 @@ export const InputWithAddon = React.forwardRef<HTMLInputElement, InputWithAddonP
       borderColor="border"
       borderRadius="full"
       display="flex"
-      width={width}
+      minWidth={width}
+      width="auto"
     >
       <Text
         bg="gray.muted"
@@ -61,6 +63,7 @@ export const InputWithAddon = React.forwardRef<HTMLInputElement, InputWithAddonP
         size="sm"
         {...inputProps}
       />
+      {endAddon}
     </Box>
   );
 });

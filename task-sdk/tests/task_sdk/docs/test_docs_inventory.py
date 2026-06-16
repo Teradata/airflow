@@ -25,7 +25,6 @@ import importlib
 import shutil
 import subprocess
 import zlib
-from pathlib import Path
 
 import pytest
 
@@ -76,7 +75,8 @@ def test_docs_inventory_matches_public_api(tmp_path):
     public = set(getattr(sdk, "__all__", [])) - {"__version__"}
 
     extras = {"AirflowParsingContext"}
-    excluded_from_docs = set()
+    # we do not want to document the class for `conf` but a description is present in the docs
+    excluded_from_docs = {"conf", "macros"}
     missing = (public - documented) - excluded_from_docs
     assert not missing, f"Public API items missing in docs: {missing}"
     unexpected = (documented - public) - extras

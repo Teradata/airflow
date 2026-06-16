@@ -12,8 +12,12 @@
     "maxRuns": "Maksymalna liczba aktywnych wykonań",
     "missingAndErroredRuns": "Brakujące i błędne wykonania",
     "missingRuns": "Brakujące wykonania",
+    "overrideExistingParams": "Nadpisz parametry istniejących wykonań",
+    "permissionDenied": "Próba nieudana: Użytkownik nie ma uprawnień do tworzenia wypełnień wstecznych.",
     "reprocessBehavior": "Zachowanie ponownego przetwarzania",
     "run": "Uruchom ponowne przetwarzanie",
+    "scheduleNotBackfillable": "Harmonogram tego Daga nie obsługuje wypełnień wstecznych",
+    "schedulerPriorityHint": "Uruchomienia wypełnienia wstecznego są szeregowane po uruchomieniach niebędących wypełnieniem wstecznym w każdym cyklu harmonogramu. Uruchomienia wypełnienia wstecznego mogą dłużej pozostawać w kolejce, jeśli obecne są inne uruchomienia niebędące wypełnieniem wstecznym.",
     "selectDescription": "Uruchom ten Dag dla zakresu dat",
     "selectLabel": "Wypełnienie wsteczne",
     "title": "Uruchom uzupełnienie wsteczne",
@@ -23,7 +27,6 @@
         "title": "Ponowne przetwarzanie uruchomione"
       }
     },
-    "tooltip": "Ponowne przetworzenie wymaga harmonogramu",
     "unpause": "Wznów {{dag_display_name}} przy wykonaniu",
     "validation": {
       "datesRequired": "Należy podać zarówno datę początkową, jak i końcową interwału danych.",
@@ -46,10 +49,7 @@
     "invalidJson": "Nieprawidłowy format JSON: {{errorMessage}}"
   },
   "dagWarnings": {
-    "error_few": "Błędy",
-    "error_many": "Błędów",
     "error_one": "Błąd",
-    "error_other": "Błedy",
     "errorAndWarning": "1 Błąd i {{warningText}}",
     "warning_few": "{{count}} Ostrzeżenia",
     "warning_many": "{{count}} Ostrzeżeń",
@@ -84,6 +84,7 @@
     "files_other": "{{count}} plików"
   },
   "flexibleForm": {
+    "durationPlaceholder": "Wprowadź czas trwania w formacie ISO 8601",
     "placeholder": "Wybierz wartość",
     "placeholderArray": "Wprowadź każdy ciąg w nowej linii",
     "placeholderExamples": "Zacznij pisać, aby zobaczyć opcje",
@@ -91,6 +92,7 @@
     "validationErrorArrayNotArray": "Wartość musi być tablicą.",
     "validationErrorArrayNotNumbers": "Wszystkie elementy w tablicy muszą być liczbami.",
     "validationErrorArrayNotObject": "Wszystkie elementy w tablicy muszą być obiektami.",
+    "validationErrorDuration": "Nieprawidłowy format czasu trwania ISO 8601",
     "validationErrorRequired": "To pole jest wymagane"
   },
   "graph": {
@@ -106,7 +108,8 @@
     "taskCount_many": "{{count}} Zadań",
     "taskCount_one": "{{count}} Zadanie",
     "taskCount_other": "{{count}} Zadań",
-    "taskGroup": "Grupa zadań"
+    "taskGroup": "Grupa zadań",
+    "zoomToTask": "Powiększ do wybranego zadania"
   },
   "limitedList": "+{{count}} więcej",
   "limitedList.allItems": "Wszystkie {{count}} elementy:",
@@ -130,22 +133,40 @@
   "sortedDescending": "posortowane malejąco",
   "sortedUnsorted": "nieposortowane",
   "taskTries": "Próby zadania",
+  "taskTryPlaceholder": "Próba zadania",
+  "team": {
+    "selector": {
+      "helperText": "Opcjonalne. Ogranicz użycie do konkretnego zespołu.",
+      "label": "Zespół",
+      "placeHolder": "Wybierz zespół"
+    }
+  },
   "toggleCardView": "Pokaż widok kart",
   "toggleTableView": "Pokaż widok tabeli",
   "triggerDag": {
     "button": "Uruchom Daga",
+    "dataInterval": "Interwał danych",
+    "dataIntervalAuto": "Wywnioskowany z daty logicznej i harmonogramu",
+    "dataIntervalManual": "Określ ręcznie",
+    "intervalEnd": "Koniec",
+    "intervalStart": "Początek",
     "loading": "Ładowanie informacji o Dagach...",
     "loadingFailed": "Nie udało się załadować informacji o Dagach. Spróbuj ponownie.",
+    "manualRunDenied": "Ręczne uruchamianie nie jest dozwolone dla tego Daga",
     "runIdHelp": "Opcjonalne - zostanie wygenerowane, jeśli nie podano",
     "selectDescription": "Wyzwól pojedyncze wykonanie",
     "selectLabel": "Pojedyncze wykonanie",
     "title": "Uruchom Daga",
     "toaster": {
+      "error": {
+        "title": "Nie udało się uruchomić Daga"
+      },
       "success": {
         "description": "Dag został pomyślnie uruchomiony.",
         "title": "Uruchomienie Daga"
       }
     },
+    "triggerAgainWithConfig": "Uruchom ponownie z tą konfiguracją",
     "unpause": "Wznów {{dagDisplayName}} przy wykonaniu"
   },
   "trimText": {
@@ -161,6 +182,7 @@
     "versionId": "Identyfikator wersji"
   },
   "versionSelect": {
+    "allVersions": "Wszystkie wersje",
     "dagVersion": "Wersja Daga",
     "versionCode": "v{{versionCode}}"
   }

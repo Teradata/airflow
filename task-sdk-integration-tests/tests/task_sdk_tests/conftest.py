@@ -284,6 +284,7 @@ def docker_compose_setup(tmp_path_factory):
         compose_files=docker_compose_files,
         debug=os.environ.get("VERBOSE"),
         log_level=log_level,
+        compose_project_name="breeze-task-sdk-test",
     )
     start_new_compose = True
     processes = compose.compose.ps(["airflow-apiserver"])
@@ -737,5 +738,6 @@ def asset_test_setup(docker_compose_setup, airflow_ready):
         additional_metadata={
             "name": "test_asset",
             "uri": "test://asset1/",
+            "alias_name": "test_asset_alias",
         },
     )

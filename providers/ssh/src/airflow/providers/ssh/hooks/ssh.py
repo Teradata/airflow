@@ -19,7 +19,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 from base64 import decodebytes
 from collections.abc import Sequence
@@ -30,11 +29,11 @@ from typing import Any
 
 import paramiko
 from paramiko.config import SSH_PORT
-from sshtunnel import SSHTunnelForwarder
 from tenacity import Retrying, stop_after_attempt, wait_fixed, wait_random
 
-from airflow.exceptions import AirflowException
-from airflow.providers.common.compat.sdk import BaseHook
+from airflow.providers.common.compat.connection import get_async_connection
+from airflow.providers.common.compat.sdk import AirflowException, BaseHook
+from airflow.providers.ssh.tunnel import AsyncSSHTunnel, SSHTunnel
 from airflow.utils.platform import getuser
 
 try:
@@ -83,6 +82,9 @@ class SSHHook(BaseHook):
         lifetime of the transport
     :param ciphers: list of ciphers to use in order of preference
     :param auth_timeout: timeout (in seconds) for the attempt to authenticate with the remote_host
+    :param conn_retry_attempts: number of times to attempt the initial SSH connection before
+        giving up (default 3). Raising this helps when many tasks target the same SSH server at
+        once and some connections are transiently refused (e.g. ``sshd`` ``MaxStartups`` throttling).
     """
 
     # List of classes to try loading private keys as, ordered (roughly) by most common to least common
@@ -131,9 +133,11 @@ class SSHHook(BaseHook):
         ciphers: list[str] | None = None,
         auth_timeout: int | None = None,
         host_proxy_cmd: str | None = None,
+        conn_retry_attempts: int = 3,
     ) -> None:
         super().__init__()
         self.ssh_conn_id = ssh_conn_id
+        self.conn_retry_attempts = max(1, conn_retry_attempts)
         self.remote_host = remote_host
         self.username = username
         self.password = password
@@ -345,7 +349,7 @@ class SSHHook(BaseHook):
         for attempt in Retrying(
             reraise=True,
             wait=wait_fixed(3) + wait_random(0, 2),
-            stop=stop_after_attempt(3),
+            stop=stop_after_attempt(self.conn_retry_attempts),
             before_sleep=log_before_sleep,
         ):
             with attempt:
@@ -366,51 +370,37 @@ class SSHHook(BaseHook):
 
     def get_tunnel(
         self, remote_port: int, remote_host: str = "localhost", local_port: int | None = None
-    ) -> SSHTunnelForwarder:
+    ) -> SSHTunnel:
         """
-        Create a tunnel between two hosts.
+        Create a local port-forwarding tunnel through the SSH connection.
 
-        This is conceptually similar to ``ssh -L <LOCAL_PORT>:host:<REMOTE_PORT>``.
+        This is conceptually similar to ``ssh -L <LOCAL_PORT>:<remote_host>:<REMOTE_PORT>``.
+
+        The returned ``SSHTunnel`` should be used as a context manager::
+
+            with hook.get_tunnel(remote_port=5432) as tunnel:
+                connect_to("localhost", tunnel.local_bind_port)
+
+        The ``.start()`` / ``.stop()`` methods still work but are deprecated.
+
+        .. versionchanged:: 4.4.0
+            Returns ``SSHTunnel`` instead of ``sshtunnel.SSHTunnelForwarder``.
+            The tunnel now reuses the hook's SSH connection (``get_conn()``)
+            instead of establishing a separate one.
 
         :param remote_port: The remote port to create a tunnel to
         :param remote_host: The remote host to create a tunnel to (default localhost)
-        :param local_port:  The local port to attach the tunnel to
-
-        :return: sshtunnel.SSHTunnelForwarder object
+        :param local_port: The local port to attach the tunnel to (None for ephemeral)
+        :return: SSHTunnel instance
         """
-        if local_port:
-            local_bind_address: tuple[str, int] | tuple[str] = ("localhost", local_port)
-        else:
-            local_bind_address = ("localhost",)
-
-        tunnel_kwargs = {
-            "ssh_port": self.port,
-            "ssh_username": self.username,
-            "ssh_pkey": self.key_file or self.pkey,
-            "ssh_proxy": self.host_proxy,
-            "local_bind_address": local_bind_address,
-            "remote_bind_address": (remote_host, remote_port),
-            "logger": self.log,
-        }
-
-        if self.password:
-            password = self.password.strip()
-            tunnel_kwargs.update(
-                ssh_password=password,
-            )
-        else:
-            tunnel_kwargs.update(
-                host_pkey_directories=None,
-            )
-
-        if not hasattr(self.log, "handlers"):
-            # We need to not hit this https://github.com/pahaz/sshtunnel/blob/dc0732884379a19a21bf7a49650d0708519ec54f/sshtunnel.py#L238-L239
-            paramkio_log = logging.getLogger("paramiko.transport")
-            paramkio_log.addHandler(logging.NullHandler())
-            paramkio_log.propagate = True
-        client = SSHTunnelForwarder(self.remote_host, **tunnel_kwargs)
-
-        return client
+        ssh_client = self.get_conn()
+        return SSHTunnel(
+            ssh_client=ssh_client,
+            remote_host=remote_host,
+            remote_port=remote_port,
+            local_port=local_port,
+            logger=self.log,
+        )
 
     def _pkey_from_private_key(self, private_key: str, passphrase: str | None = None) -> paramiko.PKey:
         """
@@ -531,3 +521,186 @@ class SSHHook(BaseHook):
             return True, "Connection successfully tested"
         except Exception as e:
             return False, str(e)
+
+
+class SSHHookAsync(BaseHook):
+    """
+    Asynchronous SSH hook using asyncssh for use in triggers.
+
+    This hook provides async SSH connectivity for deferrable operators
+    and their triggers.
+
+    :param ssh_conn_id: SSH connection ID from Airflow Connections
+    :param host: hostname of the SSH server (overrides connection)
+    :param port: port of the SSH server (overrides connection)
+    :param username: username for authentication (overrides connection)
+    :param password: password for authentication (overrides connection)
+    :param known_hosts: path to known_hosts file. Defaults to ``~/.ssh/known_hosts``.
+    :param key_file: path to private key file for authentication
+    :param passphrase: passphrase for the private key
+    :param private_key: private key content as string
+    """
+
+    conn_name_attr = "ssh_conn_id"
+    default_conn_name = "ssh_default"
+    conn_type = "ssh"
+    hook_name = "SSH"
+    default_known_hosts = "~/.ssh/known_hosts"
+
+    def __init__(
+        self,
+        ssh_conn_id: str = default_conn_name,
+        host: str | None = None,
+        port: int | None = None,
+        username: str | None = None,
+        password: str | None = None,
+        known_hosts: str = default_known_hosts,
+        key_file: str = "",
+        passphrase: str = "",
+        private_key: str = "",
+        keepalive_interval: int = 30,
+    ) -> None:
+        super().__init__()
+        self.ssh_conn_id = ssh_conn_id
+        self.host = host
+        self.port = port
+        self.username = username
+        self.password = password
+        self.known_hosts: bytes | str = os.path.expanduser(known_hosts)
+        self.key_file = key_file
+        self.passphrase = passphrase
+        self.private_key = private_key
+        self.keepalive_interval = keepalive_interval
+
+    def _parse_extras(self, conn: Any) -> None:
+        """Parse extra fields from the connection into instance fields."""
+        extra_options = conn.extra_dejson
+        if "key_file" in extra_options and self.key_file == "":
+            self.key_file = extra_options["key_file"]
+        if "known_hosts" in extra_options:
+            expanded_default = os.path.expanduser(self.default_known_hosts)
+            if self.known_hosts == expanded_default:
+                self.known_hosts = extra_options["known_hosts"]
+        if "passphrase" in extra_options or "private_key_passphrase" in extra_options:
+            self.passphrase = extra_options.get("passphrase") or extra_options.get(
+                "private_key_passphrase", ""
+            )
+        if "private_key" in extra_options:
+            self.private_key = extra_options["private_key"]
+
+        host_key = extra_options.get("host_key")
+        nhkc_raw = extra_options.get("no_host_key_check")
+        no_host_key_check = str(nhkc_raw).lower() == "true" if nhkc_raw is not None else True
+
+        if host_key is not None and no_host_key_check:
+            raise ValueError("Host key check was skipped, but `host_key` value was given")
+
+        if no_host_key_check:
+            self.log.warning("No Host Key Verification. This won't protect against Man-In-The-Middle attacks")
+            self.known_hosts = "none"
+        elif host_key is not None:
+            self.known_hosts = f"{conn.host} {host_key}".encode()
+
+    async def _get_conn(self):
+        """
+        Asynchronously connect to the SSH server.
+
+        Returns an asyncssh SSHClientConnection that can be used to run commands.
+        """
+        import asyncssh
+
+        conn = await get_async_connection(self.ssh_conn_id)
+        if conn.extra is not None:
+            self._parse_extras(conn)
+
+        def _get_value(self_val, conn_val, default=None):
+            if self_val is not None:
+                return self_val
+            if conn_val is not None:
+                return conn_val
+            return default
+
+        conn_config: dict = {
+            "host": _get_value(self.host, conn.host),
+            "port": _get_value(self.port, conn.port, SSH_PORT),
+            "username": _get_value(self.username, conn.login),
+            "password": _get_value(self.password, conn.password),
+        }
+        if self.key_file:
+            conn_config["client_keys"] = self.key_file
+        if self.known_hosts:
+            if isinstance(self.known_hosts, str) and self.known_hosts.lower() == "none":
+                conn_config["known_hosts"] = None
+            else:
+                conn_config["known_hosts"] = self.known_hosts
+        if self.private_key:
+            _private_key = asyncssh.import_private_key(self.private_key, self.passphrase)
+            conn_config["client_keys"] = [_private_key]
+        if self.passphrase:
+            conn_config["passphrase"] = self.passphrase
+        if self.keepalive_interval:
+            # The trigger holds one connection for the whole job; a keepalive stops idle
+            # NAT/firewall timeouts from silently dropping it between long poll intervals.
+            conn_config["keepalive_interval"] = self.keepalive_interval
+
+        ssh_client_conn = await asyncssh.connect(**conn_config)
+        return ssh_client_conn
+
+    async def get_conn(self):
+        """
+        Open an asyncssh connection that can be reused for multiple commands.
+
+        Unlike :meth:`run_command`, the returned connection is **not** closed
+        automatically; the caller owns its lifecycle (e.g.
+        ``async with await hook.get_conn() as conn: ...`` or an explicit
+        ``conn.close()``). Reusing one connection avoids a new TCP/SSH handshake
+        per command, which matters when many tasks poll the same SSH server.
+        """
+        return await self._get_conn()
+
+    async def run_command(self, command: str, timeout: float | None = None) -> tuple[int, str, str]:
+        """
+        Execute a command on the remote host asynchronously.
+
+        :param command: The command to execute
+        :param timeout: Optional timeout in seconds
+        :return: Tuple of (exit_code, stdout, stderr)
+        """
+        async with await self._get_conn() as ssh_conn:
+            result = await ssh_conn.run(command, timeout=timeout, check=False)
+            return result.exit_status or 0, result.stdout or "", result.stderr or ""
+
+    async def get_tunnel(
+        self, remote_port: int, remote_host: str = "localhost", local_port: int | None = None
+    ) -> AsyncSSHTunnel:
+        """
+        Create an async local port-forwarding tunnel through the SSH connection.
+
+        Usage::
+
+            async with await hook.get_tunnel(remote_port=5432) as tunnel:
+                connect_to("localhost", tunnel.local_bind_port)
+
+        :param remote_port: The remote port to create a tunnel to
+        :param remote_host: The remote host to create a tunnel to (default localhost)
+        :param local_port: The local port to attach the tunnel to (None for ephemeral)
+        :return: AsyncSSHTunnel instance
+        """
+        ssh_conn = await self._get_conn()
+        return AsyncSSHTunnel(
+            ssh_conn=ssh_conn,
+            remote_host=remote_host,
+            remote_port=remote_port,
+            local_port=local_port,
+        )
+
+    async def run_command_output(self, command: str, timeout: float | None = None) -> str:
+        """
+        Execute a command and return stdout.
+
+        :param command: The command to execute
+        :param timeout: Optional timeout in seconds
+        :return: stdout as string
+        """
+        _, stdout, _ = await self.run_command(command, timeout=timeout)
+        return stdout

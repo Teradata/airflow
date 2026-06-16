@@ -36,9 +36,12 @@ from airflow.sdk.exceptions import (
     AirflowSensorTimeout,
     AirflowSkipException,
     AirflowTaskTimeout,
+    TaskDeferralError,
 )
 from airflow.sdk.execution_time.comms import RescheduleTask, TaskRescheduleStartDate
 from airflow.sdk.timezone import datetime
+
+from tests_common.test_utils.config import conf_vars
 
 if TYPE_CHECKING:
     from airflow.sdk.definitions.context import Context
@@ -175,7 +178,7 @@ class TestBaseSensor:
         assert msg.reschedule_date == date1 + timedelta(seconds=sensor.poke_interval)
 
         # second poke returns False and task is re-scheduled
-        time_machine.coordinates.shift(sensor.poke_interval)
+        time_machine.shift(sensor.poke_interval)
         date2 = date1 + timedelta(seconds=sensor.poke_interval)
         state, msg, _ = run_task(task=sensor)
 
@@ -183,7 +186,7 @@ class TestBaseSensor:
         assert msg.reschedule_date == date2 + timedelta(seconds=sensor.poke_interval)
 
         # third poke returns True and task succeeds
-        time_machine.coordinates.shift(sensor.poke_interval)
+        time_machine.shift(sensor.poke_interval)
         state, _, _ = run_task(task=sensor)
 
         assert state == TaskInstanceState.SUCCESS
@@ -201,7 +204,7 @@ class TestBaseSensor:
         assert msg.reschedule_date == date1 + timedelta(seconds=sensor.poke_interval)
 
         # second poke returns False, timeout occurs
-        time_machine.coordinates.shift(sensor.poke_interval)
+        time_machine.shift(sensor.poke_interval)
 
         # Mocking values from DB/API-server
         mock_supervisor_comms.send.return_value = TaskRescheduleStartDate(start_date=date1)
@@ -223,7 +226,7 @@ class TestBaseSensor:
         assert state == TaskInstanceState.UP_FOR_RESCHEDULE
 
         # second poke returns False, timeout occurs
-        time_machine.coordinates.shift(sensor.poke_interval)
+        time_machine.shift(sensor.poke_interval)
 
         # Mocking values from DB/API-server
         mock_supervisor_comms.send.return_value = TaskRescheduleStartDate(start_date=date1)
@@ -258,7 +261,7 @@ class TestBaseSensor:
         # loop poke returns false
         for _poke_count in range(1, false_count + 1):
             curr_date = curr_date + timedelta(seconds=new_interval)
-            time_machine.coordinates.shift(new_interval)
+            time_machine.shift(new_interval)
             state, msg, _ = run_task(sensor, context_update={"task_reschedule_count": _poke_count})
             assert state == TaskInstanceState.UP_FOR_RESCHEDULE
             old_interval = new_interval
@@ -268,7 +271,7 @@ class TestBaseSensor:
 
         # last poke returns True and task succeeds
         curr_date = curr_date + timedelta(seconds=new_interval)
-        time_machine.coordinates.shift(new_interval)
+        time_machine.shift(new_interval)
 
         state, msg, _ = run_task(sensor, context_update={"task_reschedule_count": false_count + 1})
         assert state == TaskInstanceState.SUCCESS
@@ -356,6 +359,18 @@ class TestBaseSensor:
         DummySensor(
             task_id="test_sensor_task_3", return_value=None, poke_interval=10, timeout=positive_timeout
         )
+
+    def test_sensor_timeout_default_read_from_conf_at_instantiation(self):
+        """When ``timeout`` is not supplied, it should be read from ``sensors.default_timeout``
+        at instantiation time (not at module import time).
+        """
+        with conf_vars({("sensors", "default_timeout"): "12345"}):
+            sensor = DummySensor(task_id="test_sensor_default_timeout", return_value=None, poke_interval=10)
+            assert sensor.timeout == 12345
+
+        with conf_vars({("sensors", "default_timeout"): "67"}):
+            sensor = DummySensor(task_id="test_sensor_default_timeout_2", return_value=None, poke_interval=10)
+            assert sensor.timeout == 67
 
     def test_sensor_with_exponential_backoff_off(self):
         sensor = DummySensor(
@@ -684,3 +699,59 @@ class TestAsyncSensor:
         async_sensor = DummyAsyncSensor(task_id="dummy_async_sensor", soft_fail=soft_fail)
         with pytest.raises(expected_exception):
             async_sensor.resume_execution("execute_complete", None, {})
+
+    @pytest.mark.parametrize(
+        ("soft_fail", "expected_exception"),
+        [
+            (True, AirflowSkipException),
+            (False, AirflowSensorTimeout),
+        ],
+    )
+    def test_timeout_after_resuming_deferred_sensor_with_soft_fail(self, soft_fail, expected_exception):
+        """Test that deferrable sensors with soft_fail skip on timeout instead of failing."""
+        async_sensor = DummyAsyncSensor(task_id="dummy_async_sensor", soft_fail=soft_fail)
+        with pytest.raises(expected_exception):
+            async_sensor.resume_execution(
+                next_method="__fail__",
+                next_kwargs={"error": TriggerFailureReason.TRIGGER_TIMEOUT},
+                context={},
+            )
+
+    def test_timeout_after_resuming_deferred_sensor_with_never_fail(self):
+        """Test that deferrable sensors with never_fail skip on timeout."""
+        async_sensor = DummyAsyncSensor(task_id="dummy_async_sensor", never_fail=True)
+        with pytest.raises(AirflowSkipException):
+            async_sensor.resume_execution(
+                next_method="__fail__",
+                next_kwargs={"error": TriggerFailureReason.TRIGGER_TIMEOUT},
+                context={},
+            )
+
+    @pytest.mark.parametrize(
+        ("soft_fail", "expected_exception"),
+        [
+            (True, AirflowSkipException),
+            (False, TaskDeferralError),
+        ],
+    )
+    def test_trigger_failure_after_resuming_deferred_sensor_with_soft_fail(
+        self, soft_fail, expected_exception
+    ):
+        """Test that deferrable sensors with soft_fail skip on trigger failure instead of failing."""
+        async_sensor = DummyAsyncSensor(task_id="dummy_async_sensor", soft_fail=soft_fail)
+        with pytest.raises(expected_exception):
+            async_sensor.resume_execution(
+                next_method="__fail__",
+                next_kwargs={"error": TriggerFailureReason.TRIGGER_FAILURE},
+                context={},
+            )
+
+    def test_trigger_failure_after_resuming_deferred_sensor_with_never_fail(self):
+        """Test that deferrable sensors with never_fail skip on trigger failure."""
+        async_sensor = DummyAsyncSensor(task_id="dummy_async_sensor", never_fail=True)
+        with pytest.raises(AirflowSkipException):
+            async_sensor.resume_execution(
+                next_method="__fail__",
+                next_kwargs={"error": TriggerFailureReason.TRIGGER_FAILURE},
+                context={},
+            )

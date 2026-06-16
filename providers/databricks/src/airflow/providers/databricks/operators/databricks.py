@@ -26,9 +26,7 @@ from collections.abc import Sequence
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from airflow.configuration import conf
-from airflow.exceptions import AirflowException
-from airflow.providers.common.compat.sdk import BaseOperator, BaseOperatorLink, XCom
+from airflow.providers.common.compat.sdk import AirflowException, BaseOperator, BaseOperatorLink, XCom, conf
 from airflow.providers.databricks.hooks.databricks import (
     DatabricksHook,
     RunLifeCycleState,
@@ -55,7 +53,7 @@ from airflow.providers.databricks.utils.mixins import DatabricksSQLStatementsMix
 from airflow.providers.databricks.version_compat import AIRFLOW_V_3_0_PLUS
 
 if TYPE_CHECKING:
-    from airflow.models.taskinstancekey import TaskInstanceKey
+    from airflow.providers.common.compat.sdk import TaskInstanceKey
     from airflow.providers.databricks.operators.databricks_workflow import (
         DatabricksWorkflowTaskGroup,
     )
@@ -68,6 +66,19 @@ XCOM_RUN_ID_KEY = "run_id"
 XCOM_JOB_ID_KEY = "job_id"
 XCOM_RUN_PAGE_URL_KEY = "run_page_url"
 XCOM_STATEMENT_ID_KEY = "statement_id"
+
+# Mapping from Airflow TriggerRule to Databricks RunIf condition.
+# Only non-default rules are included; ALL_SUCCESS is the Databricks default
+# and is omitted to keep the task JSON minimal.
+_TRIGGER_RULE_TO_DATABRICKS_RUN_IF: dict[str, str] = {
+    "all_failed": "ALL_FAILED",
+    "all_done": "ALL_DONE",
+    "one_success": "AT_LEAST_ONE_SUCCESS",
+    "one_failed": "AT_LEAST_ONE_FAILED",
+    "none_failed": "NONE_FAILED",
+    "none_failed_min_one_success": "NONE_FAILED",
+    "always": "ALL_DONE",
+}
 
 
 def _handle_databricks_operator_execution(operator, hook, log, context) -> None:
@@ -128,6 +139,8 @@ def _handle_databricks_operator_execution(operator, hook, log, context) -> None:
                     repair_json = {"run_id": operator.run_id, "rerun_all_failed_tasks": True}
                     if latest_repair_id is not None:
                         repair_json["latest_repair_id"] = latest_repair_id
+                    if "job_parameters" in operator.json:
+                        repair_json["job_parameters"] = operator.json["job_parameters"]
                     operator.json["latest_repair_id"] = hook.repair_run(repair_json)
                     _handle_databricks_operator_execution(operator, hook, log, context)
                 raise AirflowException(error_message)
@@ -212,8 +225,17 @@ def _handle_deferrable_databricks_operator_execution(operator, hook, log, contex
                 method_name=DEFER_METHOD_NAME,
             )
         else:
-            if run_state.is_successful:
-                log.info("%s completed successfully.", operator.task_id)
+            failed_tasks = extract_failed_task_errors(hook, run_info, run_state)
+            operator.execute_complete(
+                context=context,
+                event={
+                    "run_id": operator.run_id,
+                    "run_page_url": run_page_url,
+                    "run_state": run_state.to_json(),
+                    "repair_run": getattr(operator, "repair_run", False),
+                    "errors": failed_tasks,
+                },
+            )
 
 
 def _handle_deferrable_databricks_operator_completion(event: dict, log: Logger) -> None:
@@ -236,6 +258,27 @@ def _handle_deferrable_databricks_operator_completion(event: dict, log: Logger) 
         )
         return
     raise AirflowException(error_message)
+
+
+# Mapping of task definition keys (in the runs/submit JSON) to the dict-shaped
+# parameter sub-key into which Airflow ``self.params`` will be auto-injected.
+# Tasks whose only parameter field is ``List[str]`` (e.g. spark_python_task,
+# spark_jar_task, spark_submit_task) are intentionally omitted because there is
+# no canonical way to convert a key/value dict to positional/CLI arguments.
+_DICT_PARAM_FIELD_BY_TASK = {
+    "notebook_task": "base_parameters",
+    "python_wheel_task": "named_parameters",
+    "sql_task": "parameters",
+    "run_job_task": "job_parameters",
+}
+
+
+def _inject_airflow_params_into_task(task: dict, params: dict) -> None:
+    """Set dict-shaped per-task parameter fields from ``params`` if they are not already set."""
+    for task_key, field in _DICT_PARAM_FIELD_BY_TASK.items():
+        task_def = task.get(task_key)
+        if isinstance(task_def, dict) and not task_def.get(field):
+            task_def[field] = dict(params)
 
 
 class DatabricksJobRunLink(BaseOperatorLink):
@@ -261,7 +304,7 @@ class DatabricksCreateJobsOperator(BaseOperator):
         https://docs.databricks.com/api/workspace/jobs/reset
 
     :param json: A JSON object containing API parameters which will be passed
-        directly to the ``api/2.1/jobs/create`` endpoint. The other named parameters
+        directly to the ``api/2.2/jobs/create`` endpoint. The other named parameters
         (i.e. ``name``, ``tags``, ``tasks``, etc.) to this operator will
         be merged with this json dictionary if they are provided.
         If there are conflicts during the merge, the named parameters will
@@ -300,6 +343,12 @@ class DatabricksCreateJobsOperator(BaseOperator):
     :param databricks_retry_delay: Number of seconds to wait between retries (it
             might be a floating point number).
     :param databricks_retry_args: An optional dictionary with arguments passed to ``tenacity.Retrying`` class.
+
+    .. note::
+        If ``parameters`` is not set in ``json`` and the operator's ``params`` dict is non-empty,
+        the operator's ``params`` are automatically converted to job-level ``parameters`` (a list
+        of ``{"name": k, "default": v}`` entries) so that Airflow Dag params can be forwarded as
+        Databricks job parameters without hardcoding them in ``json``.
 
     """
 
@@ -384,6 +433,8 @@ class DatabricksCreateJobsOperator(BaseOperator):
         if "name" not in self.json:
             raise AirflowException("Missing required parameter: name")
         job_id = self._hook.find_job_id_by_name(self.json["name"])
+        if not self.json.get("parameters") and self.params:
+            self.json["parameters"] = [{"name": k, "default": v} for k, v in dict(self.params).items()]
         if job_id is None:
             return self._hook.create_job(self.json)
         self._hook.reset_job(str(job_id), self.json)
@@ -392,7 +443,7 @@ class DatabricksCreateJobsOperator(BaseOperator):
 
 class DatabricksSubmitRunOperator(BaseOperator):
     """
-    Submits a Spark job run to Databricks using the api/2.1/jobs/runs/submit API endpoint.
+    Submits a Spark job run to Databricks using the api/2.2/jobs/runs/submit API endpoint.
 
     See: https://docs.databricks.com/dev-tools/api/latest/jobs.html#operation/JobsRunsSubmit
 
@@ -407,7 +458,7 @@ class DatabricksSubmitRunOperator(BaseOperator):
         .. seealso::
             https://docs.databricks.com/dev-tools/api/latest/jobs.html#operation/JobsRunsSubmit
     :param json: A JSON object containing API parameters which will be passed
-        directly to the ``api/2.1/jobs/runs/submit`` endpoint. The other named parameters
+        directly to the ``api/2.2/jobs/runs/submit`` endpoint. The other named parameters
         (i.e. ``spark_jar_task``, ``notebook_task``..) to this operator will
         be merged with this json dictionary if they are provided.
         If there are conflicts during the merge, the named parameters will
@@ -509,6 +560,15 @@ class DatabricksSubmitRunOperator(BaseOperator):
 
         .. seealso::
             https://docs.databricks.com/dev-tools/api/latest/jobs.html#operation/JobsRunsSubmit
+
+    .. note::
+        If the operator's ``params`` dict is non-empty, it is automatically forwarded into the
+        dict-shaped parameter slot of every task in ``json`` whose corresponding field is empty:
+        ``notebook_task.base_parameters``, ``python_wheel_task.named_parameters``,
+        ``sql_task.parameters``, ``run_job_task.job_parameters``. Tasks whose only parameter
+        field is ``List[str]`` (``spark_jar_task``, ``spark_python_task``, ``spark_submit_task``)
+        are skipped because there is no canonical mapping from a key/value dict to a positional
+        argument list.
     """
 
     # Used in airflow.models.BaseOperator
@@ -623,6 +683,17 @@ class DatabricksSubmitRunOperator(BaseOperator):
             pipeline_name = self.json["pipeline_task"]["pipeline_name"]
             self.json["pipeline_task"]["pipeline_id"] = self._hook.find_pipeline_id_by_name(pipeline_name)
             del self.json["pipeline_task"]["pipeline_name"]
+
+        if self.params:
+            params_dump = dict(self.params)
+            tasks = self.json.get("tasks")
+            if isinstance(tasks, list):
+                for task in tasks:
+                    if isinstance(task, dict):
+                        _inject_airflow_params_into_task(task, params_dump)
+            else:
+                _inject_airflow_params_into_task(self.json, params_dump)
+
         json_normalised = normalise_json_content(self.json)
         self.run_id = self._hook.submit_run(json_normalised)
         if self.deferrable:
@@ -645,14 +716,14 @@ class DatabricksSubmitRunOperator(BaseOperator):
 
 class DatabricksRunNowOperator(BaseOperator):
     """
-    Runs an existing Spark job run to Databricks using the api/2.1/jobs/run-now API endpoint.
+    Runs an existing Spark job run to Databricks using the api/2.2/jobs/run-now API endpoint.
 
     See: https://docs.databricks.com/dev-tools/api/latest/jobs.html#operation/JobsRunNow
 
     There are two ways to instantiate this operator.
 
     In the first way, you can take the JSON payload that you typically use
-    to call the ``api/2.1/jobs/run-now`` endpoint and pass it directly
+    to call the ``api/2.2/jobs/run-now`` endpoint and pass it directly
     to our ``DatabricksRunNowOperator`` through the ``json`` parameter.
     For example ::
 
@@ -730,7 +801,7 @@ class DatabricksRunNowOperator(BaseOperator):
             https://docs.databricks.com/en/workflows/jobs/settings.html#add-parameters-for-all-job-tasks
 
     :param json: A JSON object containing API parameters which will be passed
-        directly to the ``api/2.1/jobs/run-now`` endpoint. The other named parameters
+        directly to the ``api/2.2/jobs/run-now`` endpoint. The other named parameters
         (i.e. ``notebook_params``, ``spark_submit_params``..) to this operator will
         be merged with this json dictionary if they are provided.
         If there are conflicts during the merge, the named parameters will
@@ -822,6 +893,12 @@ class DatabricksRunNowOperator(BaseOperator):
             (https://docs.databricks.com/api/workspace/jobs/update). If nothing is matched, then repair
             will not get triggered.
     :param cancel_previous_runs: Cancel all existing running jobs before submitting new one.
+
+    .. note::
+        If ``job_parameters`` is not set in ``json`` and the operator's ``params`` dict is
+        non-empty, the operator's ``params`` are automatically forwarded as ``job_parameters``
+        so that Airflow Dag params can be passed dynamically to Databricks runs without
+        hardcoding them in ``json``.
     """
 
     # Used in airflow.models.BaseOperator
@@ -923,8 +1000,16 @@ class DatabricksRunNowOperator(BaseOperator):
             self.json["job_id"] = job_id
             del self.json["job_name"]
 
-        if self.cancel_previous_runs and self.json["job_id"] is not None:
-            hook.cancel_all_runs(self.json["job_id"])
+        if self.cancel_previous_runs:
+            if (job_id := self.json.get("job_id")) is None:
+                raise ValueError(
+                    "cancel_previous_runs=True requires either job_id or job_name to be provided."
+                )
+
+            hook.cancel_all_runs(job_id)
+
+        if not self.json.get("job_parameters") and self.params:
+            self.json["job_parameters"] = dict(self.params)
 
         self.run_id = hook.run_now(self.json)
         if self.deferrable:
@@ -951,6 +1036,8 @@ class DatabricksRunNowOperator(BaseOperator):
                 repair_json = {"run_id": self.run_id, "rerun_all_failed_tasks": True}
                 if latest_repair_id is not None:
                     repair_json["latest_repair_id"] = latest_repair_id
+                if "job_parameters" in self.json:
+                    repair_json["job_parameters"] = self.json["job_parameters"]
                 self.json["latest_repair_id"] = self._hook.repair_run(repair_json)
                 _handle_deferrable_databricks_operator_execution(self, self._hook, self.log, context)
 
@@ -1326,7 +1413,7 @@ class DatabricksTaskBaseOperator(BaseOperator, ABC):
         """Retrieve the Databricks task corresponding to the current Airflow task."""
         if self.databricks_run_id is None:
             raise ValueError("Databricks job not yet launched. Please run launch_notebook_job first.")
-        tasks = self._hook.get_run(self.databricks_run_id)["tasks"]
+        tasks = self._hook.get_run_tasks(self.databricks_run_id)
 
         # Because the task_key remains the same across multiple runs, and the Databricks API does not return
         # tasks sorted by their attempts/start time, we sort the tasks by start time. This ensures that we
@@ -1338,12 +1425,13 @@ class DatabricksTaskBaseOperator(BaseOperator, ABC):
 
     def _convert_to_databricks_workflow_task(
         self,
-        relevant_upstreams: list[BaseOperator],
+        relevant_upstreams: list[str],
         task_dict: dict[str, BaseOperator],
         context: Context | None = None,
     ) -> dict[str, object]:
         """Convert the operator to a Databricks workflow task that can be a task in a workflow."""
         base_task_json = self._get_task_base_json()
+
         result = {
             "task_key": self.databricks_task_key,
             "depends_on": [
@@ -1353,6 +1441,26 @@ class DatabricksTaskBaseOperator(BaseOperator, ABC):
             ],
             **base_task_json,
         }
+
+        trigger_rule_value = (
+            self.trigger_rule.value if hasattr(self.trigger_rule, "value") else str(self.trigger_rule)
+        )
+        databricks_run_if = _TRIGGER_RULE_TO_DATABRICKS_RUN_IF.get(trigger_rule_value)
+        if databricks_run_if:
+            self.log.info(
+                "Mapping Airflow trigger_rule '%s' to Databricks run_if '%s' for task '%s'",
+                trigger_rule_value,
+                databricks_run_if,
+                self.task_id,
+            )
+            result["run_if"] = databricks_run_if
+        else:
+            self.log.info(
+                "No Databricks run_if mapping for Airflow trigger_rule '%s' on task '%s'; "
+                "using Databricks default (ALL_SUCCESS)",
+                trigger_rule_value,
+                self.task_id,
+            )
 
         if self.existing_cluster_id and self.job_cluster_key:
             raise ValueError(
@@ -1379,7 +1487,7 @@ class DatabricksTaskBaseOperator(BaseOperator, ABC):
         self.log.info("Check the task run in Databricks: %s", run_page_url)
         run_state = RunState(**run["state"])
         self.log.info(
-            "Current state of the the databricks task %s is %s",
+            "Current state of the databricks task %s is %s",
             self.databricks_task_key,
             run_state.life_cycle_state,
         )
@@ -1571,7 +1679,7 @@ class DatabricksNotebookOperator(DatabricksTaskBaseOperator):
 
     def _convert_to_databricks_workflow_task(
         self,
-        relevant_upstreams: list[BaseOperator],
+        relevant_upstreams: list[str],
         task_dict: dict[str, BaseOperator],
         context: Context | None = None,
     ) -> dict[str, object]:
@@ -1620,7 +1728,11 @@ class DatabricksTaskOperator(DatabricksTaskBaseOperator):
     """
 
     CALLER = "DatabricksTaskOperator"
-    template_fields = ("workflow_run_metadata",)
+    template_fields = (
+        "databricks_conn_id",
+        "task_config",
+        "workflow_run_metadata",
+    )
 
     def __init__(
         self,

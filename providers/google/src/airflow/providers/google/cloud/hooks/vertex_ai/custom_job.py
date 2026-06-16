@@ -23,7 +23,6 @@ import asyncio
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
-from google.api_core.client_options import ClientOptions
 from google.api_core.gapic_v1.method import DEFAULT, _MethodDefault
 from google.cloud.aiplatform import (
     CustomContainerTrainingJob,
@@ -42,7 +41,7 @@ from google.cloud.aiplatform_v1 import (
     types,
 )
 
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.common.consts import CLIENT_INFO
 from airflow.providers.google.common.hooks.base_google import GoogleBaseAsyncHook, GoogleBaseHook
 from airflow.providers.google.common.hooks.operation_helpers import OperationHelper
@@ -76,17 +75,25 @@ class CustomJobHook(GoogleBaseHook, OperationHelper):
             CustomContainerTrainingJob | CustomPythonPackageTrainingJob | CustomTrainingJob
         ) = None
 
+    def _get_api_endpoint(
+        self,
+        region: str | None = None,
+    ) -> str | None:
+        if region and region != "global" and self.is_default_universe():
+            return f"{region}-aiplatform.googleapis.com:443"
+        return None
+
     def get_pipeline_service_client(
         self,
         region: str | None = None,
     ) -> PipelineServiceClient:
         """Return PipelineServiceClient object."""
-        if region and region != "global":
-            client_options = ClientOptions(api_endpoint=f"{region}-aiplatform.googleapis.com:443")
-        else:
-            client_options = ClientOptions()
         return PipelineServiceClient(
-            credentials=self.get_credentials(), client_info=CLIENT_INFO, client_options=client_options
+            credentials=self.get_credentials(),
+            client_info=CLIENT_INFO,
+            client_options=self.get_client_options(
+                api_endpoint_override=self._get_api_endpoint(region=region)
+            ),
         )
 
     def get_job_service_client(
@@ -94,13 +101,12 @@ class CustomJobHook(GoogleBaseHook, OperationHelper):
         region: str | None = None,
     ) -> JobServiceClient:
         """Return JobServiceClient object."""
-        if region and region != "global":
-            client_options = ClientOptions(api_endpoint=f"{region}-aiplatform.googleapis.com:443")
-        else:
-            client_options = ClientOptions()
-
         return JobServiceClient(
-            credentials=self.get_credentials(), client_info=CLIENT_INFO, client_options=client_options
+            credentials=self.get_credentials(),
+            client_info=CLIENT_INFO,
+            client_options=self.get_client_options(
+                api_endpoint_override=self._get_api_endpoint(region=region)
+            ),
         )
 
     def get_custom_container_training_job(
@@ -3128,14 +3134,14 @@ class CustomJobAsyncHook(GoogleBaseAsyncHook):
         region: str | None = None,
     ) -> JobServiceAsyncClient:
         """Retrieve Vertex AI JobServiceAsyncClient object."""
-        if region and region != "global":
-            client_options = ClientOptions(api_endpoint=f"{region}-aiplatform.googleapis.com:443")
-        else:
-            client_options = ClientOptions()
+        sync_hook = await self.get_sync_hook()
+
         return JobServiceAsyncClient(
-            credentials=(await self.get_credentials()),
+            credentials=sync_hook.get_credentials(),
             client_info=CLIENT_INFO,
-            client_options=client_options,
+            client_options=sync_hook.get_client_options(
+                api_endpoint_override=sync_hook._get_api_endpoint(region=region)
+            ),
         )
 
     async def get_pipeline_service_client(
@@ -3143,14 +3149,14 @@ class CustomJobAsyncHook(GoogleBaseAsyncHook):
         region: str | None = None,
     ) -> PipelineServiceAsyncClient:
         """Retrieve Vertex AI PipelineServiceAsyncClient object."""
-        if region and region != "global":
-            client_options = ClientOptions(api_endpoint=f"{region}-aiplatform.googleapis.com:443")
-        else:
-            client_options = ClientOptions()
+        sync_hook = await self.get_sync_hook()
+
         return PipelineServiceAsyncClient(
-            credentials=(await self.get_credentials()),
+            credentials=sync_hook.get_credentials(),
             client_info=CLIENT_INFO,
-            client_options=client_options,
+            client_options=sync_hook.get_client_options(
+                api_endpoint_override=sync_hook._get_api_endpoint(region=region)
+            ),
         )
 
     async def get_custom_job(

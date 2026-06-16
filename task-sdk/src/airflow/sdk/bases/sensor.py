@@ -116,7 +116,7 @@ class BaseSensorOperator(BaseOperator):
         self,
         *,
         poke_interval: timedelta | float = 60,
-        timeout: timedelta | float = conf.getfloat("sensors", "default_timeout"),
+        timeout: timedelta | float | None = None,
         soft_fail: bool = False,
         mode: str = "poke",
         exponential_backoff: bool = False,
@@ -128,6 +128,8 @@ class BaseSensorOperator(BaseOperator):
         super().__init__(**kwargs)
         self.poke_interval = self._coerce_poke_interval(poke_interval).total_seconds()
         self.soft_fail = soft_fail
+        if timeout is None:
+            timeout = conf.getfloat("sensors", "default_timeout")
         self.timeout: int | float = self._coerce_timeout(timeout).total_seconds()
         self.mode = mode
         self.exponential_backoff = exponential_backoff
@@ -249,13 +251,18 @@ class BaseSensorOperator(BaseOperator):
         return xcom_value
 
     def resume_execution(self, next_method: str, next_kwargs: dict[str, Any] | None, context: Context):
+        # Use nested try/except to convert TaskDeferralTimeout to AirflowSensorTimeout
+        # while still allowing soft_fail/never_fail to handle both exception types.
         try:
-            return super().resume_execution(next_method, next_kwargs, context)
-        except TaskDeferralTimeout as e:
-            raise AirflowSensorTimeout(*e.args) from e
+            try:
+                return super().resume_execution(next_method, next_kwargs, context)
+            except TaskDeferralTimeout as e:
+                raise AirflowSensorTimeout(*e.args) from e
         except (AirflowException, TaskDeferralError) as e:
             if self.soft_fail:
-                raise AirflowSkipException(str(e)) from e
+                raise AirflowSkipException("Skipping due to soft_fail is set to True.") from e
+            if self.never_fail:
+                raise AirflowSkipException("Skipping due to never_fail is set to True.") from e
             raise
 
     def _get_next_poke_interval(

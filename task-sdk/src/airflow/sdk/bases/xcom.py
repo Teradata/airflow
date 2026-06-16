@@ -59,6 +59,7 @@ class BaseXCom:
         task_id: str,
         run_id: str,
         map_index: int = -1,
+        dag_result: bool = False,
         _mapped_length: int | None = None,
     ) -> None:
         """
@@ -91,6 +92,7 @@ class BaseXCom:
                 task_id=task_id,
                 run_id=run_id,
                 map_index=map_index,
+                dag_result=dag_result,
                 mapped_length=_mapped_length,
             ),
         )
@@ -333,7 +335,7 @@ class BaseXCom:
         map_index: int | None = None,
     ) -> str:
         """Serialize XCom value to JSON str."""
-        from airflow.serialization.serde import serialize
+        from airflow.sdk.serde import serialize
 
         # return back the value for BaseXCom, custom backends will implement this
         return serialize(value)  # type: ignore[return-value]
@@ -341,7 +343,7 @@ class BaseXCom:
     @staticmethod
     def deserialize_value(result) -> Any:
         """Deserialize XCom value from str objects."""
-        from airflow.serialization.serde import deserialize
+        from airflow.sdk.serde import deserialize
 
         return deserialize(result.value)
 

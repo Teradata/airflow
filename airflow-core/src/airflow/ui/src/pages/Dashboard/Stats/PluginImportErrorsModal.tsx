@@ -64,7 +64,7 @@ export const PluginImportErrorsModal: React.FC<PluginImportErrorsModalProps> = (
   }, [searchQuery, importErrors]);
 
   return (
-    <Dialog.Root onOpenChange={onOpenChange} open={open} scrollBehavior="inside" size="xl">
+    <Dialog.Root onOpenChange={onOpenChange} open={open} scrollBehavior="inside">
       <Dialog.Content backdrop p={4}>
         <Dialog.Header display="flex" justifyContent="space-between">
           <HStack fontSize="xl">
@@ -72,11 +72,9 @@ export const PluginImportErrorsModal: React.FC<PluginImportErrorsModalProps> = (
             <Heading>{translate("plugins.importError_one")}</Heading>
           </HStack>
           <SearchBar
-            buttonProps={{ disabled: true }}
             defaultValue={searchQuery}
-            hideAdvanced
             onChange={setSearchQuery}
-            placeHolder={translate("plugins.searchPlaceholder")}
+            placeholder={translate("plugins.searchPlaceholder")}
           />
         </Dialog.Header>
 

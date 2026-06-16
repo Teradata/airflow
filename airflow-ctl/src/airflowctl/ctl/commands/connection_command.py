@@ -54,21 +54,22 @@ def import_(args, api_client=NEW_API_CLIENT) -> None:
                 login=v.get("login"),
                 password=v.get("password"),
                 port=v.get("port"),
-                extra=v.get("extra", {}),
+                extra=v.get("extra"),
                 description=v.get("description", ""),
+                **({"schema": v["schema"]} if "schema" in v else {}),
             )
             for k, v in connections_json.items()
         }
         connection_create_action = BulkCreateActionConnectionBody(
             action="create",
             entities=list(connections_data.values()),
-            action_on_existence=BulkActionOnExistence("fail"),
+            action_on_existence=BulkActionOnExistence(args.action_on_existing_key),
         )
         response = api_client.connections.bulk(BulkBodyConnectionBody(actions=[connection_create_action]))
         if response.create.errors:
             rich.print(f"[red]Failed to import connections: {response.create.errors}[/red]")
-            raise SystemExit
+            raise SystemExit(1)
         rich.print(f"[green]Successfully imported {response.create.success} connection(s)[/green]")
     except Exception as e:
         rich.print(f"[red]Failed to import connections: {e}[/red]")
-        raise SystemExit
+        raise SystemExit(1)

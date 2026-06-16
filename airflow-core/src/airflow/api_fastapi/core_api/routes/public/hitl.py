@@ -29,6 +29,7 @@ from airflow.api_fastapi.common.db.common import SessionDep, paginated_select
 from airflow.api_fastapi.common.parameters import (
     QueryHITLDetailBodySearch,
     QueryHITLDetailDagIdPatternSearch,
+    QueryHITLDetailDagIdPrefixPatternSearch,
     QueryHITLDetailMapIndexFilter,
     QueryHITLDetailRespondedUserIdFilter,
     QueryHITLDetailRespondedUserNameFilter,
@@ -36,6 +37,7 @@ from airflow.api_fastapi.common.parameters import (
     QueryHITLDetailSubjectSearch,
     QueryHITLDetailTaskIdFilter,
     QueryHITLDetailTaskIdPatternSearch,
+    QueryHITLDetailTaskIdPrefixPatternSearch,
     QueryLimit,
     QueryOffset,
     QueryTIStateFilter,
@@ -47,16 +49,27 @@ from airflow.api_fastapi.common.router import AirflowRouter
 from airflow.api_fastapi.core_api.datamodels.hitl import (
     HITLDetail,
     HITLDetailCollection,
+    HITLDetailHistory,
     HITLDetailResponse,
     UpdateHITLDetailPayload,
 )
 from airflow.api_fastapi.core_api.openapi.exceptions import create_openapi_http_exception_doc
-from airflow.api_fastapi.core_api.security import GetUserDep, ReadableTIFilterDep, requires_access_dag
+from airflow.api_fastapi.core_api.security import (
+    GetUserDep,
+    ReadableTIFilterDep,
+    get_auth_manager,
+    requires_access_dag,
+)
 from airflow.api_fastapi.logging.decorators import action_logging
+from airflow.models.base import Base
 from airflow.models.dag_version import DagVersion
 from airflow.models.dagrun import DagRun
 from airflow.models.hitl import HITLDetail as HITLDetailModel, HITLUser
 from airflow.models.taskinstance import TaskInstance as TI
+from airflow.models.taskinstancehistory import TaskInstanceHistory as TIH
+from airflow.models.trigger import handle_event_submit
+from airflow.triggers.base import TriggerEvent
+from airflow.utils.state import TaskInstanceState
 
 task_instances_hitl_router = AirflowRouter(
     tags=["Task Instance"],
@@ -73,22 +86,35 @@ def _get_task_instance_with_hitl_detail(
     task_id: str,
     session: SessionDep,
     map_index: int,
-) -> TI:
-    query = (
-        select(TI)
-        .where(
-            TI.dag_id == dag_id,
-            TI.run_id == dag_run_id,
-            TI.task_id == task_id,
+    try_number: int | None = None,
+) -> TI | TIH:
+    def _query(orm_object: Base) -> TI | TIH | None:
+        options = [joinedload(orm_object.hitl_detail)]
+        if orm_object is TI:
+            options.append(joinedload(TI.rendered_task_instance_fields))
+        query = (
+            select(orm_object)
+            .where(
+                orm_object.dag_id == dag_id,
+                orm_object.run_id == dag_run_id,
+                orm_object.task_id == task_id,
+                orm_object.map_index == map_index,
+            )
+            .options(*options)
         )
-        .options(joinedload(TI.hitl_detail))
-    )
 
-    if map_index is not None:
-        query = query.where(TI.map_index == map_index)
+        if try_number is not None:
+            query = query.where(orm_object.try_number == try_number)
 
-    task_instance = session.scalar(query)
-    if task_instance is None:
+        ti_or_tih = session.scalar(query)
+        return ti_or_tih
+
+    if try_number is None:
+        ti_or_tih = _query(TI)
+    else:
+        ti_or_tih = _query(TIH) or _query(TI)
+
+    if ti_or_tih is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(
@@ -97,13 +123,13 @@ def _get_task_instance_with_hitl_detail(
             ),
         )
 
-    if not task_instance.hitl_detail:
+    if not ti_or_tih.hitl_detail:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Human-in-the-loop detail does not exist for Task Instance with id {task_instance.id}",
+            detail=f"Human-in-the-loop detail does not exist for Task Instance with id {ti_or_tih.id}",
         )
 
-    return task_instance
+    return ti_or_tih
 
 
 @task_instances_hitl_router.patch(
@@ -138,6 +164,23 @@ def update_hitl_detail(
         map_index=map_index,
     )
 
+    # Acquire row locks in a fixed order -- TaskInstance first, then the HITL row -- matching the
+    # Execution API park transition, so a human response racing the worker's park cannot deadlock.
+    # Locking the TI also serializes respond-vs-clear (the clear path locks the TI, not the HITL row).
+    locked_ti = (
+        session.get(TI, task_instance.id, with_for_update={"of": TI})
+        if isinstance(task_instance, TI)
+        else None
+    )
+    # Lock the hitl_detail row (FOR UPDATE OF hitl_detail). of= scopes the lock to hitl_detail, which
+    # eager-joins task_instance (lazy="joined"); a bare with_for_update() would emit FOR UPDATE against
+    # the nullable side of that outer join, which Postgres rejects. The joinedloaded relationship object
+    # reused below is the same identity-mapped row, now locked for this transaction.
+    session.execute(
+        select(HITLDetailModel)
+        .where(HITLDetailModel.ti_id == task_instance.id)
+        .with_for_update(of=HITLDetailModel)
+    )
     hitl_detail_model = task_instance.hitl_detail
     if hitl_detail_model.response_received:
         raise HTTPException(
@@ -155,18 +198,52 @@ def update_hitl_detail(
         user_id = str(user_id)
     hitl_user = HITLUser(id=user_id, name=user_name)
     if hitl_detail_model.assigned_users:
-        if hitl_user not in hitl_detail_model.assigned_users:
+        # Convert assigned_users list to set of user IDs for authorization check
+        assigned_user_ids = {assigned_user["id"] for assigned_user in hitl_detail_model.assigned_users}
+        if not get_auth_manager().is_authorized_hitl_task(assigned_users=assigned_user_ids, user=user):
             log.error("User=%s (id=%s) is not a respondent for the task", user_name, user_id)
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
                 f"User={user_name} (id={user_id}) is not a respondent for the task.",
             )
 
+    # Write-side validation: reject an invalid response here (400) instead of accepting it and
+    # failing the task later on resume. Mirrors HITLOperator.validate_chosen_options + cardinality.
+    allowed_options = set(hitl_detail_model.options or [])
+    invalid_options = set(update_hitl_detail_payload.chosen_options) - allowed_options
+    if invalid_options:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"Invalid options {sorted(invalid_options)}; allowed options are {sorted(allowed_options)}.",
+        )
+    if not hitl_detail_model.multiple and len(update_hitl_detail_payload.chosen_options) > 1:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Multiple options chosen but this Human-in-the-loop task accepts only a single option.",
+        )
+
     hitl_detail_model.responded_by = hitl_user
     hitl_detail_model.responded_at = timezone.utcnow()
     hitl_detail_model.chosen_options = update_hitl_detail_payload.chosen_options
     hitl_detail_model.params_input = update_hitl_detail_payload.params_input
     session.add(hitl_detail_model)
+
+    # Event-driven resume: if the task is parked waiting for this input, transition it directly,
+    # without a trigger. handle_event_submit packs the response into next_kwargs["event"], sets
+    # state=SCHEDULED + scheduled_dttm; the scheduler then re-queues execute_complete. Gated on the
+    # parked states so a finished/cleared TI is never resurrected. `locked_ti` was locked at the top
+    # (TI-before-HITLDetail order), so a concurrent clear cannot interleave between this state check
+    # and the resume and have its reset silently overwritten.
+    if locked_ti is not None and locked_ti.state in (
+        TaskInstanceState.AWAITING_INPUT,
+        TaskInstanceState.DEFERRED,
+    ):
+        handle_event_submit(
+            TriggerEvent(hitl_detail_model.as_resume_event_payload()),
+            task_instance=locked_ti,
+            session=session,
+        )
+
     session.commit()
     return HITLDetailResponse.model_validate(hitl_detail_model)
 
@@ -191,8 +268,35 @@ def get_hitl_detail(
         task_id=task_id,
         session=session,
         map_index=map_index,
+        try_number=None,
     )
-    return task_instance.hitl_detail
+    return HITLDetail.model_validate(task_instance.hitl_detail)
+
+
+@task_instances_hitl_router.get(
+    task_instance_hitl_path + "/tries/{try_number}",
+    status_code=status.HTTP_200_OK,
+    responses=create_openapi_http_exception_doc([status.HTTP_404_NOT_FOUND]),
+    dependencies=[Depends(requires_access_dag(method="GET", access_entity=DagAccessEntity.HITL_DETAIL))],
+)
+def get_hitl_detail_try_detail(
+    dag_id: str,
+    dag_run_id: str,
+    task_id: str,
+    session: SessionDep,
+    map_index: int = -1,
+    try_number: int | None = None,
+) -> HITLDetailHistory:
+    """Get a Human-in-the-loop detail of a specific task instance."""
+    task_instance_history = _get_task_instance_with_hitl_detail(
+        dag_id=dag_id,
+        dag_run_id=dag_run_id,
+        task_id=task_id,
+        session=session,
+        map_index=map_index,
+        try_number=try_number,
+    )
+    return task_instance_history.hitl_detail
 
 
 @task_instances_hitl_router.get(
@@ -235,8 +339,10 @@ def get_hitl_details(
     readable_ti_filter: ReadableTIFilterDep,
     # ti related filter
     dag_id_pattern: QueryHITLDetailDagIdPatternSearch,
+    dag_id_prefix_pattern: QueryHITLDetailDagIdPrefixPatternSearch,
     task_id: QueryHITLDetailTaskIdFilter,
     task_id_pattern: QueryHITLDetailTaskIdPatternSearch,
+    task_id_prefix_pattern: QueryHITLDetailTaskIdPrefixPatternSearch,
     map_index: QueryHITLDetailMapIndexFilter,
     ti_state: QueryTIStateFilter,
     # hitl detail related filter
@@ -257,6 +363,7 @@ def get_hitl_details(
                 joinedload(TI.dag_run).joinedload(DagRun.dag_model),
                 joinedload(TI.task_instance_note),
                 joinedload(TI.dag_version).joinedload(DagVersion.bundle),
+                joinedload(TI.rendered_task_instance_fields),
             ),
         )
     )
@@ -271,8 +378,10 @@ def get_hitl_details(
             readable_ti_filter,
             # ti related filter
             dag_id_pattern,
+            dag_id_prefix_pattern,
             task_id,
             task_id_pattern,
+            task_id_prefix_pattern,
             map_index,
             ti_state,
             # hitl detail related filter

@@ -23,9 +23,9 @@ from __future__ import annotations
 import argparse
 import ast
 import datetime
-import getpass
 import inspect
 import os
+import sys
 from argparse import Namespace
 from collections.abc import Callable, Iterable
 from enum import Enum
@@ -40,9 +40,11 @@ import airflowctl.api.datamodels.generated as generated_datamodels
 from airflowctl.api.client import NEW_API_CLIENT, Client, ClientKind, provide_api_client
 from airflowctl.api.operations import BaseOperations, ServerResponseError
 from airflowctl.ctl.console_formatting import AirflowConsole
+from airflowctl.ctl.utils.yaml import safe_load
 from airflowctl.exceptions import (
     AirflowCtlConnectionException,
     AirflowCtlCredentialNotFoundException,
+    AirflowCtlKeyringException,
     AirflowCtlNotFoundException,
 )
 from airflowctl.utils.module_loading import import_string
@@ -64,23 +66,21 @@ def lazy_load_command(import_path: str) -> Callable:
 
 
 def safe_call_command(function: Callable, args: Iterable[Arg]) -> None:
-    import sys
-
     if os.getenv("AIRFLOW_CLI_DEBUG_MODE") == "true":
         rich.print(
             "[yellow]Debug mode is enabled. Please be aware that your credentials are not secure.\n"
-            "Please unset AIRFLOW_CLI_DEBUG_MODE or set it to false.[/yellow]"
+            "Please unset AIRFLOW_CLI_DEBUG_MODE or set it to false.[/yellow]",
+            file=sys.stderr,
         )
 
     try:
         function(args)
-    except AirflowCtlCredentialNotFoundException as e:
-        rich.print(f"command failed due to {e}")
-        sys.exit(1)
-    except AirflowCtlConnectionException as e:
-        rich.print(f"command failed due to {e}")
-        sys.exit(1)
-    except AirflowCtlNotFoundException as e:
+    except (
+        AirflowCtlCredentialNotFoundException,
+        AirflowCtlConnectionException,
+        AirflowCtlKeyringException,
+        AirflowCtlNotFoundException,
+    ) as e:
         rich.print(f"command failed due to {e}")
         sys.exit(1)
     except (httpx.RemoteProtocolError, httpx.ReadError) as e:
@@ -90,10 +90,12 @@ def safe_call_command(function: Callable, args: Iterable[Arg]) -> None:
                 f"[red]Server response error: {e}. "
                 "Please check if the server is running and the API URL is correct.[/red]"
             )
+        sys.exit(1)
     except httpx.ReadTimeout as e:
         rich.print(f"[red]Read timeout error: {e}[/red]")
         if "timed out" in str(e):
             rich.print("[red]Please check if the server is running and the API ready to accept calls.[/red]")
+        sys.exit(1)
     except ServerResponseError as e:
         rich.print(f"Server response error: {e}")
         if "Client error message:" in str(e):
@@ -102,6 +104,7 @@ def safe_call_command(function: Callable, args: Iterable[Arg]) -> None:
                 "Please check the command and its parameters. "
                 "If you need help, run the command with --help."
             )
+        sys.exit(1)
 
 
 class DefaultHelpParser(argparse.ArgumentParser):
@@ -152,7 +155,10 @@ class Arg:
                     return self._is_valid_directory(parser, x)
 
                 self.kwargs["type"] = type
-        parser.add_argument(*self.flags, **self.kwargs)
+        kwargs = self.kwargs.copy()
+        if kwargs.get("action") is argparse.BooleanOptionalAction:
+            kwargs.pop("type", None)
+        parser.add_argument(*self.flags, **kwargs)
 
     def _is_valid_directory(self, parser, arg):
         if not os.path.isdir(arg):
@@ -189,21 +195,19 @@ def string_lower_type(val):
     return val.strip().lower()
 
 
-class Password(argparse.Action):
-    """Custom action to prompt for password input."""
-
-    def __call__(self, parser, namespace, values, option_string=None):
-        if values is None:
-            values = getpass.getpass()
-        setattr(namespace, self.dest, values)
+def _load_help_texts_yaml() -> dict[str, dict[str, str]]:
+    """Load the help texts yaml for the auto-generated commands."""
+    help_texts_path = Path(__file__).parent / "help_texts.yaml"
+    with open(help_texts_path) as yaml_file:
+        help_texts = safe_load(yaml_file)
+    return help_texts
 
 
 # Common Positional Arguments
 ARG_FILE = Arg(
     flags=("file",),
     metavar="FILEPATH",
-    help="File path to read from or write to. "
-    "For import commands, it is a file to read from. For export commands, it is a file to write to.",
+    help="File path to read from for import commands.",
 )
 ARG_OUTPUT = Arg(
     (
@@ -243,29 +247,32 @@ ARG_AUTH_USERNAME = Arg(
     dest="username",
     help="The username to use for authentication",
 )
+ARG_AUTH_SKIP_KEYRING = Arg(
+    flags=("--skip-keyring",),
+    dest="skip_keyring",
+    default=False,
+    action="store_true",
+    help="Skip storing credentials in keyring",
+)
 ARG_AUTH_PASSWORD = Arg(
     flags=("--password",),
     type=str,
     dest="password",
     help="The password to use for authentication",
-    action=Password,
-    nargs="?",
 )
 
 # Dag Commands Args
 ARG_DAG_ID = Arg(
-    flags=("--dag-id",),
+    flags=("dag_id",),
     type=str,
-    dest="dag_id",
-    help="The DAG ID of the DAG to pause or unpause",
+    help="The Dag ID of the Dag to pause or unpause",
 )
 
-# Variable Commands Args
-ARG_VARIABLE_ACTION_ON_EXISTING_KEY = Arg(
+ARG_ACTION_ON_EXISTING_KEY = Arg(
     flags=("-a", "--action-on-existing-key"),
     type=str,
     default="overwrite",
-    help="Action to take if we encounter a variable key that already exists.",
+    help="Action to take if the entity already exists.",
     choices=("overwrite", "fail", "skip"),
 )
 
@@ -372,6 +379,7 @@ class CommandFactory:
     output_command_list: list[str]
     exclude_operation_names: list[str]
     exclude_method_names: list[str]
+    help_texts: dict[str, dict[str, str]]
 
     def __init__(self, file_path: str | Path | None = None):
         self.datamodels_extended_map = {}
@@ -380,12 +388,13 @@ class CommandFactory:
         self.args_map = {}
         self.commands_map = {}
         self.group_commands_list = []
+        self.help_texts = _load_help_texts_yaml()
         self.file_path = inspect.getfile(BaseOperations) if file_path is None else file_path
         # Excluded Lists are in Class Level for further usage and avoid searching them
         # Exclude parameters that are not needed for CLI from datamodels
         self.excluded_parameters = ["schema_"]
         # This list is used to determine if the command/operation needs to output data
-        self.output_command_list = ["list", "get", "create", "delete", "update", "trigger"]
+        self.output_command_list = ["list", "get", "create", "delete", "update", "trigger", "add", "edit"]
         self.exclude_operation_names = ["LoginOperations", "VersionOperations", "BaseOperations"]
         self.exclude_method_names = [
             "error",
@@ -402,29 +411,41 @@ class CommandFactory:
     def _inspect_operations(self) -> None:
         """Parse file and return matching Operation Method with details."""
 
+        def _union_members(node: ast.expr) -> list[str]:
+            """Get individual type names from a union type annotation."""
+            if isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr):
+                return _union_members(node.left) + _union_members(node.right)
+            return [ast.unparse(node)]
+
         def get_function_details(node: ast.FunctionDef, parent_node: ast.ClassDef) -> dict:
             """Extract function name, arguments, and return annotation."""
             func_name = node.name
             args = []
             return_annotation: str = ""
 
-            for arg in node.args.args:
+            # In ``ast.arguments``, ``defaults`` aligns with the *tail* of
+            # ``args``. A parameter is required when its position from the
+            # left is *before* the first defaulted position. Equivalent to
+            # ``len(args) - len(defaults)``.
+            positional_args = [a for a in node.args.args if a.arg != "self"]
+            defaults_count = len(node.args.defaults)
+            required_count = len(positional_args) - defaults_count
+            required_param_names: set[str] = {a.arg for a in positional_args[:required_count]}
+
+            for arg in positional_args:
                 arg_name = arg.arg
                 arg_type = ast.unparse(arg.annotation) if arg.annotation else "Any"
-                if arg_name != "self":
-                    args.append({arg_name: arg_type})
+                args.append({arg_name: arg_type})
 
             if node.returns:
                 return_annotation = [
-                    t.strip()
-                    # TODO change this while removing Python 3.9 support
-                    for t in ast.unparse(node.returns).split("|")
-                    if t.strip() != ServerResponseError.__name__
+                    t for t in _union_members(node.returns) if t != ServerResponseError.__name__
                 ].pop()
 
             return {
                 "name": func_name,
                 "parameters": args,
+                "required_param_names": required_param_names,
                 "return_type": return_annotation,
                 "parent": parent_node,
             }
@@ -465,7 +486,10 @@ class CommandFactory:
             "set",
             "datetime.datetime",
         }
-        return type_name in primitive_types
+        # Handle Optional types (e.g., "datetime.datetime | None", "str | None")
+        # Strip " | None" suffix to check the base type
+        base_type = type_name.replace(" | None", "").strip()
+        return base_type in primitive_types
 
     @staticmethod
     def _python_type_from_string(type_name: str | type) -> type | Callable:
@@ -517,6 +541,26 @@ class CommandFactory:
             action=arg_action,
         )
 
+    @staticmethod
+    def _create_positional_arg(
+        parameter_key: str,
+        arg_type: type | Callable,
+        arg_help: str,
+    ) -> Arg:
+        """
+        Build a positional ``Arg`` for a required primitive parameter.
+
+        ``argparse`` rejects ``default`` and ``dest`` on positional arguments,
+        so this helper keeps both unset and uses the raw parameter name (with
+        underscores) as the flag so the parsed ``Namespace`` attribute lines up
+        with the operation method's signature.
+        """
+        return Arg(
+            flags=(parameter_key,),
+            type=arg_type,
+            help=arg_help,
+        )
+
     def _create_arg_for_non_primitive_type(
         self,
         parameter_type: str,
@@ -562,19 +606,44 @@ class CommandFactory:
         """Create Arg from Operation Method checking for parameters and return types."""
         for operation in self.operations:
             args = []
+            required_names: set[str] = operation.get("required_param_names") or set()
             for parameter in operation.get("parameters"):
                 for parameter_key, parameter_type in parameter.items():
                     if self._is_primitive_type(type_name=parameter_type):
-                        is_bool = parameter_type == "bool"
-                        args.append(
-                            self._create_arg(
-                                arg_flags=("--" + self._sanitize_arg_parameter_key(parameter_key),),
-                                arg_type=self._python_type_from_string(parameter_type),
-                                arg_action=argparse.BooleanOptionalAction if is_bool else None,
-                                arg_help=f"{parameter_key} for {operation.get('name')} operation in {operation.get('parent').name}",
-                                arg_default=False if is_bool else None,
-                            )
+                        base_parameter_type = parameter_type.replace(" | None", "").strip()
+                        is_bool = base_parameter_type == "bool"
+                        # Required, non-bool primitives are exposed as positional
+                        # arguments per the dev-list lazy consensus
+                        # (https://lists.apache.org/thread/m1qvcvow3l17ytv40vhslh40wn3rntrm).
+                        # Bool stays --flag/--no-flag and ``parameter_type``
+                        # ending in ``| None`` is treated as optional.
+                        is_required_positional = (
+                            parameter_key in required_names and not is_bool and "| None" not in parameter_type
                         )
+                        if is_required_positional:
+                            args.append(
+                                self._create_positional_arg(
+                                    parameter_key=parameter_key,
+                                    arg_type=self._python_type_from_string(parameter_type),
+                                    arg_help=(
+                                        f"{parameter_key} for {operation.get('name')} "
+                                        f"operation in {operation.get('parent').name}"
+                                    ),
+                                )
+                            )
+                        else:
+                            args.append(
+                                self._create_arg(
+                                    arg_flags=("--" + self._sanitize_arg_parameter_key(parameter_key),),
+                                    arg_type=self._python_type_from_string(parameter_type),
+                                    arg_action=argparse.BooleanOptionalAction if is_bool else None,
+                                    arg_help=(
+                                        f"{parameter_key} for {operation.get('name')} "
+                                        f"operation in {operation.get('parent').name}"
+                                    ),
+                                    arg_default=None,
+                                )
+                            )
                     else:
                         args.extend(
                             self._create_arg_for_non_primitive_type(
@@ -586,6 +655,31 @@ class CommandFactory:
                 args.extend([ARG_OUTPUT, ARG_AUTH_ENVIRONMENT])
 
             self.args_map[(operation.get("name"), operation.get("parent").name)] = args
+
+    def _apply_datamodel_defaults(self, datamodel: type, params: dict) -> dict:
+        """
+        Apply datamodel-specific default values.
+
+        Centralizes special handling for different datamodels to keep
+        CLI parameter processing logic clean and maintainable.
+
+        Args:
+            datamodel: The Pydantic datamodel class
+            params: Dictionary of parameters for the datamodel
+
+        Returns:
+            Updated params dictionary with defaults applied
+        """
+        # Handle TriggerDAGRunPostBody: default logical_date to now
+        # This matches the Airflow UI behavior where the form pre-fills with current time
+        if (
+            datamodel.__name__ == "TriggerDAGRunPostBody"
+            and "logical_date" in params
+            and params["logical_date"] is None
+        ):
+            params["logical_date"] = datetime.datetime.now(datetime.timezone.utc)
+
+        return params
 
     def _create_func_map_from_operation(self):
         """Create function map from Operation Method checking for parameters and return types."""
@@ -625,6 +719,10 @@ class CommandFactory:
 
             if datamodel:
                 if datamodel_param_name:
+                    # Apply datamodel-specific defaults (e.g., logical_date for TriggerDAGRunPostBody)
+                    method_params[datamodel_param_name] = self._apply_datamodel_defaults(
+                        datamodel, method_params[datamodel_param_name]
+                    )
                     method_params[datamodel_param_name] = datamodel.model_validate(
                         method_params[datamodel_param_name]
                     )
@@ -687,12 +785,15 @@ class CommandFactory:
         for operation in self.operations:
             operation_name = operation["name"]
             operation_group_name = operation["parent"].name
+            help_text = self.help_texts.get(operation_group_name.replace("Operations", "").lower(), {}).get(
+                operation_name.replace("_", "-")
+            )
             if operation_group_name not in self.commands_map:
                 self.commands_map[operation_group_name] = []
             self.commands_map[operation_group_name].append(
                 ActionCommand(
                     name=operation["name"].replace("_", "-"),
-                    help=f"Perform {operation_name} operation",
+                    help=help_text,
                     func=self.func_map[(operation_name, operation_group_name)],
                     args=self.args_map[(operation_name, operation_group_name)],
                 )
@@ -716,6 +817,23 @@ class CommandFactory:
         self._create_group_commands_from_operation()
 
         return self.group_commands_list
+
+
+def add_auth_token_to_all_commands(commands: Iterable[CLICommand]) -> list[CLICommand]:
+    """Add ARG_AUTH_TOKEN to all ActionCommands."""
+    new_commands: list[CLICommand] = []
+    for command in commands:
+        if isinstance(command, ActionCommand):
+            new_args = list(command.args)
+            if ARG_AUTH_TOKEN not in new_args:
+                new_args.append(ARG_AUTH_TOKEN)
+            new_commands.append(command._replace(args=new_args))
+        elif isinstance(command, GroupCommand):
+            new_subcommands = add_auth_token_to_all_commands(command.subcommands)
+            new_commands.append(command._replace(subcommands=new_subcommands))
+        else:
+            new_commands.append(command)
+    return new_commands
 
 
 def merge_commands(
@@ -781,7 +899,34 @@ AUTH_COMMANDS = (
         help="Login to the metadata database for personal usage. JWT Token must be provided via parameter.",
         description="Login to the metadata database",
         func=lazy_load_command("airflowctl.ctl.commands.auth_command.login"),
-        args=(ARG_AUTH_URL, ARG_AUTH_TOKEN, ARG_AUTH_ENVIRONMENT, ARG_AUTH_USERNAME, ARG_AUTH_PASSWORD),
+        args=(
+            ARG_AUTH_URL,
+            ARG_AUTH_ENVIRONMENT,
+            ARG_AUTH_USERNAME,
+            ARG_AUTH_PASSWORD,
+            ARG_AUTH_SKIP_KEYRING,
+        ),
+    ),
+    ActionCommand(
+        name="list-envs",
+        help="List all CLI environments that the user has logged into",
+        description="List all CLI environments with their authentication status",
+        func=lazy_load_command("airflowctl.ctl.commands.auth_command.list_envs"),
+        args=(ARG_OUTPUT,),
+    ),
+    ActionCommand(
+        name="token",
+        help="Generate and print a JWT token for the given credentials",
+        description=(
+            "Authenticate with username and password and print the access token to stdout. "
+            "Username and password are prompted interactively if not provided."
+        ),
+        func=lazy_load_command("airflowctl.ctl.commands.auth_command.get_token"),
+        args=(
+            ARG_AUTH_URL,
+            ARG_AUTH_USERNAME,
+            ARG_AUTH_PASSWORD,
+        ),
     ),
 )
 
@@ -804,15 +949,25 @@ CONFIG_COMMANDS = (
 CONNECTION_COMMANDS = (
     ActionCommand(
         name="import",
-        help="Import connections from a file. "
-        "This feature is compatible with airflow CLI `airflow connections export a.json` command. "
-        "Export it from `airflow CLI` and import it securely via this command.",
+        help="Import connections from a file exported with local CLI.",
         func=lazy_load_command("airflowctl.ctl.commands.connection_command.import_"),
-        args=(Arg(flags=("file",), metavar="FILEPATH", help="Connections JSON file"),),
+        args=(
+            Arg(flags=("file",), metavar="FILEPATH", help="Connections JSON file"),
+            ARG_ACTION_ON_EXISTING_KEY,
+        ),
     ),
 )
 
 DAG_COMMANDS = (
+    ActionCommand(
+        name="next-execution",
+        help="Show the next scheduled execution time for a Dag",
+        func=lazy_load_command("airflowctl.ctl.commands.dag_command.next_execution"),
+        args=(
+            ARG_DAG_ID,
+            ARG_OUTPUT,
+        ),
+    ),
     ActionCommand(
         name="pause",
         help="Pause a Dag",
@@ -838,7 +993,7 @@ POOL_COMMANDS = (
         name="import",
         help="Import pools",
         func=lazy_load_command("airflowctl.ctl.commands.pool_command.import_"),
-        args=(ARG_FILE,),
+        args=(ARG_FILE, ARG_ACTION_ON_EXISTING_KEY),
     ),
     ActionCommand(
         name="export",
@@ -854,15 +1009,9 @@ POOL_COMMANDS = (
 VARIABLE_COMMANDS = (
     ActionCommand(
         name="import",
-        help="Import variables",
+        help="Import variables from a file exported with local CLI.",
         func=lazy_load_command("airflowctl.ctl.commands.variable_command.import_"),
-        args=(ARG_FILE, ARG_VARIABLE_ACTION_ON_EXISTING_KEY),
-    ),
-    ActionCommand(
-        name="export",
-        help="Export all variables",
-        func=lazy_load_command("airflowctl.ctl.commands.variable_command.export"),
-        args=(ARG_FILE,),
+        args=(ARG_FILE, ARG_ACTION_ON_EXISTING_KEY),
     ),
 )
 
@@ -913,3 +1062,5 @@ core_commands: list[CLICommand] = [
 core_commands = merge_commands(
     base_commands=command_factory.group_commands, commands_will_be_merged=core_commands
 )
+# Add ARG_AUTH_TOKEN to all commands
+core_commands = add_auth_token_to_all_commands(core_commands)

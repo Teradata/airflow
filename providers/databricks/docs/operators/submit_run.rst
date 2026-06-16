@@ -24,14 +24,14 @@ DatabricksSubmitRunOperator
 ===========================
 
 Use the :class:`~airflow.providers.databricks.operators.DatabricksSubmitRunOperator` to submit
-a new Databricks job via Databricks `api/2.1/jobs/runs/submit <https://docs.databricks.com/dev-tools/api/latest/jobs.html#operation/JobsRunsSubmit>`_ API endpoint.
+a new Databricks job via Databricks `api/2.2/jobs/runs/submit <https://docs.databricks.com/dev-tools/api/latest/jobs.html#operation/JobsRunsSubmit>`_ API endpoint.
 
 
 Using the Operator
 ------------------
 
 There are three ways to instantiate this operator. In the first way, you can take the JSON payload that you typically use
-to call the ``api/2.1/jobs/runs/submit`` endpoint and pass it directly to our ``DatabricksSubmitRunOperator`` through the
+to call the ``api/2.2/jobs/runs/submit`` endpoint and pass it directly to our ``DatabricksSubmitRunOperator`` through the
 ``json`` parameter.  With this approach you get full control over the underlying payload to Jobs REST API, including
 execution of Databricks jobs with multiple tasks, but it's harder to detect errors because of the lack of the type checking.
 
@@ -91,7 +91,7 @@ Currently the named parameters that ``DatabricksSubmitRunOperator`` supports are
       task_id="notebook_run", new_cluster=new_cluster, notebook_task=notebook_task
   )
 
-Another way to do is use the param tasks to pass array of objects to instantiate this operator. Here the value of tasks param that is used to invoke ``api/2.1/jobs/runs/submit`` endpoint is passed through the ``tasks`` param in ``DatabricksSubmitRunOperator``. Instead of invoking single task, you can pass array of task and submit a one-time run.
+Another way to do is use the param tasks to pass array of objects to instantiate this operator. Here the value of tasks param that is used to invoke ``api/2.2/jobs/runs/submit`` endpoint is passed through the ``tasks`` param in ``DatabricksSubmitRunOperator``. Instead of invoking single task, you can pass array of task and submit a one-time run.
 
 .. code-block:: python
 
@@ -103,6 +103,38 @@ Another way to do is use the param tasks to pass array of objects to instantiate
   ]
   notebook_run = DatabricksSubmitRunOperator(task_id="notebook_run", tasks=tasks)
 
+
+Forwarding Airflow Dag params as task parameters
+------------------------------------------------
+
+Unlike ``api/2.2/jobs/create`` and ``api/2.2/jobs/run-now``, the
+``api/2.2/jobs/runs/submit`` endpoint has no top-level parameter slot — each task in
+``tasks`` carries its own parameters whose shape depends on the task type.
+
+If the operator's ``params`` dict is non-empty, it is forwarded as-is into the
+dict-shaped parameter slot of every task in ``json`` whose corresponding field is empty:
+
+* ``notebook_task.base_parameters`` (e.g. for ``notebook_task``)
+* ``python_wheel_task.named_parameters``
+* ``sql_task.parameters``
+* ``run_job_task.job_parameters``
+
+Tasks whose only parameter slot is ``List[str]`` (``spark_jar_task``, ``spark_python_task``,
+``spark_submit_task``) are skipped because there is no canonical mapping from a key/value
+dict to a positional argument list — pass those parameters explicitly via the ``json``
+or ``tasks`` argument.
+
+.. code-block:: python
+
+  notebook_run = DatabricksSubmitRunOperator(
+      task_id="notebook_run",
+      notebook_task={"notebook_path": "/Users/airflow@example.com/PrepareData"},
+      new_cluster={"spark_version": "15.4.x-scala2.12", "num_workers": 2},
+      params={"env": "dev", "shard": "1"},
+  )
+  # The submitted run's notebook_task.base_parameters becomes:
+  #   {"env": "dev", "shard": "1"}
+  # i.e. the same dict, copied into the task's dict-shaped parameter slot.
 
 
 Examples

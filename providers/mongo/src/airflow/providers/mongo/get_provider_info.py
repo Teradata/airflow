@@ -38,7 +38,36 @@ def get_provider_info():
             {"integration-name": "MongoDB", "python-modules": ["airflow.providers.mongo.sensors.mongo"]}
         ],
         "hooks": [{"integration-name": "MongoDB", "python-modules": ["airflow.providers.mongo.hooks.mongo"]}],
+        "asset-uris": [
+            {
+                "schemes": ["mongodb"],
+                "handler": "airflow.providers.mongo.assets.mongo.sanitize_uri",
+                "factory": "airflow.providers.mongo.assets.mongo.create_asset",
+                "to_openlineage_converter": "airflow.providers.mongo.assets.mongo.convert_asset_to_openlineage",
+            }
+        ],
+        "dataset-uris": [
+            {
+                "schemes": ["mongodb"],
+                "handler": "airflow.providers.mongo.assets.mongo.sanitize_uri",
+                "factory": "airflow.providers.mongo.assets.mongo.create_asset",
+                "to_openlineage_converter": "airflow.providers.mongo.assets.mongo.convert_asset_to_openlineage",
+            }
+        ],
         "connection-types": [
-            {"hook-class-name": "airflow.providers.mongo.hooks.mongo.MongoHook", "connection-type": "mongo"}
+            {
+                "hook-class-name": "airflow.providers.mongo.hooks.mongo.MongoHook",
+                "hook-name": "MongoDB",
+                "connection-type": "mongo",
+                "conn-fields": {
+                    "srv": {"label": "Srv", "schema": {"type": ["boolean", "null"]}},
+                    "ssl": {"label": "Ssl", "schema": {"type": ["boolean", "null"]}},
+                    "allow_insecure": {"label": "Allow Insecure", "schema": {"type": ["boolean", "null"]}},
+                },
+                "ui-field-behaviour": {
+                    "relabeling": {"login": "Username", "schema": "Default DB"},
+                    "placeholders": {"port": "Note: port should not be set for SRV connections"},
+                },
+            }
         ],
     }

@@ -21,7 +21,7 @@ from typing import Any
 
 from googleapiclient.discovery import Resource, build
 
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.common.hooks.base_google import PROVIDE_PROJECT_ID, GoogleBaseHook
 
 
@@ -35,7 +35,13 @@ class GoogleDeploymentManagerHook(GoogleBaseHook):
     def get_conn(self) -> Resource:
         """Return a Google Deployment Manager service object."""
         http_authorized = self._authorize()
-        return build("deploymentmanager", "v2", http=http_authorized, cache_discovery=False)
+        return build(
+            "deploymentmanager",
+            "v2",
+            http=http_authorized,
+            cache_discovery=False,
+            client_options=self.get_client_options(),
+        )
 
     @GoogleBaseHook.fallback_to_default_project_id
     def list_deployments(

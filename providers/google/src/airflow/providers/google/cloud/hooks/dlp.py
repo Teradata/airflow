@@ -55,7 +55,7 @@ from google.cloud.dlp_v2.types import (
 )
 from google.protobuf.field_mask_pb2 import FieldMask
 
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.common.consts import CLIENT_INFO
 from airflow.providers.google.common.hooks.base_google import PROVIDE_PROJECT_ID, GoogleBaseHook
 
@@ -106,7 +106,11 @@ class CloudDLPHook(GoogleBaseHook):
         :return: Google Cloud DLP API Client
         """
         if not self._client:
-            self._client = DlpServiceClient(credentials=self.get_credentials(), client_info=CLIENT_INFO)
+            self._client = DlpServiceClient(
+                credentials=self.get_credentials(),
+                client_info=CLIENT_INFO,
+                client_options=self.get_client_options(),
+            )
         return self._client
 
     def _project_deidentify_template_path(self, project_id, template_id):

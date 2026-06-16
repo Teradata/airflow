@@ -20,12 +20,13 @@ import { Box, Table } from "@chakra-ui/react";
 import { useParams } from "react-router-dom";
 
 import { useTaskInstanceServiceGetMappedTaskInstance } from "openapi/queries";
+import { SqlParserProvider } from "src/components/SqlParserProvider";
 import { ClipboardRoot, ClipboardIconButton } from "src/components/ui";
 import { useColorMode } from "src/context/colorMode";
 import { detectLanguage } from "src/utils/detectLanguage";
 import { oneDark, oneLight, SyntaxHighlighter } from "src/utils/syntaxHighlighter";
 
-export const RenderedTemplates = () => {
+const RenderedTemplatesContent = () => {
   const { dagId = "", mapIndex = "-1", runId = "", taskId = "" } = useParams();
   const { colorMode } = useColorMode();
 
@@ -44,7 +45,10 @@ export const RenderedTemplates = () => {
         <Table.Body>
           {Object.entries(taskInstance?.rendered_fields ?? {}).map(([key, value]) => {
             if (value !== null && value !== undefined) {
-              const renderedValue = typeof value === "string" ? value : JSON.stringify(value);
+              const renderedValue =
+                typeof value === "string"
+                  ? value.split("\\n").join("\n").replaceAll(/\\$/gmu, "")
+                  : JSON.stringify(value, null, 2);
               const language = detectLanguage(renderedValue);
 
               return (
@@ -58,10 +62,10 @@ export const RenderedTemplates = () => {
                         },
                       }}
                     >
-                      <Box as="pre" borderRadius="md" fontSize="sm" m={0} overflowX="auto" p={2}>
+                      <Box borderRadius="md" fontSize="sm" m={0} overflowX="auto" p={2}>
                         <SyntaxHighlighter
                           language={language}
-                          PreTag="div" // Prevents double <pre> nesting
+                          PreTag="pre"
                           showLineNumbers
                           style={style}
                           wrapLongLines
@@ -94,3 +98,9 @@ export const RenderedTemplates = () => {
     </Box>
   );
 };
+
+export const RenderedTemplates = () => (
+  <SqlParserProvider>
+    <RenderedTemplatesContent />
+  </SqlParserProvider>
+);

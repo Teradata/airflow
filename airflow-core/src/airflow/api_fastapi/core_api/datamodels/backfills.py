@@ -33,9 +33,16 @@ class BackfillPostBody(StrictBaseModel):
     from_date: datetime
     to_date: datetime
     run_backwards: bool = False
-    dag_run_conf: dict = {}
+    dag_run_conf: dict | None = None
     reprocess_behavior: ReprocessBehavior = ReprocessBehavior.NONE
     max_active_runs: int = 10
+    run_on_latest_version: bool | None = Field(
+        default=None,
+        description="Run on the latest bundle version of the Dag for each backfilled run. "
+        "If not specified, falls back to the DAG-level ``rerun_with_latest_version`` parameter, "
+        "then the ``[core] rerun_with_latest_version`` config option, "
+        "and finally ``True`` (the historical default for backfills).",
+    )
 
 
 class BackfillResponse(BaseModel):
@@ -45,7 +52,7 @@ class BackfillResponse(BaseModel):
     dag_id: str
     from_date: datetime
     to_date: datetime
-    dag_run_conf: dict
+    dag_run_conf: dict | None
     is_paused: bool
     reprocess_behavior: ReprocessBehavior
     max_active_runs: int
@@ -65,7 +72,9 @@ class BackfillCollectionResponse(BaseModel):
 class DryRunBackfillResponse(BaseModel):
     """Backfill serializer for responses in dry-run mode."""
 
-    logical_date: datetime
+    logical_date: datetime | None
+    partition_key: str | None
+    partition_date: datetime | None
 
 
 class DryRunBackfillCollectionResponse(BaseModel):

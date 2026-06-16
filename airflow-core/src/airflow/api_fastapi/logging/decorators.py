@@ -33,6 +33,18 @@ from airflow.models import Log
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_for_stdlib_log(value: str) -> str:
+    """
+    Strip CR/LF from a user-supplied value before passing it to stdlib's ``%s``-style logging.
+
+    Defends against log injection when the deployment is configured with a non-JSON
+    (plain-text) log formatter: a newline in the value would otherwise let an attacker forge
+    log lines. ``structlog``-style formatters are unaffected, but the access-log path uses
+    the stdlib logger here, so the sanitisation is unconditional.
+    """
+    return value.replace("\r", " ").replace("\n", " ")
+
+
 def _mask_connection_fields(extra_fields):
     """Mask connection fields."""
     result = {}
@@ -41,8 +53,10 @@ def _mask_connection_fields(extra_fields):
             try:
                 parsed_extra = json.loads(v)
                 if isinstance(parsed_extra, dict):
-                    masked_extra = {ek: secrets_masker.redact(ev, ek) for ek, ev in parsed_extra.items()}
-                    result[k] = masked_extra
+                    # Connection ``extra`` can carry values under arbitrary key names, so the
+                    # audit-log entry records only *which* ``extra`` fields were present and masks
+                    # every value rather than deciding what to mask from the key name.
+                    result[k] = {ek: "***" for ek in parsed_extra}
                 else:
                     result[k] = "Expected JSON object in `extra` field, got non-dict JSON"
             except json.JSONDecodeError:
@@ -54,23 +68,18 @@ def _mask_connection_fields(extra_fields):
 
 def _mask_variable_fields(extra_fields):
     """
-    Mask the 'val_content' field if 'key_content' is in the mask list.
+    Mask the variable value.
 
     The variable requests values and args comes in this form:
     {'key': 'key_content', 'val': 'val_content', 'description': 'description_content'}
+
+    The value is masked unconditionally — the audit log records that a variable
+    changed, not its contents, so a secret stored under any key name (not just a
+    sensitive-looking one) is never persisted to the log.
     """
     result = {}
-    keyname = None
     for k, v in extra_fields.items():
-        if k == "key":
-            keyname = v
-            result[k] = v
-        elif keyname and (k == "val" or k == "value"):
-            x = secrets_masker.redact(v, keyname)
-            result[k] = x
-            keyname = None
-        else:
-            result[k] = v
+        result[k] = "***" if k in ("val", "value") else v
     return result
 
 
@@ -92,16 +101,16 @@ def action_logging(event: str | None = None):
             user_display = user.get_name()
 
         has_json_body = "application/json" in request.headers.get("content-type", "") and await request.body()
+        request_body = {}
+        masked_body_json = {}
 
         if has_json_body:
             request_body = await request.json()
-            masked_body_json = {k: secrets_masker.redact(v, k) for k, v in request_body.items()}
-        else:
-            request_body = {}
-            masked_body_json = {}
+            if isinstance(request_body, dict):
+                masked_body_json = {k: secrets_masker.redact(v, k) for k, v in request_body.items()}
 
-        if event_name in skip_dry_run_events and request_body.get("dry_run", True):
-            return
+                if event_name in skip_dry_run_events and request_body.get("dry_run", True):
+                    return
 
         fields_skip_logging = {
             "csrf_token",
@@ -163,7 +172,10 @@ def action_logging(event: str | None = None):
                         raise ParserError
                     log.logical_date = logical_date
                 except ParserError:
-                    logger.exception("Failed to parse logical_date from the request: %s", logical_date_value)
+                    logger.exception(
+                        "Failed to parse logical_date from the request: %s",
+                        _sanitize_for_stdlib_log(logical_date_value),
+                    )
             else:
                 logger.warning("Logical date is missing or empty")
         session.add(log)

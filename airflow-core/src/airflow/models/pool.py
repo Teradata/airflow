@@ -17,26 +17,48 @@
 # under the License.
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, TypedDict
 
 from sqlalchemy import Boolean, ForeignKey, Integer, String, Text, func, select
-from sqlalchemy.orm import Mapped
-from sqlalchemy_utils import UUIDType
+from sqlalchemy.orm import Mapped, mapped_column
 
+from airflow._shared.observability.metrics.stats import normalize_name_for_stats
 from airflow.exceptions import AirflowException, PoolNotFound
 from airflow.models.base import Base
-from airflow.models.team import Team
 from airflow.ti_deps.dependencies_states import EXECUTION_STATES
-from airflow.utils.db import exists_query
 from airflow.utils.session import NEW_SESSION, provide_session
-from airflow.utils.sqlalchemy import mapped_column, with_row_locks
+from airflow.utils.sqlalchemy import with_row_locks
 from airflow.utils.state import TaskInstanceState
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Query
     from sqlalchemy.orm.session import Session
     from sqlalchemy.sql import Select
+
+logger = logging.getLogger(__name__)
+
+
+def normalize_pool_name_for_stats(name: str) -> str:
+    """
+    Normalize pool name for stats reporting by replacing invalid characters.
+
+    This is a convenience wrapper around normalize_name_for_stats that provides
+    a pool-specific warning message.
+
+    :param name: The pool name to normalize
+    :return: Normalized pool name safe for stats reporting
+    """
+    normalized = normalize_name_for_stats(name, log_warning=False)
+    if normalized != name:
+        logger.warning(
+            "Pool name '%s' contains invalid characters for stats reporting. "
+            "Reporting stats with normalized name '%s'. "
+            "Consider renaming the pool to avoid this warning.",
+            name,
+            normalized,
+        )
+    return normalized
 
 
 class PoolStats(TypedDict):
@@ -56,12 +78,14 @@ class Pool(Base):
     __tablename__ = "slot_pool"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    pool: Mapped[str] = mapped_column(String(256), unique=True)
+    pool: Mapped[str | None] = mapped_column(String(256), unique=True, nullable=True)
     # -1 for infinite
     slots: Mapped[int] = mapped_column(Integer, default=0)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     include_deferred: Mapped[bool] = mapped_column(Boolean, nullable=False)
-    team_id: Mapped[str | None] = mapped_column(UUIDType(binary=False), ForeignKey("team.id"), nullable=True)
+    team_name: Mapped[str | None] = mapped_column(
+        String(50), ForeignKey("team.name", ondelete="SET NULL"), nullable=True
+    )
 
     DEFAULT_POOL_NAME = "default_pool"
 
@@ -70,13 +94,13 @@ class Pool(Base):
 
     @staticmethod
     @provide_session
-    def get_pools(session: Session = NEW_SESSION) -> Sequence[Pool]:
+    def get_pools(*, session: Session = NEW_SESSION) -> Sequence[Pool]:
         """Get all pools."""
         return session.scalars(select(Pool)).all()
 
     @staticmethod
     @provide_session
-    def get_pool(pool_name: str, session: Session = NEW_SESSION) -> Pool | None:
+    def get_pool(pool_name: str, *, session: Session = NEW_SESSION) -> Pool | None:
         """
         Get the Pool with specific pool name from the Pools.
 
@@ -88,7 +112,7 @@ class Pool(Base):
 
     @staticmethod
     @provide_session
-    def get_default_pool(session: Session = NEW_SESSION) -> Pool | None:
+    def get_default_pool(*, session: Session = NEW_SESSION) -> Pool | None:
         """
         Get the Pool of the default_pool from the Pools.
 
@@ -99,48 +123,47 @@ class Pool(Base):
 
     @staticmethod
     @provide_session
-    def is_default_pool(id: int, session: Session = NEW_SESSION) -> bool:
-        """
-        Check id if is the default_pool.
-
-        :param id: pool id
-        :param session: SQLAlchemy ORM Session
-        :return: True if id is default_pool, otherwise False
-        """
-        return exists_query(
-            Pool.id == id,
-            Pool.pool == Pool.DEFAULT_POOL_NAME,
-            session=session,
-        )
-
-    @staticmethod
-    @provide_session
     def create_or_update_pool(
         name: str,
         slots: int,
         description: str,
         include_deferred: bool,
+        *,
+        team_name: str | None = None,
         session: Session = NEW_SESSION,
     ) -> Pool:
         """Create a pool with given parameters or update it if it already exists."""
+        from airflow.configuration import conf
+
         if not name:
             raise ValueError("Pool name must not be empty")
 
+        if team_name and not conf.getboolean("core", "multi_team"):
+            raise ValueError(
+                "team_name cannot be set when multi_team mode is disabled. Please contact your administrator."
+            )
+
         pool = session.scalar(select(Pool).filter_by(pool=name))
         if pool is None:
-            pool = Pool(pool=name, slots=slots, description=description, include_deferred=include_deferred)
+            pool = Pool(
+                pool=name,
+                slots=slots,
+                description=description,
+                include_deferred=include_deferred,
+                team_name=team_name,
+            )
             session.add(pool)
         else:
             pool.slots = slots
             pool.description = description
             pool.include_deferred = include_deferred
+            pool.team_name = team_name
 
-        session.commit()
         return pool
 
     @staticmethod
     @provide_session
-    def delete_pool(name: str, session: Session = NEW_SESSION) -> Pool:
+    def delete_pool(name: str, *, session: Session = NEW_SESSION) -> Pool:
         """Delete pool by a given name."""
         if name == Pool.DEFAULT_POOL_NAME:
             raise AirflowException(f"{Pool.DEFAULT_POOL_NAME} cannot be deleted")
@@ -150,7 +173,6 @@ class Pool(Base):
             raise PoolNotFound(f"Pool '{name}' doesn't exist")
 
         session.delete(pool)
-        session.commit()
 
         return pool
 
@@ -176,7 +198,8 @@ class Pool(Base):
         pools: dict[str, PoolStats] = {}
         pool_includes_deferred: dict[str, bool] = {}
 
-        query: Select[Any] | Query[Any] = select(Pool.pool, Pool.slots, Pool.include_deferred)
+        # The below type annotation is acceptable on SQLA2.1, but not on 2.0
+        query: Select[str, int, bool] = select(Pool.pool, Pool.slots, Pool.include_deferred)  # type: ignore[type-arg]
 
         if lock_rows:
             query = with_row_locks(query, session=session, nowait=True)
@@ -239,10 +262,11 @@ class Pool(Base):
             "slots": self.slots,
             "description": self.description,
             "include_deferred": self.include_deferred,
+            "team": self.team_name,
         }
 
     @provide_session
-    def occupied_slots(self, session: Session = NEW_SESSION) -> int:
+    def occupied_slots(self, *, session: Session = NEW_SESSION) -> int:
         """
         Get the number of slots used by running/queued tasks at the moment.
 
@@ -270,7 +294,7 @@ class Pool(Base):
         return EXECUTION_STATES
 
     @provide_session
-    def running_slots(self, session: Session = NEW_SESSION) -> int:
+    def running_slots(self, *, session: Session = NEW_SESSION) -> int:
         """
         Get the number of slots used by running tasks at the moment.
 
@@ -289,7 +313,7 @@ class Pool(Base):
         )
 
     @provide_session
-    def queued_slots(self, session: Session = NEW_SESSION) -> int:
+    def queued_slots(self, *, session: Session = NEW_SESSION) -> int:
         """
         Get the number of slots used by queued tasks at the moment.
 
@@ -308,7 +332,7 @@ class Pool(Base):
         )
 
     @provide_session
-    def scheduled_slots(self, session: Session = NEW_SESSION) -> int:
+    def scheduled_slots(self, *, session: Session = NEW_SESSION) -> int:
         """
         Get the number of slots scheduled at the moment.
 
@@ -327,7 +351,7 @@ class Pool(Base):
         )
 
     @provide_session
-    def deferred_slots(self, session: Session = NEW_SESSION) -> int:
+    def deferred_slots(self, *, session: Session = NEW_SESSION) -> int:
         """
         Get the number of slots deferred at the moment.
 
@@ -346,7 +370,7 @@ class Pool(Base):
         )
 
     @provide_session
-    def open_slots(self, session: Session = NEW_SESSION) -> float:
+    def open_slots(self, *, session: Session = NEW_SESSION) -> float:
         """
         Get the number of slots open at the moment.
 
@@ -355,20 +379,18 @@ class Pool(Base):
         """
         if self.slots == -1:
             return float("inf")
-        return self.slots - self.occupied_slots(session)
+        return self.slots - self.occupied_slots(session=session)
 
     @staticmethod
     @provide_session
-    def get_team_name(pool_name: str, session: Session = NEW_SESSION) -> str | None:
-        stmt = select(Team.name).join(Pool, Team.id == Pool.team_id).where(Pool.pool == pool_name)
+    def get_team_name(pool_name: str, *, session: Session = NEW_SESSION) -> str | None:
+        stmt = select(Pool.team_name).where(Pool.pool == pool_name)
         return session.scalar(stmt)
 
     @staticmethod
     @provide_session
     def get_name_to_team_name_mapping(
-        pool_names: list[str], session: Session = NEW_SESSION
+        pool_names: list[str], *, session: Session = NEW_SESSION
     ) -> dict[str, str | None]:
-        stmt = (
-            select(Pool.pool, Team.name).join(Team, Pool.team_id == Team.id).where(Pool.pool.in_(pool_names))
-        )
+        stmt = select(Pool.pool, Pool.team_name).where(Pool.pool.in_(pool_names))
         return {pool: team_name for pool, team_name in session.execute(stmt)}

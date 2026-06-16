@@ -19,9 +19,9 @@ from __future__ import annotations
 import json
 import os
 import sys
-from pathlib import Path
 
 import rich
+from rich.console import Console
 
 from airflowctl.api.client import NEW_API_CLIENT, ClientKind, provide_api_client
 from airflowctl.api.datamodels.generated import (
@@ -32,6 +32,10 @@ from airflowctl.api.datamodels.generated import (
 )
 
 
+def _print_file_error(message: str, file_path: str) -> None:
+    Console().print(f"[red]{message}: {file_path}", soft_wrap=True)
+
+
 @provide_api_client(kind=ClientKind.CLI)
 def import_(args, api_client=NEW_API_CLIENT) -> list[str]:
     """Import variables from a given file."""
@@ -39,20 +43,24 @@ def import_(args, api_client=NEW_API_CLIENT) -> list[str]:
     errors_message = "[red]Import failed! errors: {errors}[/red]"
 
     if not os.path.exists(args.file):
-        rich.print(f"[red]Missing variable file: {args.file}")
+        _print_file_error("Missing variable file", args.file)
         sys.exit(1)
     with open(args.file) as var_file:
         try:
             var_json = json.load(var_file)
         except json.JSONDecodeError:
-            rich.print(f"[red]Invalid variable file: {args.file}")
+            _print_file_error("Invalid variable file", args.file)
             sys.exit(1)
+
+    if not isinstance(var_json, dict):
+        _print_file_error("Invalid variable file", args.file)
+        sys.exit(1)
 
     action_on_existence = BulkActionOnExistence(args.action_on_existing_key)
     vars_to_update = []
     for k, v in var_json.items():
         value, description = v, None
-        if isinstance(v, dict) and v.get("value"):
+        if isinstance(v, dict) and "value" in v:
             value, description = v["value"], v.get("description")
 
         vars_to_update.append(
@@ -79,24 +87,3 @@ def import_(args, api_client=NEW_API_CLIENT) -> list[str]:
 
     rich.print(success_message.format(success=result.create.success))
     return result.create.success
-
-
-@provide_api_client(kind=ClientKind.CLI)
-def export(args, api_client=NEW_API_CLIENT) -> None:
-    """Export all the variables to the file."""
-    success_message = "[green]Export successful! {total_entries} variable(s) to {file}[/green]"
-    var_dict = {}
-    variables = api_client.variables.list()
-
-    for variable in variables.variables:
-        if variable.description:
-            var_dict[variable.key] = {
-                "value": variable.value,
-                "description": variable.description,
-            }
-        else:
-            var_dict[variable.key] = variable.value
-
-    with open(Path(args.file), "w") as var_file:
-        json.dump(var_dict, var_file, sort_keys=True, indent=4)
-    rich.print(success_message.format(total_entries=variables.total_entries, file=args.file))

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from typing import TYPE_CHECKING, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import sqlparse
 from attrs import define
@@ -32,7 +32,6 @@ from airflow.providers.openlineage.utils.sql import (
     create_information_schema_query,
     get_table_schemas,
 )
-from airflow.providers.openlineage.utils.utils import should_use_external_connection
 from airflow.utils.log.logging_mixin import LoggingMixin
 
 if TYPE_CHECKING:
@@ -474,13 +473,26 @@ class SQLParser(LoggingMixin):
 
 
 def get_openlineage_facets_with_sql(
-    hook: DbApiHook, sql: str | list[str], conn_id: str, database: str | None
+    hook: DbApiHook,
+    sql: str | list[str],
+    conn_id: str,
+    database: str | None,
+    use_connection: bool = True,
+    *,
+    connection: Any | None = None,
+    database_info: Any | None = None,
 ) -> OperatorLineage | None:
-    connection = hook.get_connection(conn_id)
-    try:
-        database_info = hook.get_openlineage_database_info(connection)
-    except AttributeError:
-        database_info = None
+    # Accept pre-fetched connection and database_info to avoid redundant hook.get_connection()
+    # calls when processing multiple SQL extras from the same hook. Each get_connection() call
+    # hits SecretsManager (miss) then the Airflow API server — passing these in avoids that cost.
+    if connection is None:
+        connection = hook.get_connection(conn_id)
+
+    if database_info is None:
+        try:
+            database_info = hook.get_openlineage_database_info(connection)
+        except AttributeError:
+            database_info = None
 
     if database_info is None:
         log.debug("%s has no database info provided", hook)
@@ -495,11 +507,12 @@ def get_openlineage_facets_with_sql(
         log.debug("%s failed to get database dialect", hook)
         return None
 
-    try:
-        sqlalchemy_engine = hook.get_sqlalchemy_engine()
-    except Exception as e:
-        log.debug("Failed to get sql alchemy engine: %s", e)
-        sqlalchemy_engine = None
+    sqlalchemy_engine = None
+    if use_connection:
+        try:
+            sqlalchemy_engine = hook.get_sqlalchemy_engine()
+        except Exception as e:
+            log.debug("Failed to get sql alchemy engine: %s", e)
 
     operator_lineage = sql_parser.generate_openlineage_metadata_from_sql(
         sql=sql,
@@ -507,7 +520,7 @@ def get_openlineage_facets_with_sql(
         database_info=database_info,
         database=database,
         sqlalchemy_engine=sqlalchemy_engine,
-        use_connection=should_use_external_connection(hook),
+        use_connection=use_connection,
     )
 
     return operator_lineage

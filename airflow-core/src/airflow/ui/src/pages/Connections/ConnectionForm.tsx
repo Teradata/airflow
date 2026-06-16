@@ -26,9 +26,10 @@ import { FiSave } from "react-icons/fi";
 import { ErrorAlert } from "src/components/ErrorAlert";
 import { FlexibleForm } from "src/components/FlexibleForm";
 import { JsonEditor } from "src/components/JsonEditor";
+import { TeamSelector } from "src/components/TeamSelector.tsx";
 import { Accordion } from "src/components/ui";
+import { useConfig } from "src/queries/useConfig.tsx";
 import { useConnectionTypeMeta } from "src/queries/useConnectionTypeMeta";
-import type { ParamsSpec } from "src/queries/useDagParams";
 import { useParamStore } from "src/queries/useParamStore";
 
 import StandardFields from "./ConnectionStandardFields";
@@ -61,7 +62,7 @@ const ConnectionForm = ({
     control,
     formState: { isDirty, isValid },
     handleSubmit,
-    reset,
+    setValue,
     watch,
   } = useForm<ConnectionBody>({
     defaultValues: initialConnection,
@@ -71,58 +72,55 @@ const ConnectionForm = ({
   const { t: translate } = useTranslation(["admin", "common"]);
   const selectedConnType = watch("conn_type"); // Get the selected connection type
   const standardFields = connectionTypeMeta[selectedConnType]?.standard_fields ?? {};
-  const paramsDic = { paramsDict: connectionTypeMeta[selectedConnType]?.extra_fields ?? ({} as ParamsSpec) };
+  const paramsDic = { paramsDict: connectionTypeMeta[selectedConnType]?.extra_fields ?? {} };
 
   const [formErrors, setFormErrors] = useState(false);
+  const multiTeamEnabled = Boolean(useConfig("multi_team"));
 
   useEffect(() => {
-    reset((prevValues) => ({
-      ...initialConnection,
-      conn_type: selectedConnType,
-      connection_id: prevValues.connection_id,
-    }));
-    setConf(JSON.stringify(JSON.parse(initialConnection.extra), undefined, 2));
-  }, [selectedConnType, reset, initialConnection, setConf]);
+    setValue("conn_type", selectedConnType, {
+      shouldDirty: true,
+    });
+    try {
+      setConf(JSON.stringify(JSON.parse(initialConnection.extra), undefined, 2));
+    } catch {
+      setConf(initialConnection.extra);
+    }
+  }, [selectedConnType, initialConnection, setConf, setValue]);
 
   // Automatically reset form when conf is fetched
   useEffect(() => {
-    reset((prevValues) => ({
-      ...prevValues, // Retain existing form values
-      extra,
-    }));
-  }, [extra, reset, setConf]);
+    setValue("extra", extra, {
+      shouldDirty: true,
+    });
+  }, [extra, setValue]);
 
   const onSubmit = (data: ConnectionBody) => {
     mutateConnection(data);
   };
 
   // Check if extra fields have changed by comparing with initial connection
-  const isExtraFieldsDirty = (() => {
-    try {
-      const initialParsed = JSON.parse(initialConnection.extra) as Record<string, unknown>;
-      const currentParsed = JSON.parse(extra) as Record<string, unknown>;
+  let isExtraFieldsDirty: boolean;
 
-      return JSON.stringify(initialParsed) !== JSON.stringify(currentParsed);
-    } catch {
-      // If parsing fails, fall back to string comparison
-      return extra !== initialConnection.extra;
-    }
-  })();
+  try {
+    const initialParsed = JSON.parse(initialConnection.extra) as Record<string, unknown>;
+    const currentParsed = JSON.parse(extra) as Record<string, unknown>;
+
+    isExtraFieldsDirty = JSON.stringify(initialParsed) !== JSON.stringify(currentParsed);
+  } catch {
+    // If parsing fails, fall back to string comparison
+    isExtraFieldsDirty = extra !== initialConnection.extra;
+  }
 
   const validateAndPrettifyJson = (value: string) => {
     try {
-      if (value.trim() === "") {
-        setErrors((prev) => ({ ...prev, conf: undefined }));
+      setErrors((prev) => ({ ...prev, conf: undefined }));
 
+      if (value.trim() === "") {
         return value;
       }
+
       const parsedJson = JSON.parse(value) as Record<string, unknown>;
-
-      if (typeof parsedJson !== "object" || Array.isArray(parsedJson)) {
-        throw new TypeError('extra fields must be a valid JSON object (e.g., {"key": "value"})');
-      }
-
-      setErrors((prev) => ({ ...prev, conf: undefined }));
       const formattedJson = JSON.stringify(parsedJson, undefined, 2);
 
       if (formattedJson !== extra) {
@@ -239,10 +237,12 @@ const ConnectionForm = ({
                   render={({ field }) => (
                     <Field.Root invalid={Boolean(errors.conf)}>
                       <JsonEditor
-                        {...field}
                         onBlur={() => {
                           field.onChange(validateAndPrettifyJson(field.value));
+                          field.onBlur();
                         }}
+                        onChange={field.onChange}
+                        value={field.value}
                       />
                       {Boolean(errors.conf) ? <Field.ErrorText>{errors.conf}</Field.ErrorText> : undefined}
                       {isEditMode ? (
@@ -257,13 +257,14 @@ const ConnectionForm = ({
             </Accordion.Item>
           </Accordion.Root>
         ) : undefined}
+
+        {multiTeamEnabled ? <TeamSelector control={control} /> : undefined}
       </VStack>
       <ErrorAlert error={error} />
       <Box as="footer" display="flex" justifyContent="flex-end" mr={3} mt={4}>
         <HStack w="full">
           <Spacer />
           <Button
-            colorPalette="brand"
             disabled={
               Boolean(errors.conf) || formErrors || isPending || !isValid || (!isDirty && !isExtraFieldsDirty)
             }

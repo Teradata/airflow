@@ -16,12 +16,11 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { Flex, useDisclosure, Text, VStack, Heading, Code } from "@chakra-ui/react";
+import { Button, Code, Flex, Heading, Text, useDisclosure, VStack } from "@chakra-ui/react";
 import { useTranslation } from "react-i18next";
-import { FiTrash } from "react-icons/fi";
+import { FiTrash2 } from "react-icons/fi";
 
-import { Button, Dialog } from "src/components/ui";
-import ActionButton from "src/components/ui/ActionButton";
+import { IconButton, Dialog } from "src/components/ui";
 import { useDeleteVariable } from "src/queries/useDeleteVariable";
 
 type Props = {
@@ -38,19 +37,16 @@ const DeleteVariableButton = ({ deleteKey: variableKey, disabled }: Props) => {
 
   return (
     <>
-      <ActionButton
-        actionName={translate("variables.delete.title")}
+      <IconButton
         colorPalette="danger"
         disabled={disabled}
-        icon={<FiTrash />}
-        onClick={() => {
-          onOpen();
-        }}
-        text={translate("variables.delete.title")}
-        withText={false}
-      />
+        label={translate("variables.delete.title")}
+        onClick={onOpen}
+      >
+        <FiTrash2 />
+      </IconButton>
 
-      <Dialog.Root onOpenChange={onClose} open={open} size="xl">
+      <Dialog.Root onOpenChange={onClose} open={open}>
         <Dialog.Content backdrop>
           <Dialog.Header>
             <VStack align="start" gap={4}>
@@ -81,7 +77,7 @@ const DeleteVariableButton = ({ deleteKey: variableKey, disabled }: Props) => {
                   });
                 }}
               >
-                <FiTrash /> <Text fontWeight="bold">{translate("deleteActions.modal.confirmButton")}</Text>
+                <FiTrash2 /> <Text fontWeight="bold">{translate("deleteActions.modal.confirmButton")}</Text>
               </Button>
             </Flex>
           </Dialog.Body>

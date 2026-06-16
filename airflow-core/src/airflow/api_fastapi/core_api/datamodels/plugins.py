@@ -69,7 +69,7 @@ class AppBuilderMenuItemResponse(BaseModel):
     category: str | None = None
 
 
-BaseDestinationLiteral = Literal["nav", "dag", "dag_run", "task", "task_instance"]
+BaseDestinationLiteral = Literal["nav", "dag", "dag_run", "task", "task_instance", "base"]
 
 
 class BaseUIResponse(BaseModel):
@@ -82,6 +82,7 @@ class BaseUIResponse(BaseModel):
     icon_dark_mode: str | None = None
     url_route: str | None = None
     category: str | None = None
+    nav_top_level: bool | None = False
 
 
 class ExternalViewResponse(BaseUIResponse):

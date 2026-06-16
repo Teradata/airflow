@@ -19,13 +19,14 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
+from uuid import UUID
 
+import sqlalchemy as sa
 import uuid6
 from sqlalchemy import ForeignKey, String, Text, select
 from sqlalchemy.dialects.mysql import MEDIUMTEXT
-from sqlalchemy.orm import Mapped, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql.expression import literal
-from sqlalchemy_utils import UUIDType
 
 from airflow._shared.timezones import timezone
 from airflow.configuration import conf
@@ -34,7 +35,7 @@ from airflow.models.base import ID_LEN, Base
 from airflow.utils.file import open_maybe_zipped
 from airflow.utils.hashlib_wrapper import md5
 from airflow.utils.session import NEW_SESSION, provide_session
-from airflow.utils.sqlalchemy import UtcDateTime, mapped_column
+from airflow.utils.sqlalchemy import UtcDateTime
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -55,7 +56,7 @@ class DagCode(Base):
     """
 
     __tablename__ = "dag_code"
-    id: Mapped[str] = mapped_column(UUIDType(binary=False), primary_key=True, default=uuid6.uuid7)
+    id: Mapped[UUID] = mapped_column(sa.Uuid(), primary_key=True, default=uuid6.uuid7)
     dag_id: Mapped[str] = mapped_column(String(ID_LEN), nullable=False)
     fileloc: Mapped[str] = mapped_column(String(2000), nullable=False)
     # The max length of fileloc exceeds the limit of indexing.
@@ -65,8 +66,8 @@ class DagCode(Base):
     )
     source_code: Mapped[str] = mapped_column(Text().with_variant(MEDIUMTEXT(), "mysql"), nullable=False)
     source_code_hash: Mapped[str] = mapped_column(String(32), nullable=False)
-    dag_version_id: Mapped[str] = mapped_column(
-        UUIDType(binary=False), ForeignKey("dag_version.id", ondelete="CASCADE"), nullable=False, unique=True
+    dag_version_id: Mapped[UUID] = mapped_column(
+        sa.Uuid(), ForeignKey("dag_version.id", ondelete="CASCADE"), nullable=False, unique=True
     )
     dag_version = relationship("DagVersion", back_populates="dag_code", uselist=False)
 
@@ -79,7 +80,7 @@ class DagCode(Base):
 
     @classmethod
     @provide_session
-    def write_code(cls, dag_version: DagVersion, fileloc: str, session: Session = NEW_SESSION) -> DagCode:
+    def write_code(cls, dag_version: DagVersion, fileloc: str, *, session: Session = NEW_SESSION) -> DagCode:
         """
         Write code into database.
 
@@ -94,7 +95,7 @@ class DagCode(Base):
 
     @classmethod
     @provide_session
-    def has_dag(cls, dag_id: str, session: Session = NEW_SESSION) -> bool:
+    def has_dag(cls, dag_id: str, *, session: Session = NEW_SESSION) -> bool:
         """
         Check a dag exists in dag code table.
 
@@ -108,13 +109,13 @@ class DagCode(Base):
 
     @classmethod
     @provide_session
-    def code(cls, dag_id, session: Session = NEW_SESSION) -> str:
+    def code(cls, dag_id, *, session: Session = NEW_SESSION) -> str:
         """
         Return source code for this DagCode object.
 
         :return: source code as string
         """
-        return cls._get_code_from_db(dag_id, session)
+        return cls._get_code_from_db(dag_id, session=session)
 
     @staticmethod
     def get_code_from_file(fileloc):
@@ -130,7 +131,7 @@ class DagCode(Base):
 
     @classmethod
     @provide_session
-    def _get_code_from_db(cls, dag_id, session: Session = NEW_SESSION) -> str:
+    def _get_code_from_db(cls, dag_id, *, session: Session = NEW_SESSION) -> str:
         dag_code = session.scalar(
             select(cls).where(cls.dag_id == dag_id).order_by(cls.last_updated.desc()).limit(1)
         )
@@ -160,7 +161,7 @@ class DagCode(Base):
 
     @classmethod
     @provide_session
-    def get_latest_dagcode(cls, dag_id: str, session: Session = NEW_SESSION) -> DagCode | None:
+    def get_latest_dagcode(cls, dag_id: str, *, session: Session = NEW_SESSION) -> DagCode | None:
         """
         Get the latest dagcode.
 
@@ -172,7 +173,7 @@ class DagCode(Base):
 
     @classmethod
     @provide_session
-    def update_source_code(cls, dag_id: str, fileloc: str, session: Session = NEW_SESSION) -> None:
+    def update_source_code(cls, dag_id: str, fileloc: str, *, session: Session = NEW_SESSION) -> None:
         """
         Check if the source code of the DAG has changed and update it if needed.
 
@@ -181,7 +182,7 @@ class DagCode(Base):
         :param session: The database session.
         :return: None
         """
-        latest_dagcode = cls.get_latest_dagcode(dag_id, session)
+        latest_dagcode = cls.get_latest_dagcode(dag_id, session=session)
         if not latest_dagcode:
             return
         new_source_code = cls.get_code_from_file(fileloc)

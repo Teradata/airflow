@@ -24,12 +24,12 @@ from typing import Annotated, Any, Literal
 
 from pydantic import (
     AwareDatetime,
-    Discriminator,
     Field,
     JsonValue,
     Tag,
     TypeAdapter,
     WithJsonSchema,
+    model_validator,
 )
 
 from airflow.api_fastapi.common.types import UtcDateTime
@@ -130,7 +130,7 @@ class TIDeferredStatePayload(StrictBaseModel):
         ),
     ]
     classpath: str
-    trigger_kwargs: Annotated[dict[str, Any] | str, Field(default_factory=dict)]
+    trigger_kwargs: Annotated[dict[str, JsonValue] | str, Field(default_factory=dict)]
     """
     Kwargs to pass to the trigger constructor, either a plain dict or an encrypted string.
 
@@ -138,9 +138,10 @@ class TIDeferredStatePayload(StrictBaseModel):
     """
 
     trigger_timeout: timedelta | None = None
+    queue: str | None = None
     next_method: str
     """The name of the method on the operator to call in the worker after the trigger has fired."""
-    next_kwargs: Annotated[dict[str, Any] | str, Field(default_factory=dict)]
+    next_kwargs: Annotated[dict[str, JsonValue], Field(default_factory=dict)]
     """
     Kwargs to pass to the above method, either a plain dict or an encrypted string.
 
@@ -167,6 +168,33 @@ class TIRescheduleStatePayload(StrictBaseModel):
     end_date: UtcDateTime
 
 
+class TIAwaitingInputStatePayload(StrictBaseModel):
+    """Schema for parking a TaskInstance in an awaiting_input state (Human-in-the-loop, no trigger)."""
+
+    state: Annotated[
+        Literal[IntermediateTIState.AWAITING_INPUT],
+        # Specify a default in the schema, but not in code, so Pydantic marks it as required.
+        WithJsonSchema(
+            {
+                "type": "string",
+                "enum": [IntermediateTIState.AWAITING_INPUT],
+                "default": IntermediateTIState.AWAITING_INPUT,
+            }
+        ),
+    ]
+    timeout: timedelta | None = None
+    """Optional response deadline (relative); converted to an absolute datetime server-side."""
+    next_method: str
+    """The name of the method on the operator to call in the worker after input is received."""
+    next_kwargs: Annotated[dict[str, JsonValue], Field(default_factory=dict)]
+    """
+    Kwargs to pass to the above method, either a plain dict or an encrypted string.
+
+    Both forms will be passed along to the TaskSDK upon resume, the server will not handle either.
+    """
+    rendered_map_index: str | None = None
+
+
 class TIRetryStatePayload(StrictBaseModel):
     """Schema for updating TaskInstance to up_for_retry."""
 
@@ -183,6 +211,8 @@ class TIRetryStatePayload(StrictBaseModel):
     ]
     end_date: UtcDateTime
     rendered_map_index: str | None = None
+    retry_delay_seconds: float | None = None
+    retry_reason: str | None = None
 
 
 class TISkippedDownstreamTasksStatePayload(StrictBaseModel):
@@ -213,6 +243,8 @@ def ti_state_discriminator(v: dict[str, str] | StrictBaseModel) -> str:
         return "deferred"
     if state == TIState.UP_FOR_RESCHEDULE:
         return "up_for_reschedule"
+    if state == TIState.AWAITING_INPUT:
+        return "awaiting_input"
     if state == TIState.UP_FOR_RETRY:
         return "up_for_retry"
     return "_other_"
@@ -226,8 +258,9 @@ TIStateUpdate = Annotated[
     | Annotated[TITargetStatePayload, Tag("_other_")]
     | Annotated[TIDeferredStatePayload, Tag("deferred")]
     | Annotated[TIRescheduleStatePayload, Tag("up_for_reschedule")]
+    | Annotated[TIAwaitingInputStatePayload, Tag("awaiting_input")]
     | Annotated[TIRetryStatePayload, Tag("up_for_retry")],
-    Discriminator(ti_state_discriminator),
+    Field(discriminator=ti_state_discriminator),
 ]
 
 
@@ -253,6 +286,10 @@ class TaskInstance(BaseModel):
     map_index: int = -1
     hostname: str | None = None
     context_carrier: dict | None = None
+    # The supervisor routes tasks to a coordinator by queue. The default keeps
+    # hand-built instances (tests, dry runs) valid; the executor workload
+    # always sends the real value.
+    queue: str = "default"
 
 
 class AssetReferenceAssetEventDagRun(StrictBaseModel):
@@ -295,7 +332,7 @@ class DagRun(StrictBaseModel):
     data_interval_start: UtcDateTime | None
     data_interval_end: UtcDateTime | None
     run_after: UtcDateTime
-    start_date: UtcDateTime
+    start_date: UtcDateTime | None
     end_date: UtcDateTime | None
     clear_number: int = 0
     run_type: DagRunType
@@ -304,6 +341,54 @@ class DagRun(StrictBaseModel):
     triggering_user_name: str | None = None
     consumed_asset_events: list[AssetEventDagRunReference]
     partition_key: str | None
+    note: str | None = None
+    team_name: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def safe_extract_from_orm(cls, data: Any) -> Any:
+        """
+        Safely extract data from SQLAlchemy DagRun instances.
+
+        Handles the 'note' association proxy and provides defaults for unloaded relationships
+        to prevent DetachedInstanceError when the instance is not bound to a session.
+        """
+        from sqlalchemy import inspect as sa_inspect
+        from sqlalchemy.exc import NoInspectionAvailable
+        from sqlalchemy.orm.state import InstanceState
+
+        if isinstance(data, dict):
+            return data
+
+        # Check if this is a SQLAlchemy model by looking for the inspection interface
+        try:
+            insp: InstanceState = sa_inspect(data)
+        except NoInspectionAvailable:
+            # Not a SQLAlchemy object, return as-is for Pydantic to handle
+            return data
+
+        values = {}
+
+        for field_name in cls.model_fields:
+            if field_name in insp.dict:
+                values[field_name] = insp.dict[field_name]
+            elif field_name == "state":
+                if "_state" in insp.dict:
+                    values["state"] = insp.dict["_state"]
+                elif not insp.detached and (state_val := data._state) is not None:
+                    values["state"] = state_val
+
+        if "consumed_asset_events" not in values:
+            values["consumed_asset_events"] = []
+
+        # Check if dag_run_note is already loaded (avoid lazy load on detached instance)
+        if "note" not in values:
+            if "dag_run_note" in insp.dict:
+                values["note"] = data.note
+            else:
+                values["note"] = None
+
+        return values
 
 
 class TIRunContext(BaseModel):
@@ -324,8 +409,6 @@ class TIRunContext(BaseModel):
     connections: Annotated[list[ConnectionResponse], Field(default_factory=list)]
     """Connections that can be accessed by the task instance."""
 
-    upstream_map_indexes: dict[str, int | list[int] | None] | None = None
-
     next_method: str | None = None
     """Method to call. Set when task resumes from a trigger."""
     next_kwargs: dict[str, Any] | str | None = None
@@ -341,6 +424,15 @@ class TIRunContext(BaseModel):
     should_retry: bool = False
     """If the ti encounters an error, whether it should enter retry or failed state."""
 
+    start_date: UtcDateTime | None = None
+    """
+    The original start date of the task instance.
+
+    When resuming from deferral, this is set to the task's original ``start_date`` so the
+    supervisor uses it instead of ``datetime.now()``.  This ensures ``context["ti"].start_date``
+    always reflects when the task *first* started, not when it was rescheduled/resumed.
+    """
+
 
 class PrevSuccessfulDagRunResponse(BaseModel):
     """Schema for response with previous successful DagRun information for Task Template Context."""
@@ -349,6 +441,21 @@ class PrevSuccessfulDagRunResponse(BaseModel):
     data_interval_end: UtcDateTime | None = None
     start_date: UtcDateTime | None = None
     end_date: UtcDateTime | None = None
+
+
+class PreviousTIResponse(BaseModel):
+    """Schema for response with previous TaskInstance information."""
+
+    task_id: str
+    dag_id: str
+    run_id: str
+    logical_date: UtcDateTime | None = None
+    start_date: UtcDateTime | None = None
+    end_date: UtcDateTime | None = None
+    state: str | None = None
+    try_number: int
+    map_index: int | None = -1
+    duration: float | None = None
 
 
 class TaskStatesResponse(BaseModel):

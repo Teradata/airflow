@@ -23,7 +23,6 @@ from uuid import UUID
 import pytest
 from botocore.exceptions import WaiterError
 
-from airflow.exceptions import AirflowException, TaskDeferred
 from airflow.providers.amazon.aws.hooks.emr import EmrServerlessHook
 from airflow.providers.amazon.aws.operators.emr import (
     EmrServerlessCreateApplicationOperator,
@@ -32,6 +31,7 @@ from airflow.providers.amazon.aws.operators.emr import (
     EmrServerlessStopApplicationOperator,
 )
 from airflow.providers.amazon.version_compat import NOTSET
+from airflow.providers.common.compat.sdk import AirflowException, TaskDeferred
 
 from unit.amazon.aws.utils.test_template_fields import validate_template_fields
 
@@ -78,11 +78,6 @@ class TestEmrServerlessCreateApplicationOperator:
             "applicationId": application_id,
             "ResponseMetadata": {"HTTPStatusCode": 200},
         }
-        mock_conn.get_application.side_effect = [
-            {"application": {"state": "CREATED"}},
-            {"application": {"state": "STARTED"}},
-        ]
-
         operator = EmrServerlessCreateApplicationOperator(
             task_id=task_id,
             release_label=release_label,
@@ -111,7 +106,6 @@ class TestEmrServerlessCreateApplicationOperator:
 
         mock_conn.start_application.assert_called_once_with(applicationId=application_id)
         assert id == application_id
-        mock_conn.get_application.call_count == 2
 
     @mock.patch.object(EmrServerlessHook, "get_waiter")
     @mock.patch.object(EmrServerlessHook, "conn")
@@ -234,7 +228,7 @@ class TestEmrServerlessCreateApplicationOperator:
             type=job_type,
             **config,
         )
-        mock_conn.create_application.call_count == 2
+        assert mock_conn.create_application.call_count == 2
 
     @mock.patch.object(EmrServerlessHook, "get_waiter")
     @mock.patch.object(EmrServerlessHook, "conn")
@@ -502,39 +496,198 @@ class TestEmrServerlessStartJobOperator:
             name=default_name,
         )
 
-    @mock.patch("time.sleep", return_value=True)
+    @mock.patch("time.sleep", return_value=None)
     @mock.patch.object(EmrServerlessHook, "get_waiter")
     @mock.patch.object(EmrServerlessHook, "conn")
-    def test_job_run_app_not_started_app_failed(self, mock_conn, mock_get_waiter, mock_time):
-        error1 = WaiterError(
-            name="test_name",
-            reason="test-reason",
-            last_response={"application": {"state": "CREATING", "stateDetails": "test-details"}},
-        )
-        error2 = WaiterError(
-            name="test_name",
-            reason="Waiter encountered a terminal failure state:",
-            last_response={"application": {"state": "TERMINATED", "stateDetails": "test-details"}},
-        )
-        mock_get_waiter().wait.side_effect = [error1, error2]
+    def test_execute_max_attempts_cancel_job(self, mock_conn, mock_get_waiter, sleep_mock):
+        application_id = "test-app-id"
+        job_run_id = "test-job-id"
+        mock_conn.get_application.return_value = {"application": {"state": "STARTED"}}
         mock_conn.start_job_run.return_value = {
             "jobRunId": job_run_id,
             "ResponseMetadata": {"HTTPStatusCode": 200},
         }
+        mock_get_waiter.return_value.wait.side_effect = AirflowException("Waiter error: max attempts reached")
+        operator = EmrServerlessStartJobOperator(
+            task_id="test_task",
+            application_id=application_id,
+            execution_role_arn="arn:aws:iam::123456789012:role/test-role",
+            job_driver={"sparkSubmit": {"entryPoint": "s3://my-bucket/my-script.py"}},
+            client_request_token="token",
+            configuration_overrides={},
+            waiter_delay=1,
+            waiter_max_attempts=1,
+            wait_for_completion=True,
+        )
+
+        mock_context = mock.MagicMock()
+        with mock.patch.object(operator.log, "info") as mock_log_info:
+            with pytest.raises(AirflowException, match="Waiter error: max attempts reached"):
+                operator.execute(mock_context)
+            mock_conn.cancel_job_run.assert_called_once_with(
+                applicationId=application_id, jobRunId=job_run_id
+            )
+            log_msgs = [call.args[0] for call in mock_log_info.call_args_list]
+            assert any("Cancelling EMR Serverless job" in msg for msg in log_msgs)
+
+    @mock.patch("time.sleep", return_value=None)
+    @mock.patch.object(EmrServerlessHook, "get_waiter")
+    @mock.patch.object(EmrServerlessHook, "conn")
+    def test_execute_max_attempts_cancel_job_cancel_fails(self, mock_conn, mock_get_waiter, sleep_mock):
+        application_id = "test-app-id"
+        job_run_id = "test-job-id"
+        mock_conn.get_application.return_value = {"application": {"state": "STARTED"}}
+        mock_conn.start_job_run.return_value = {
+            "jobRunId": job_run_id,
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+        }
+        mock_get_waiter.return_value.wait.side_effect = AirflowException("Waiter error: max attempts reached")
+        mock_conn.cancel_job_run.side_effect = Exception(
+            "Failed to cancel EMR Serverless job after waiter timeout"
+        )
+        operator = EmrServerlessStartJobOperator(
+            task_id="test_task",
+            application_id=application_id,
+            execution_role_arn="arn:aws:iam::123456789012:role/test-role",
+            job_driver={"sparkSubmit": {"entryPoint": "s3://my-bucket/my-script.py"}},
+            client_request_token="token",
+            configuration_overrides={},
+            waiter_delay=1,
+            waiter_max_attempts=1,
+            wait_for_completion=True,
+        )
+        mock_context = mock.MagicMock()
+
+        with (
+            mock.patch.object(operator.log, "exception") as mock_log_exception,
+            mock.patch.object(operator.log, "info") as mock_log_info,
+        ):
+            with pytest.raises(AirflowException, match="Waiter error: max attempts reached"):
+                operator.execute(mock_context)
+            mock_conn.cancel_job_run.assert_called_once_with(
+                applicationId=application_id,
+                jobRunId=job_run_id,
+            )
+            log_msgs = [call.args[0] for call in mock_log_exception.call_args_list]
+            assert any("Failed to cancel EMR Serverless job" in msg for msg in log_msgs)
+            info_msgs = [call.args[0] for call in mock_log_info.call_args_list]
+            assert any("Cancelling EMR Serverless job" in msg for msg in info_msgs)
+
+    @mock.patch("time.sleep", return_value=None)
+    @mock.patch.object(EmrServerlessHook, "get_waiter")
+    @mock.patch.object(EmrServerlessHook, "conn")
+    def test_execute_waiter_other_exception_does_not_cancel(self, mock_conn, mock_get_waiter, sleep_mock):
+        mock_conn.get_application.return_value = {"application": {"state": "STARTED"}}
+        mock_conn.start_job_run.return_value = {
+            "jobRunId": "job-id",
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+        }
+        mock_get_waiter.return_value.wait.side_effect = AirflowException("Other failure")
 
         operator = EmrServerlessStartJobOperator(
-            task_id=task_id,
-            client_request_token=client_request_token,
-            application_id=application_id,
-            execution_role_arn=execution_role_arn,
-            job_driver=job_driver,
-            configuration_overrides=configuration_overrides,
+            task_id="test_task",
+            application_id="app-id",
+            execution_role_arn="arn",
+            job_driver={"sparkSubmit": {"entryPoint": "s3://x"}},
+            client_request_token="token",
+            waiter_delay=1,
+            waiter_max_attempts=1,
+            wait_for_completion=True,
         )
-        with pytest.raises(AirflowException) as ex_message:
-            operator.execute(self.mock_context)
-        assert "Serverless Application failed to start:" in str(ex_message.value)
-        assert operator.wait_for_completion is True
-        assert mock_get_waiter().wait.call_count == 2
+        with pytest.raises(AirflowException, match="Other failure"):
+            operator.execute(mock.MagicMock())
+        mock_conn.cancel_job_run.assert_not_called()
+
+    @mock.patch("time.sleep", return_value=None)
+    @mock.patch.object(EmrServerlessHook, "get_waiter")
+    @mock.patch.object(EmrServerlessHook, "conn")
+    def test_execute_no_wait_for_completion_does_not_cancel(self, mock_conn, mock_get_waiter, sleep_mock):
+        mock_conn.get_application.return_value = {"application": {"state": "STARTED"}}
+        mock_conn.start_job_run.return_value = {
+            "jobRunId": "job-id",
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+        }
+
+        operator = EmrServerlessStartJobOperator(
+            task_id="test_task",
+            application_id="app-id",
+            execution_role_arn="arn",
+            job_driver={"sparkSubmit": {"entryPoint": "s3://x"}},
+            client_request_token="token",
+            wait_for_completion=False,
+        )
+
+        job_id = operator.execute(mock.MagicMock())
+        assert job_id == "job-id"
+        mock_conn.cancel_job_run.assert_not_called()
+
+    @mock.patch("time.sleep", return_value=None)
+    @mock.patch.object(EmrServerlessHook, "get_waiter")
+    @mock.patch.object(EmrServerlessHook, "conn")
+    def test_execute_deferrable_does_not_cancel(self, mock_conn, mock_get_waiter, sleep_mock):
+        mock_conn.get_application.return_value = {"application": {"state": "STARTED"}}
+        mock_conn.start_job_run.return_value = {
+            "jobRunId": "job-id",
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+        }
+
+        operator = EmrServerlessStartJobOperator(
+            task_id="test_task",
+            application_id="app-id",
+            execution_role_arn="arn",
+            job_driver={"sparkSubmit": {"entryPoint": "s3://x"}},
+            client_request_token="token",
+            wait_for_completion=True,
+            deferrable=True,
+        )
+        operator.defer = mock.MagicMock()
+        operator.execute(mock.MagicMock())
+        operator.defer.assert_called_once()
+        mock_conn.cancel_job_run.assert_not_called()
+
+    @mock.patch("time.sleep", return_value=None)
+    @mock.patch.object(EmrServerlessHook, "get_waiter")
+    @mock.patch.object(EmrServerlessHook, "conn")
+    def test_execute_complete_deferrable_failure_triggers_cancel(
+        self, mock_conn, mock_get_waiter, sleep_mock
+    ):
+        application_id = "test-app-id"
+        job_run_id = "test-job-id"
+        mock_conn.get_application.return_value = {"application": {"state": "STARTED"}}
+        mock_conn.start_job_run.return_value = {
+            "jobRunId": job_run_id,
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+        }
+        operator = EmrServerlessStartJobOperator(
+            task_id="test_task",
+            application_id=application_id,
+            execution_role_arn="arn:aws:iam::123456789012:role/test-role",
+            job_driver={"sparkSubmit": {"entryPoint": "s3://bucket/script.py"}},
+            client_request_token="token",
+            configuration_overrides={},
+            waiter_delay=1,
+            waiter_max_attempts=3,
+            wait_for_completion=True,
+            deferrable=True,
+        )
+        operator.job_id = job_run_id
+        failed_event = {
+            "status": "error",
+            "job_details": {"application_id": application_id, "job_id": job_run_id},
+        }
+
+        mock_context = mock.MagicMock()
+        with mock.patch.object(operator.log, "info") as mock_log:
+            with pytest.raises(
+                AirflowException, match="EMR Serverless job failed or timed out in deferrable mode"
+            ):
+                operator.execute_complete(mock_context, failed_event)
+            mock_conn.cancel_job_run.assert_called_once_with(
+                applicationId=application_id,
+                jobRunId=job_run_id,
+            )
+            log_msgs = [call.args[0] for call in mock_log.call_args_list]
+            assert any("Cancelling EMR Serverless job" in msg for msg in log_msgs)
 
     @mock.patch.object(EmrServerlessHook, "get_waiter")
     @mock.patch.object(EmrServerlessHook, "conn")
@@ -664,7 +817,7 @@ class TestEmrServerlessStartJobOperator:
         assert "Serverless Job failed:" in str(ex_message.value)
         default_name = operator.name
 
-        mock_conn.get_application.call_count == 2
+        assert mock_conn.get_application.call_count == 1
         mock_conn.start_job_run.assert_called_once_with(
             clientToken=client_request_token,
             applicationId=application_id,
@@ -1247,6 +1400,14 @@ class TestEmrServerlessDeleteOperator:
         with pytest.raises(TaskDeferred):
             operator.execute(None)
 
+    def test_execute_complete_error(self):
+        operator = EmrServerlessDeleteApplicationOperator(
+            task_id=task_id, application_id=application_id_delete_operator
+        )
+        error_event = {"status": "error", "message": "Delete failed", "application_id": "test"}
+        with pytest.raises(AirflowException, match="Error deleting EMR Serverless application"):
+            operator.execute_complete({}, error_event)
+
     def test_template_fields(self):
         operator = EmrServerlessDeleteApplicationOperator(
             task_id=task_id, application_id=application_id_delete_operator
@@ -1328,9 +1489,242 @@ class TestEmrServerlessStopOperator:
 
         assert "no running jobs found with application ID test" in caplog.messages
 
+    def test_execute_complete_error(self):
+        operator = EmrServerlessStopApplicationOperator(task_id=task_id, application_id="test")
+        error_event = {"status": "error", "message": "Stop failed", "application_id": "test"}
+        with pytest.raises(AirflowException, match="Error stopping EMR Serverless application"):
+            operator.execute_complete({}, error_event)
+
+    def test_stop_application_error(self):
+        operator = EmrServerlessStopApplicationOperator(task_id=task_id, application_id="test")
+        error_event = {"status": "error", "message": "Cancel jobs failed", "application_id": "test"}
+        with pytest.raises(AirflowException, match="Error cancelling EMR Serverless jobs"):
+            operator.stop_application({}, error_event)
+
     def test_template_fields(self):
         operator = EmrServerlessStopApplicationOperator(
             task_id=task_id, application_id="test", deferrable=True, force_stop=True
         )
 
         validate_template_fields(operator)
+
+
+class TestEmrServerlessStartJobOperatorOpenLineageInjection:
+    """Tests for OpenLineage parent job info and transport info injection in EmrServerlessStartJobOperator."""
+
+    @mock.patch.object(EmrServerlessHook, "get_waiter")
+    @mock.patch.object(EmrServerlessHook, "conn")
+    @mock.patch(
+        "airflow.providers.amazon.aws.operators.emr"
+        ".inject_parent_job_information_into_emr_serverless_properties"
+    )
+    def test_inject_parent_job_info_called_when_enabled(self, mock_inject_parent, mock_conn, mock_get_waiter):
+        mock_inject_parent.side_effect = lambda overrides, ctx: {
+            "applicationConfiguration": [
+                {
+                    "classification": "spark-defaults",
+                    "properties": {"spark.openlineage.parentJobNamespace": "ns"},
+                }
+            ]
+        }
+        mock_conn.get_application.return_value = {"application": {"state": "STARTED"}}
+        mock_conn.start_job_run.return_value = {
+            "jobRunId": job_run_id,
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+        }
+
+        operator = EmrServerlessStartJobOperator(
+            task_id=task_id,
+            application_id=application_id,
+            execution_role_arn=execution_role_arn,
+            job_driver=job_driver,
+            wait_for_completion=False,
+            openlineage_inject_parent_job_info=True,
+        )
+        operator.execute(mock.MagicMock())
+
+        mock_inject_parent.assert_called_once()
+        call_kwargs = mock_conn.start_job_run.call_args.kwargs
+        config_overrides = call_kwargs["configurationOverrides"]
+        assert (
+            config_overrides["applicationConfiguration"][0]["properties"][
+                "spark.openlineage.parentJobNamespace"
+            ]
+            == "ns"
+        )
+
+    @mock.patch.object(EmrServerlessHook, "get_waiter")
+    @mock.patch.object(EmrServerlessHook, "conn")
+    @mock.patch(
+        "airflow.providers.amazon.aws.operators.emr"
+        ".inject_parent_job_information_into_emr_serverless_properties"
+    )
+    def test_inject_parent_job_info_not_called_when_disabled(
+        self, mock_inject_parent, mock_conn, mock_get_waiter
+    ):
+        mock_conn.get_application.return_value = {"application": {"state": "STARTED"}}
+        mock_conn.start_job_run.return_value = {
+            "jobRunId": job_run_id,
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+        }
+
+        operator = EmrServerlessStartJobOperator(
+            task_id=task_id,
+            application_id=application_id,
+            execution_role_arn=execution_role_arn,
+            job_driver=job_driver,
+            wait_for_completion=False,
+            openlineage_inject_parent_job_info=False,
+        )
+        operator.execute(mock.MagicMock())
+
+        mock_inject_parent.assert_not_called()
+
+    @mock.patch.object(EmrServerlessHook, "get_waiter")
+    @mock.patch.object(EmrServerlessHook, "conn")
+    @mock.patch(
+        "airflow.providers.amazon.aws.operators.emr"
+        ".inject_transport_information_into_emr_serverless_properties"
+    )
+    def test_inject_transport_info_called_when_enabled(
+        self, mock_inject_transport, mock_conn, mock_get_waiter
+    ):
+        mock_inject_transport.side_effect = lambda overrides, ctx: {
+            "applicationConfiguration": [
+                {
+                    "classification": "spark-defaults",
+                    "properties": {"spark.openlineage.transport.type": "http"},
+                }
+            ]
+        }
+        mock_conn.get_application.return_value = {"application": {"state": "STARTED"}}
+        mock_conn.start_job_run.return_value = {
+            "jobRunId": job_run_id,
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+        }
+
+        operator = EmrServerlessStartJobOperator(
+            task_id=task_id,
+            application_id=application_id,
+            execution_role_arn=execution_role_arn,
+            job_driver=job_driver,
+            wait_for_completion=False,
+            openlineage_inject_transport_info=True,
+        )
+        operator.execute(mock.MagicMock())
+
+        mock_inject_transport.assert_called_once()
+        call_kwargs = mock_conn.start_job_run.call_args.kwargs
+        config_overrides = call_kwargs["configurationOverrides"]
+        assert (
+            config_overrides["applicationConfiguration"][0]["properties"]["spark.openlineage.transport.type"]
+            == "http"
+        )
+
+    @mock.patch.object(EmrServerlessHook, "get_waiter")
+    @mock.patch.object(EmrServerlessHook, "conn")
+    @mock.patch(
+        "airflow.providers.amazon.aws.operators.emr"
+        ".inject_parent_job_information_into_emr_serverless_properties"
+    )
+    @mock.patch(
+        "airflow.providers.amazon.aws.operators.emr"
+        ".inject_transport_information_into_emr_serverless_properties"
+    )
+    def test_inject_both_parent_and_transport_info(
+        self, mock_inject_transport, mock_inject_parent, mock_conn, mock_get_waiter
+    ):
+        mock_inject_parent.side_effect = lambda overrides, ctx: {
+            "applicationConfiguration": [
+                {
+                    "classification": "spark-defaults",
+                    "properties": {"spark.openlineage.parentJobNamespace": "ns"},
+                }
+            ]
+        }
+        mock_inject_transport.side_effect = lambda overrides, ctx: {
+            "applicationConfiguration": [
+                {
+                    "classification": "spark-defaults",
+                    "properties": {
+                        **overrides.get("applicationConfiguration", [{}])[0].get("properties", {}),
+                        "spark.openlineage.transport.type": "http",
+                    },
+                }
+            ]
+        }
+        mock_conn.get_application.return_value = {"application": {"state": "STARTED"}}
+        mock_conn.start_job_run.return_value = {
+            "jobRunId": job_run_id,
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+        }
+
+        operator = EmrServerlessStartJobOperator(
+            task_id=task_id,
+            application_id=application_id,
+            execution_role_arn=execution_role_arn,
+            job_driver=job_driver,
+            wait_for_completion=False,
+            openlineage_inject_parent_job_info=True,
+            openlineage_inject_transport_info=True,
+        )
+        operator.execute(mock.MagicMock())
+
+        mock_inject_parent.assert_called_once()
+        mock_inject_transport.assert_called_once()
+
+    @mock.patch.object(EmrServerlessHook, "get_waiter")
+    @mock.patch.object(EmrServerlessHook, "conn")
+    @mock.patch(
+        "airflow.providers.amazon.aws.operators.emr"
+        ".inject_parent_job_information_into_emr_serverless_properties"
+    )
+    def test_inject_parent_job_info_preserves_existing_config(
+        self, mock_inject_parent, mock_conn, mock_get_waiter
+    ):
+        """Existing configuration_overrides (e.g. monitoringConfiguration) are preserved."""
+        existing_config = {
+            "monitoringConfiguration": {"s3MonitoringConfiguration": {"logUri": "s3://bucket/logs"}},
+            "applicationConfiguration": [
+                {"classification": "spark-defaults", "properties": {"spark.driver.memory": "8G"}}
+            ],
+        }
+        mock_inject_parent.side_effect = lambda overrides, ctx: {
+            **overrides,
+            "applicationConfiguration": [
+                {
+                    "classification": "spark-defaults",
+                    "properties": {
+                        **overrides["applicationConfiguration"][0]["properties"],
+                        "spark.openlineage.parentJobNamespace": "ns",
+                    },
+                }
+            ],
+        }
+        mock_conn.get_application.return_value = {"application": {"state": "STARTED"}}
+        mock_conn.start_job_run.return_value = {
+            "jobRunId": job_run_id,
+            "ResponseMetadata": {"HTTPStatusCode": 200},
+        }
+
+        operator = EmrServerlessStartJobOperator(
+            task_id=task_id,
+            application_id=application_id,
+            execution_role_arn=execution_role_arn,
+            job_driver=job_driver,
+            configuration_overrides=existing_config,
+            wait_for_completion=False,
+            openlineage_inject_parent_job_info=True,
+        )
+        operator.execute(mock.MagicMock())
+
+        call_kwargs = mock_conn.start_job_run.call_args.kwargs
+        config_overrides = call_kwargs["configurationOverrides"]
+        # Monitoring config preserved
+        assert config_overrides["monitoringConfiguration"]["s3MonitoringConfiguration"]["logUri"] == (
+            "s3://bucket/logs"
+        )
+        # OL parent info injected
+        props = config_overrides["applicationConfiguration"][0]["properties"]
+        assert props["spark.openlineage.parentJobNamespace"] == "ns"
+        assert props["spark.driver.memory"] == "8G"

@@ -19,8 +19,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from airflow.exceptions import AirflowOptionalProviderFeatureException
 from airflow.providers.amazon.aws.triggers.sqs import SqsSensorTrigger
+from airflow.providers.common.compat.sdk import AirflowOptionalProviderFeatureException
 
 try:
     from airflow.providers.common.messaging.providers.base_provider import BaseMessageQueueProvider
@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from airflow.triggers.base import BaseEventTrigger
 
 # [START queue_regexp]
-QUEUE_REGEXP = r"^https://sqs\.[^.]+\.amazonaws\.com/[0-9]+/.+"
+QUEUE_REGEXP = r"^https://sqs\.[^.]+\.amazonaws\.com(\.cn)?/[0-9]+/.+"
 # [END queue_regexp]
 
 

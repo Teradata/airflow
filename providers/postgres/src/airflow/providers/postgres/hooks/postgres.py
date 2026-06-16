@@ -23,18 +23,17 @@ from contextlib import closing
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, cast, overload
 
-import psycopg2
-import psycopg2.extras
 from more_itertools import chunked
-from psycopg2.extras import DictCursor, NamedTupleCursor, RealDictCursor, execute_batch
-from sqlalchemy.engine import URL
+from psycopg2 import connect as ppg2_connect
+from psycopg2.extras import DictCursor, NamedTupleCursor, RealDictCursor, execute_values
 
-from airflow.configuration import conf
-from airflow.exceptions import (
+from airflow.providers.common.compat.sdk import (
     AirflowException,
     AirflowOptionalProviderFeatureException,
+    Connection,
+    conf,
 )
-from airflow.providers.common.compat.sdk import Connection
+from airflow.providers.common.sql.hooks.lineage import send_sql_hook_lineage
 from airflow.providers.common.sql.hooks.sql import DbApiHook
 from airflow.providers.postgres.dialects.postgres import PostgresDialect
 
@@ -58,6 +57,7 @@ if USE_PSYCOPG3:
 if TYPE_CHECKING:
     from pandas import DataFrame as PandasDataFrame
     from polars import DataFrame as PolarsDataFrame
+    from sqlalchemy.engine import URL
 
     from airflow.providers.common.sql.dialects.dialect import Dialect
     from airflow.providers.openlineage.sqlparser import DatabaseInfo
@@ -65,8 +65,8 @@ if TYPE_CHECKING:
     if USE_PSYCOPG3:
         from psycopg.errors import Diagnostic
 
-CursorType: TypeAlias = DictCursor | RealDictCursor | NamedTupleCursor
-CursorRow: TypeAlias = dict[str, Any] | tuple[Any, ...]
+    CursorType: TypeAlias = DictCursor | RealDictCursor | NamedTupleCursor
+    CursorRow: TypeAlias = dict[str, Any] | tuple[Any, ...]
 
 
 class CompatConnection(Protocol):
@@ -171,6 +171,13 @@ class PostgresHook(DbApiHook):
 
     @property
     def sqlalchemy_url(self) -> URL:
+        try:
+            from sqlalchemy.engine import URL
+        except (ImportError, ModuleNotFoundError) as err:
+            raise AirflowOptionalProviderFeatureException(
+                "SQLAlchemy is not installed. Please install it with "
+                "`pip install apache-airflow-providers-postgres[sqlalchemy]`."
+            ) from err
         conn = self.connection
         query = conn.extra_dejson.get("sqlalchemy_query", {})
         if not isinstance(query, dict):
@@ -214,14 +221,37 @@ class PostgresHook(DbApiHook):
             raise ValueError(f"Invalid cursor passed {_cursor}. Valid options are: {valid_cursors}")
 
         cursor_types = {
-            "dictcursor": psycopg2.extras.DictCursor,
-            "realdictcursor": psycopg2.extras.RealDictCursor,
-            "namedtuplecursor": psycopg2.extras.NamedTupleCursor,
+            "dictcursor": DictCursor,
+            "realdictcursor": RealDictCursor,
+            "namedtuplecursor": NamedTupleCursor,
         }
         if _cursor in cursor_types:
             return cursor_types[_cursor]
         valid_cursors = ", ".join(cursor_types.keys())
         raise ValueError(f"Invalid cursor passed {_cursor}. Valid options are: {valid_cursors}")
+
+    def _get_cursor_config(self, raw_cursor: str) -> tuple[str, Any]:
+        cursor = self._get_cursor(raw_cursor)
+
+        if USE_PSYCOPG3:
+            return "row_factory", cursor
+
+        return "cursor_factory", cursor
+
+    def _create_connection(self, conn_args: dict[str, Any]) -> CompatConnection:
+        if USE_PSYCOPG3:
+            from psycopg.connection import Connection as pgConnection
+
+            connection = pgConnection.connect(**cast("Any", conn_args))
+
+            register_default_adapters(connection)
+
+            if self.enable_log_db_messages and hasattr(connection, "add_notice_handler"):
+                connection.add_notice_handler(self._notice_handler)
+
+            return connection
+
+        return ppg2_connect(**conn_args)
 
     def _generate_cursor_name(self):
         """Generate a unique name for server-side cursor."""
@@ -255,30 +285,13 @@ class PostgresHook(DbApiHook):
             if arg_name not in self.ignored_extra_options:
                 conn_args[arg_name] = arg_val
 
-        if USE_PSYCOPG3:
-            from psycopg.connection import Connection as pgConnection
+        raw_cursor = conn.extra_dejson.get("cursor")
 
-            raw_cursor = conn.extra_dejson.get("cursor")
-            if raw_cursor:
-                conn_args["row_factory"] = self._get_cursor(raw_cursor)
+        if raw_cursor:
+            key, value = self._get_cursor_config(raw_cursor)
+            conn_args[key] = value
 
-            # Use Any type for the connection args to avoid type conflicts
-            connection = pgConnection.connect(**cast("Any", conn_args))
-            self.conn = cast("CompatConnection", connection)
-
-            # Register JSON handlers for both json and jsonb types
-            # This ensures JSON data is properly decoded from bytes to Python objects
-            register_default_adapters(connection)
-
-            # Add the notice handler AFTER the connection is established
-            if self.enable_log_db_messages and hasattr(self.conn, "add_notice_handler"):
-                self.conn.add_notice_handler(self._notice_handler)
-        else:  # psycopg2
-            raw_cursor = conn.extra_dejson.get("cursor", False)
-            if raw_cursor:
-                conn_args["cursor_factory"] = self._get_cursor(raw_cursor)
-
-            self.conn = cast("CompatConnection", psycopg2.connect(**conn_args))
+        self.conn = self._create_connection(conn_args)
 
         return self.conn
 
@@ -332,13 +345,16 @@ class PostgresHook(DbApiHook):
             with engine.connect() as conn:
                 if isinstance(sql, list):
                     sql = "; ".join(sql)  # Or handle multiple queries differently
-                return cast("PandasDataFrame", psql.read_sql(sql, con=conn, params=parameters, **kwargs))
-
+                result: PandasDataFrame | PolarsDataFrame = cast(
+                    "PandasDataFrame", psql.read_sql(sql, con=conn, params=parameters, **kwargs)
+                )
         elif df_type == "polars":
-            return self._get_polars_df(sql, parameters, **kwargs)
-
+            result = self._get_polars_df(sql, parameters, **kwargs)
         else:
             raise ValueError(f"Unsupported df_type: {df_type}")
+
+        send_sql_hook_lineage(context=self, sql=sql, sql_parameters=parameters)
+        return result
 
     def copy_expert(self, sql: str, filename: str) -> None:
         """
@@ -365,6 +381,7 @@ class PostgresHook(DbApiHook):
                         while data := file.read(8192):
                             copy.write(data)
                     conn.commit()
+                    send_sql_hook_lineage(context=self, sql=sql, sql_parameters=(filename,), cur=cur)
             else:
                 # Handle COPY TO STDOUT: read from the database and write to the file.
                 with open(filename, "wb") as file, self.get_conn() as conn, conn.cursor() as cur:
@@ -372,6 +389,7 @@ class PostgresHook(DbApiHook):
                         for data in copy:
                             file.write(data)
                     conn.commit()
+                    send_sql_hook_lineage(context=self, sql=sql, sql_parameters=(filename,), cur=cur)
         else:
             if not os.path.isfile(filename):
                 with open(filename, "w"):
@@ -385,6 +403,7 @@ class PostgresHook(DbApiHook):
                 cur.copy_expert(sql, file)
                 file.truncate(file.tell())
                 conn.commit()
+                send_sql_hook_lineage(context=self, sql=sql, sql_parameters=(filename,), cur=cur)
 
     def get_uri(self) -> str:
         """
@@ -457,7 +476,7 @@ class PostgresHook(DbApiHook):
         try:
             from airflow.providers.amazon.aws.hooks.base_aws import AwsBaseHook
         except ImportError:
-            from airflow.exceptions import AirflowOptionalProviderFeatureException
+            from airflow.providers.common.compat.sdk import AirflowOptionalProviderFeatureException
 
             raise AirflowOptionalProviderFeatureException(
                 "apache-airflow-providers-amazon not installed, run: "
@@ -470,9 +489,13 @@ class PostgresHook(DbApiHook):
             port = conn.port or 5439
             # Pull the custer-identifier from the beginning of the Redshift URL
             # ex. my-cluster.ccdre4hpd39h.us-east-1.redshift.amazonaws.com returns my-cluster
-            cluster_identifier = conn.extra_dejson.get(
-                "cluster-identifier", cast("str", conn.host).split(".")[0]
-            )
+            cluster_identifier = conn.extra_dejson.get("cluster-identifier")
+            if cluster_identifier is None:
+                if not conn.host:
+                    raise ValueError(
+                        "connection host is required for AWS IAM token when cluster-identifier is not set in extras."
+                    )
+                cluster_identifier = conn.host.split(".")[0]
             redshift_client = AwsBaseHook(aws_conn_id=aws_conn_id, client_type="redshift").conn
             # https://boto3.amazonaws.com/v1/documentation/api/latest/reference/services/redshift/client/get_cluster_credentials.html#Redshift.Client.get_cluster_credentials
             cluster_creds = redshift_client.get_cluster_credentials(
@@ -488,7 +511,13 @@ class PostgresHook(DbApiHook):
             # Pull the workgroup-name from the query params/extras, if not there then pull it from the
             # beginning of the Redshift URL
             # ex. workgroup-name.ccdre4hpd39h.us-east-1.redshift.amazonaws.com returns workgroup-name
-            workgroup_name = conn.extra_dejson.get("workgroup-name", cast("str", conn.host).split(".")[0])
+            workgroup_name = conn.extra_dejson.get("workgroup-name")
+            if workgroup_name is None:
+                if not conn.host:
+                    raise ValueError(
+                        "connection host is required for AWS IAM token when workgroup-name is not set in extras."
+                    )
+                workgroup_name = conn.host.split(".")[0]
             redshift_serverless_client = AwsBaseHook(
                 aws_conn_id=aws_conn_id, client_type="redshift-serverless"
             ).conn
@@ -565,7 +594,7 @@ class PostgresHook(DbApiHook):
         try:
             from airflow.providers.amazon.aws.hooks.base_aws import AwsBaseHook
         except ImportError:
-            from airflow.exceptions import AirflowOptionalProviderFeatureException
+            from airflow.providers.common.compat.sdk import AirflowOptionalProviderFeatureException
 
             raise AirflowOptionalProviderFeatureException(
                 "apache-airflow-providers-amazon not installed, run: "
@@ -574,7 +603,12 @@ class PostgresHook(DbApiHook):
         aws_conn_id = connection.extra_dejson.get("aws_conn_id", "aws_default")
 
         port = connection.port or 5439
-        cluster_identifier = connection.extra_dejson.get("cluster-identifier", connection.host.split(".")[0])
+        cluster_identifier = connection.extra_dejson.get("cluster-identifier")
+        if cluster_identifier is None and not connection.host:
+            raise ValueError(
+                "connection host is required for Redshift OpenLineage when cluster-identifier is not set in extras."
+            )
+        cluster_identifier = cluster_identifier or connection.host.split(".")[0]
         region_name = AwsBaseHook(aws_conn_id=aws_conn_id).region_name
 
         return f"{cluster_identifier}.{region_name}:{port}"
@@ -626,6 +660,10 @@ class PostgresHook(DbApiHook):
         """
         Insert a collection of tuples into a table.
 
+        When ``fast_executemany=True`` with psycopg2, uses ``execute_values`` which batches
+        all rows into a single INSERT statement for better performance.
+        For psycopg3, the default ``executemany`` already uses pipelining for high performance.
+
         Rows are inserted in chunks, each chunk (of size ``commit_every``) is
         done in a new transaction.
 
@@ -634,20 +672,29 @@ class PostgresHook(DbApiHook):
         :param target_fields: The names of the columns to fill in the table
         :param commit_every: The maximum number of rows to insert in one
             transaction. Set to 0 to insert all rows in one transaction.
-        :param replace: Whether to replace instead of insert
+        :param replace: Whether to replace instead of insert (uses ON CONFLICT)
         :param executemany: If True, all rows are inserted at once in
             chunks defined by the commit_every parameter. This only works if all rows
             have same number of column names, but leads to better performance.
         :param fast_executemany: If True, rows will be inserted using an optimized
-            bulk execution strategy (``psycopg2.extras.execute_batch``). This can
-            significantly improve performance for large inserts. If set to False,
-            the method falls back to the default implementation from
-            ``DbApiHook.insert_rows``.
+            bulk execution strategy (``psycopg2.extras.execute_values``), unless psycopg3
+            is being used. This can significantly improve performance for large inserts.
+            If set to False or psycopg3 is being used, the method falls back to the default
+            implementation from ``DbApiHook.insert_rows``.
         :param autocommit: What to set the connection's autocommit setting to
             before executing the query.
         """
-        # if fast_executemany is disabled, defer to default implementation of insert_rows in DbApiHook
-        if not fast_executemany:
+        # psycopg3's executemany already uses pipelining, so use default implementation
+        # Only override for psycopg2 with fast_executemany to use execute_values
+        if USE_PSYCOPG3 and fast_executemany:
+            self.log.warning(
+                "fast_executemany=True has no effect when using psycopg3. "
+                "psycopg3's executemany already uses pipelining for optimal performance."
+            )
+        if USE_PSYCOPG3 or not fast_executemany:
+            # Reset to default format in case a previous fast_executemany call failed
+            self._insert_statement_format = "INSERT INTO {} {} VALUES ({})"
+
             return super().insert_rows(
                 table,
                 rows,
@@ -659,8 +706,11 @@ class PostgresHook(DbApiHook):
                 **kwargs,
             )
 
-        # if fast_executemany is enabled, use optimized execute_batch from psycopg
+        # if fast_executemany is enabled with psycopg2, use optimized execute_values from psycopg
+        self._insert_statement_format = "INSERT INTO {} {} VALUES %s"
+
         nb_rows = 0
+        sql: str | None = None  # not generated unless we actually process at least one chunk
         with self._create_autocommit_connection(autocommit) as conn:
             conn.commit()
             with closing(conn.cursor()) as cur:
@@ -675,7 +725,7 @@ class PostgresHook(DbApiHook):
                     self.log.debug("Generated sql: %s", sql)
 
                     try:
-                        execute_batch(cur, sql, values, page_size=commit_every)
+                        execute_values(cur, sql, values, page_size=commit_every)
                     except Exception as e:
                         self.log.error("Generated sql: %s", sql)
                         self.log.error("Parameters: %s", values)
@@ -684,4 +734,10 @@ class PostgresHook(DbApiHook):
                     conn.commit()
                     nb_rows += len(chunked_rows)
                     self.log.info("Loaded %s rows into %s so far", nb_rows, table)
+
+        if sql:
+            # We only send lineage once, not for each value collection, to save memory.
+            send_sql_hook_lineage(context=self, sql=sql, row_count=nb_rows)
+
         self.log.info("Done loading. Loaded a total of %s rows into %s", nb_rows, table)
+        return None

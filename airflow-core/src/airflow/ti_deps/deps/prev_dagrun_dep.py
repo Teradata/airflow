@@ -17,7 +17,7 @@
 # under the License.
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING
 
 from sqlalchemy import func, or_, select
 
@@ -32,11 +32,7 @@ from airflow.utils.state import TaskInstanceState
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from airflow.models.mappedoperator import MappedOperator
-    from airflow.sdk.types import Operator as SdkOperator
-    from airflow.serialization.serialized_objects import SerializedBaseOperator
-
-    SchedulerOperator: TypeAlias = MappedOperator | SerializedBaseOperator
+    from airflow.serialization.definitions.mappedoperator import Operator
 
 _SUCCESSFUL_STATES = (TaskInstanceState.SKIPPED, TaskInstanceState.SUCCESS)
 
@@ -109,12 +105,7 @@ class PrevDagrunDep(BaseTIDep):
         return 0 if unsuccessful_tis_count is None else unsuccessful_tis_count
 
     @staticmethod
-    def _has_unsuccessful_dependants(
-        dagrun: DagRun,
-        task: SdkOperator | SchedulerOperator,
-        *,
-        session: Session,
-    ) -> bool:
+    def _has_unsuccessful_dependants(dagrun: DagRun, task: Operator, *, session: Session) -> bool:
         """
         Check if any of the task's dependants are unsuccessful in a given run.
 
@@ -135,7 +126,7 @@ class PrevDagrunDep(BaseTIDep):
         )
 
     @provide_session
-    def _get_dep_statuses(self, ti: TI, session: Session, dep_context):
+    def _get_dep_statuses(self, ti: TI, dep_context, *, session: Session):
         if TYPE_CHECKING:
             assert ti.task
         if dep_context.ignore_depends_on_past:
@@ -169,7 +160,7 @@ class PrevDagrunDep(BaseTIDep):
         # Don't depend on the previous task instance if we are the first task.
         catchup = ti.task.dag and ti.task.dag.catchup
         if catchup:
-            last_dagrun = DagRun.get_previous_scheduled_dagrun(dr.id, session)
+            last_dagrun = DagRun.get_previous_scheduled_dagrun(dr.id, session=session)
         else:
             last_dagrun = DagRun.get_previous_dagrun(dr, session=session)
         # First ever run for this DAG.

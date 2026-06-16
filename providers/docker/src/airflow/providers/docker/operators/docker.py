@@ -53,17 +53,29 @@ def stringify(line: str | bytes):
     """Make sure string is returned even if bytes are passed. Docker stream can return bytes."""
     decode_method = getattr(line, "decode", None)
     if decode_method:
-        return decode_method(encoding="utf-8", errors="surrogateescape")
+        return decode_method(encoding="utf-8", errors="replace")
     return line
 
 
 def fetch_logs(log_stream, log: Logger):
-    log_lines = []
+    log_lines: list[str] = []
+    buffer = ""
+
     for log_chunk_raw in log_stream:
-        log_chunk = stringify(log_chunk_raw).rstrip()
-        log_lines.append(log_chunk)
-        for log_chunk_line in log_chunk.split("\n"):
-            log.info("%s", log_chunk_line)
+        buffer += stringify(log_chunk_raw)
+        lines = buffer.split("\n")
+        buffer = lines.pop()  # Keep incomplete line for next iteration
+
+        for line in lines:
+            stripped_line = line.rstrip()
+            log.info("%s", stripped_line)
+            log_lines.append(stripped_line)
+
+    if buffer:
+        buffer = buffer.rstrip()
+        log.info("%s", buffer)
+        log_lines.append(buffer)
+
     return log_lines
 
 
@@ -139,8 +151,12 @@ class DockerOperator(BaseOperator):
         The path is also made available via the environment variable
         ``AIRFLOW_TMP_DIR`` inside the container.
     :param user: Default user inside the docker container.
-    :param mounts: List of volumes to mount into the container. Each item should
-        be a :py:class:`docker.types.Mount` instance. (templated)
+    :param mounts: List of volumes to mount into the container. Each item may
+        be a :py:class:`docker.types.Mount` instance, or a ``dict`` of
+        :py:class:`~docker.types.Mount` keyword arguments (e.g.
+        ``{"target": "/data", "source": "vol", "type": "volume"}``); ``dict``
+        entries are converted to ``Mount`` instances at construction time.
+        (templated)
     :param entrypoint: Overwrite the default ENTRYPOINT of the image
     :param working_dir: Working directory to
         set on the container (equivalent to the -w switch the docker client)
@@ -233,7 +249,7 @@ class DockerOperator(BaseOperator):
         mount_tmp_dir: bool = True,
         tmp_dir: str = "/tmp/airflow",
         user: str | int | None = None,
-        mounts: list[Mount] | None = None,
+        mounts: list[Mount | dict] | None = None,
         entrypoint: str | list[str] | None = None,
         working_dir: str | None = None,
         xcom_all: bool = False,
@@ -292,7 +308,8 @@ class DockerOperator(BaseOperator):
         self.mount_tmp_dir = mount_tmp_dir
         self.tmp_dir = tmp_dir
         self.user = user
-        self.mounts = mounts or []
+        mounts = [mount if isinstance(mount, Mount) else Mount(**mount) for mount in (mounts or [])]
+        self.mounts: list[Mount] = mounts
         for mount in self.mounts:
             mount.template_fields = ("Source", "Target", "Type")
         self.entrypoint = entrypoint
@@ -517,6 +534,15 @@ class DockerOperator(BaseOperator):
                 self.log.info("Not attempting to kill container as it was not created")
                 return
             self.cli.stop(self.container["Id"])
+            if self.auto_remove == "force":
+                try:
+                    self.cli.remove_container(self.container["Id"], force=True)
+                except APIError as e:
+                    self.log.info(
+                        "Failed to remove docker container %s during on_kill; it may already be gone: %s",
+                        self.container["Id"],
+                        e,
+                    )
 
     @staticmethod
     def unpack_environment_variables(env_str: str) -> dict:

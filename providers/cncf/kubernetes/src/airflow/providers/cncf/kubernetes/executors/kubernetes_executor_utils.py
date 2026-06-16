@@ -27,7 +27,6 @@ from kubernetes import client, watch
 from kubernetes.client.rest import ApiException
 from urllib3.exceptions import ReadTimeoutError
 
-from airflow.exceptions import AirflowException
 from airflow.providers.cncf.kubernetes.backcompat import get_logical_date_key
 from airflow.providers.cncf.kubernetes.executors.kubernetes_executor_types import (
     ADOPTED,
@@ -46,18 +45,24 @@ from airflow.providers.cncf.kubernetes.kubernetes_helper_functions import (
     create_unique_id,
 )
 from airflow.providers.cncf.kubernetes.pod_generator import PodGenerator, workload_to_command_args
+from airflow.providers.common.compat.sdk import AirflowException, Stats
 from airflow.utils.log.logging_mixin import LoggingMixin
-from airflow.utils.singleton import Singleton
 from airflow.utils.state import TaskInstanceState
 
 if TYPE_CHECKING:
     from kubernetes.client import Configuration, models as k8s
 
 
-class ResourceVersion(metaclass=Singleton):
+class ResourceVersion:
     """Singleton for tracking resourceVersion from Kubernetes."""
 
+    _instance: ResourceVersion | None = None
     resource_version: dict[str, str] = {}
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
 
 class KubernetesJobWatcher(multiprocessing.Process, LoggingMixin):
@@ -255,14 +260,13 @@ class KubernetesJobWatcher(multiprocessing.Process, LoggingMixin):
                 for container_status in container_statuses_to_check:
                     container_status_state = container_status["state"]
                     if "waiting" in container_status_state:
+                        waiting_reason = container_status_state["waiting"].get("reason")
+                        waiting_message = container_status_state["waiting"].get("message")
                         if (
-                            container_status_state["waiting"]["reason"]
+                            waiting_reason
                             in self.kube_config.worker_pod_pending_fatal_container_state_reasons
                         ):
-                            if (
-                                container_status_state["waiting"]["reason"] == "ErrImagePull"
-                                and container_status_state["waiting"]["message"] == "pull QPS exceeded"
-                            ):
+                            if waiting_reason == "ErrImagePull" and waiting_message == "pull QPS exceeded":
                                 continue
                             key = annotations_to_key(annotations=annotations)
                             task_key_str = (
@@ -272,7 +276,7 @@ class KubernetesJobWatcher(multiprocessing.Process, LoggingMixin):
                                 "Event: %s has container %s with fatal reason %s, task: %s",
                                 pod_name,
                                 container_status["name"],
-                                container_status_state["waiting"]["reason"],
+                                waiting_reason,
                                 task_key_str,
                             )
                             self.watcher_queue.put(
@@ -490,11 +494,18 @@ class AirflowKubernetesScheduler(LoggingMixin):
 
         self.log.debug("Pod Creation Request: \n%s", json_pod)
         try:
-            resp = self.kube_client.create_namespaced_pod(
-                body=sanitized_pod, namespace=pod.metadata.namespace, **kwargs
-            )
+            with Stats.timer("kubernetes_executor.pod_creation"):
+                resp = self.kube_client.create_namespaced_pod(
+                    body=sanitized_pod, namespace=pod.metadata.namespace, **kwargs
+                )
+            Stats.incr("kubernetes_executor.pod_creation_status", tags={"status": "200"})
             self.log.debug("Pod Creation Response: %s", resp)
+        except ApiException as e:
+            Stats.incr("kubernetes_executor.pod_creation_status", tags={"status": str(e.status)})
+            self.log.exception("Exception when attempting to create Namespaced Pod: %s", json_pod)
+            raise
         except Exception as e:
+            Stats.incr("kubernetes_executor.pod_creation_status", tags={"status": "error"})
             self.log.exception("Exception when attempting to create Namespaced Pod: %s", json_pod)
             raise e
         return resp
@@ -604,13 +615,16 @@ class AirflowKubernetesScheduler(LoggingMixin):
         """Delete Pod from a namespace; does not raise if it does not exist."""
         try:
             self.log.info("Deleting pod %s in namespace %s", pod_name, namespace)
-            self.kube_client.delete_namespaced_pod(
-                pod_name,
-                namespace,
-                body=client.V1DeleteOptions(**self.kube_config.delete_option_kwargs),
-                **self.kube_config.kube_client_request_args,
-            )
+            with Stats.timer("kubernetes_executor.pod_deletion"):
+                self.kube_client.delete_namespaced_pod(
+                    pod_name,
+                    namespace,
+                    body=client.V1DeleteOptions(**self.kube_config.delete_option_kwargs),
+                    **self.kube_config.kube_client_request_args,
+                )
+            Stats.incr("kubernetes_executor.pod_deletion_status", tags={"status": "200"})
         except ApiException as e:
+            Stats.incr("kubernetes_executor.pod_deletion_status", tags={"status": str(e.status)})
             # If the pod is already deleted
             if str(e.status) != "404":
                 raise
@@ -627,24 +641,30 @@ class AirflowKubernetesScheduler(LoggingMixin):
             namespace,
         )
         try:
-            self.kube_client.patch_namespaced_pod(
-                name=pod_name,
-                namespace=namespace,
-                body={"metadata": {"labels": {POD_REVOKED_KEY: "True"}}},
-            )
-        except ApiException:
+            with Stats.timer("kubernetes_executor.pod_patching"):
+                self.kube_client.patch_namespaced_pod(
+                    name=pod_name,
+                    namespace=namespace,
+                    body={"metadata": {"labels": {POD_REVOKED_KEY: "True"}}},
+                )
+            Stats.incr("kubernetes_executor.pod_patching_status", tags={"status": "200"})
+        except ApiException as e:
+            Stats.incr("kubernetes_executor.pod_patching_status", tags={"status": str(e.status)})
             self.log.warning("Failed to patch pod %s with pod revoked key.", pod_name, exc_info=True)
 
     def patch_pod_executor_done(self, *, pod_name: str, namespace: str):
         """Add a "done" annotation to ensure we don't continually adopt pods."""
         self.log.debug("Patching pod %s in namespace %s to mark it as done", pod_name, namespace)
         try:
-            self.kube_client.patch_namespaced_pod(
-                name=pod_name,
-                namespace=namespace,
-                body={"metadata": {"labels": {POD_EXECUTOR_DONE_KEY: "True"}}},
-            )
+            with Stats.timer("kubernetes_executor.pod_patching"):
+                self.kube_client.patch_namespaced_pod(
+                    name=pod_name,
+                    namespace=namespace,
+                    body={"metadata": {"labels": {POD_EXECUTOR_DONE_KEY: "True"}}},
+                )
+            Stats.incr("kubernetes_executor.pod_patching_status", tags={"status": "200"})
         except ApiException as e:
+            Stats.incr("kubernetes_executor.pod_patching_status", tags={"status": str(e.status)})
             self.log.info("Failed to patch pod %s with done annotation. Reason: %s", pod_name, e)
 
     def sync(self) -> None:

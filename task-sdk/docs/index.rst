@@ -78,6 +78,7 @@ Why use ``airflow.sdk``?
 **Classes**
 
 - :class:`airflow.sdk.Asset`
+- :class:`airflow.sdk.BaseAsyncOperator`
 - :class:`airflow.sdk.BaseHook`
 - :class:`airflow.sdk.BaseNotifier`
 - :class:`airflow.sdk.BaseOperator`
@@ -87,9 +88,14 @@ Why use ``airflow.sdk``?
 - :class:`airflow.sdk.Context`
 - :class:`airflow.sdk.DAG`
 - :class:`airflow.sdk.EdgeModifier`
+- :class:`airflow.sdk.ExceptionRetryPolicy`
 - :class:`airflow.sdk.Label`
 - :class:`airflow.sdk.ObjectStoragePath`
 - :class:`airflow.sdk.Param`
+- :class:`airflow.sdk.RetryAction`
+- :class:`airflow.sdk.RetryDecision`
+- :class:`airflow.sdk.RetryPolicy`
+- :class:`airflow.sdk.RetryRule`
 - :class:`airflow.sdk.TaskGroup`
 - :class:`airflow.sdk.TaskInstanceState`
 - :class:`airflow.sdk.DagRunState`
@@ -127,6 +133,13 @@ Use instead:
    # Airflow 3.x
    from airflow.sdk import DAG, task
 
+Choosing Between Deferred and Async Tasks
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Airflow 3.2 introduces Python-native async tasks alongside deferrable operators.
+Both approaches support non-blocking I/O, but they serve different purposes.
+For guidance on when to use each approach, see :doc:`deferred-vs-async-operators`.
+
 4. Example Dag References
 -------------------------
 
@@ -159,5 +172,8 @@ For the full public API reference, see the :doc:`api` page.
 
   examples
   dynamic-task-mapping
+  deferred-vs-async-operators
+  resumable-job-mixin
   api
   concepts
+  executable-bundle-spec

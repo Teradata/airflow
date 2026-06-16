@@ -26,20 +26,21 @@ import json
 import logging
 import traceback
 import warnings
-from collections.abc import Callable, MutableMapping
+from collections.abc import Callable, Iterator, MutableMapping
 from dataclasses import dataclass
 from functools import wraps
 from importlib.resources import files as resource_files
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, NamedTuple, ParamSpec, TypeVar
+from typing import TYPE_CHECKING, Any, NamedTuple, ParamSpec, TypeVar, cast
 
-from packaging.utils import canonicalize_name
-
-from airflow.exceptions import AirflowOptionalProviderFeatureException
-from airflow.utils.entry_points import entry_points_with_dist
+from airflow import DeprecatedImportWarning
+from airflow._shared.module_loading import import_string
+from airflow._shared.providers_discovery import discover_all_providers_from_packages
+from airflow.exceptions import AirflowOptionalProviderFeatureException, AirflowProviderDeprecationWarning
 from airflow.utils.log.logging_mixin import LoggingMixin
-from airflow.utils.module_loading import import_string
-from airflow.utils.singleton import Singleton
+
+if TYPE_CHECKING:
+    from airflow.cli.cli_config import CLICommand
 
 log = logging.getLogger(__name__)
 
@@ -222,6 +223,14 @@ class NotificationInfo(NamedTuple):
     package_name: str
 
 
+class RemoteLoggingInfo(NamedTuple):
+    """Remote logging IO handler registered by a provider."""
+
+    classpath: str
+    scheme: str
+    package_name: str
+
+
 class PluginInfo(NamedTuple):
     """Plugin class, name and provider it comes from."""
 
@@ -240,6 +249,15 @@ class HookInfo(NamedTuple):
     connection_type: str
     connection_testable: bool
     dialects: list[str] = []
+
+
+class ConnectionTypeHookUIMetadata(NamedTuple):
+    """Hook metadata for one connection type (connection UI); ``field_behaviour`` is standard fields."""
+
+    connection_type: str
+    hook_name: str
+    hook_class_name: str | None
+    field_behaviour: dict | None
 
 
 class ConnectionFormWidgetInfo(NamedTuple):
@@ -364,7 +382,7 @@ def provider_info_cache(cache_name: str) -> Callable[[Callable[PS, None]], Calla
     return provider_info_cache_decorator
 
 
-class ProvidersManager(LoggingMixin, metaclass=Singleton):
+class ProvidersManager(LoggingMixin):
     """
     Manages all provider distributions.
 
@@ -375,6 +393,12 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
     resource_version = "0"
     _initialized: bool = False
     _initialization_stack_trace = None
+    _instance: ProvidersManager | None = None
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
 
     @staticmethod
     def initialized() -> bool:
@@ -386,6 +410,10 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
 
     def __init__(self):
         """Initialize the manager."""
+        # skip initialization if already initialized
+        if self.initialized():
+            return
+
         super().__init__()
         ProvidersManager._initialized = True
         ProvidersManager._initialization_stack_trace = "".join(traceback.format_stack(inspect.currentframe()))
@@ -402,16 +430,25 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
         self._dialect_provider_dict: dict[str, DialectInfo] = {}
         # Keeps dict of hooks keyed by connection type. They are lazy evaluated at access time
         self._hooks_lazy_dict: LazyDictWithCache[str, HookInfo | Callable] = LazyDictWithCache()
+        # Keeps hook display names read from provider.yaml (hook-name field)
+        self._hook_name_dict: dict[str, str] = {}
         # Keeps methods that should be used to add custom widgets tuple of keyed by name of the extra field
         self._connection_form_widgets: dict[str, ConnectionFormWidgetInfo] = {}
         # Customizations for javascript fields are kept here
         self._field_behaviours: dict[str, dict] = {}
+        self._cli_command_functions_set: set[Callable[[], list[CLICommand]]] = set()
+        self._cli_command_provider_name_set: set[str] = set()
         self._extra_link_class_name_set: set[str] = set()
         self._logging_class_name_set: set[str] = set()
+        self._remote_logging_info_list: list[RemoteLoggingInfo] = []
+        self._remote_logging_by_scheme: dict[str, RemoteLoggingInfo] = {}
         self._auth_manager_class_name_set: set[str] = set()
+        self._auth_manager_without_check_set: set[tuple[str, str]] = set()
         self._secrets_backend_class_name_set: set[str] = set()
         self._executor_class_name_set: set[str] = set()
+        self._executor_without_check_set: set[tuple[str, str]] = set()
         self._queue_class_name_set: set[str] = set()
+        self._db_manager_class_name_set: set[str] = set()
         self._provider_configs: dict[str, dict[str, Any]] = {}
         self._trigger_info_set: set[TriggerInfo] = set()
         self._notification_info_set: set[NotificationInfo] = set()
@@ -422,6 +459,33 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
         # Set of plugins contained in providers
         self._plugins_set: set[PluginInfo] = set()
         self._init_airflow_core_hooks()
+
+        self._runtime_manager = None
+
+    def __getattribute__(self, name: str):
+        # Hacky but does the trick for now
+        runtime_properties = {
+            "hooks",
+            "taskflow_decorators",
+            "filesystem_module_names",
+            "asset_factories",
+            "asset_uri_handlers",
+            "asset_to_openlineage_converters",
+        }
+
+        if name in runtime_properties:
+            warnings.warn(
+                f"ProvidersManager.{name} is deprecated. Use ProvidersManagerTaskRuntime.{name} from task-sdk instead.",
+                DeprecatedImportWarning,
+                stacklevel=2,
+            )
+            if object.__getattribute__(self, "_runtime_manager") is None:
+                from airflow.sdk.providers_manager_runtime import ProvidersManagerTaskRuntime
+
+                object.__setattr__(self, "_runtime_manager", ProvidersManagerTaskRuntime())
+            return getattr(object.__getattribute__(self, "_runtime_manager"), name)
+
+        return object.__getattribute__(self, name)
 
     def _init_airflow_core_hooks(self):
         """Initialize the hooks dict with default hooks from Airflow core."""
@@ -457,7 +521,7 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
         # Development purpose. In production provider.yaml files are not present in the 'airflow" directory
         # So there is no risk we are going to override package provider accidentally. This can only happen
         # in case of local development
-        self._discover_all_providers_from_packages()
+        discover_all_providers_from_packages(self._provider_dict, self._provider_schema_validator)
         self._verify_all_providers_all_compatible()
         self._provider_dict = dict(sorted(self._provider_dict.items()))
 
@@ -483,6 +547,7 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
         self._init_airflow_core_hooks()
         self.initialize_providers_list()
         self._discover_hooks()
+        self._load_ui_metadata()
         self._hook_provider_dict = dict(sorted(self._hook_provider_dict.items()))
 
     @provider_info_cache("filesystems")
@@ -516,6 +581,12 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
         self.initialize_providers_list()
         self._discover_logging()
 
+    @provider_info_cache("remote_logging")
+    def initialize_providers_remote_logging(self):
+        """Lazy initialization of providers remote logging IO handlers."""
+        self.initialize_providers_list()
+        self._discover_remote_logging()
+
     @provider_info_cache("secrets_backends")
     def initialize_providers_secrets_backends(self):
         """Lazy initialization of providers secrets_backends information."""
@@ -526,13 +597,25 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
     def initialize_providers_executors(self):
         """Lazy initialization of providers executors information."""
         self.initialize_providers_list()
-        self._discover_executors()
+        self._discover_executors(check=True)
+
+    @provider_info_cache("executors_without_check")
+    def initialize_providers_executors_without_check(self):
+        """Lazy initialization of providers executors information."""
+        self.initialize_providers_list()
+        self._discover_executors(check=False)
 
     @provider_info_cache("queues")
     def initialize_providers_queues(self):
         """Lazy initialization of providers queue information."""
         self.initialize_providers_list()
         self._discover_queues()
+
+    @provider_info_cache("db_managers")
+    def initialize_providers_db_managers(self):
+        """Lazy initialization of providers db_managers information."""
+        self.initialize_providers_list()
+        self._discover_db_managers()
 
     @provider_info_cache("notifications")
     def initialize_providers_notifications(self):
@@ -542,73 +625,32 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
 
     @provider_info_cache("auth_managers")
     def initialize_providers_auth_managers(self):
-        """Lazy initialization of providers notifications information."""
+        """Lazy initialization of providers auth manager information."""
         self.initialize_providers_list()
-        self._discover_auth_managers()
+        self._discover_auth_managers(check=True)
+
+    @provider_info_cache("auth_managers_without_check")
+    def initialize_providers_auth_managers_without_check(self):
+        """Lazy initialization of providers auth manager information."""
+        self.initialize_providers_list()
+        self._discover_auth_managers(check=False)
 
     @provider_info_cache("config")
     def initialize_providers_configuration(self):
-        """Lazy initialization of providers configuration information."""
-        self._initialize_providers_configuration()
-
-    def _initialize_providers_configuration(self):
-        """
-        Initialize providers configuration information.
-
-        Should be used if we do not want to trigger caching for ``initialize_providers_configuration`` method.
-        In some cases we might want to make sure that the configuration is initialized, but we do not want
-        to cache the initialization method - for example when we just want to write configuration with
-        providers, but it is used in the context where no providers are loaded yet we will eventually
-        restore the original configuration and we want the subsequent ``initialize_providers_configuration``
-        method to be run in order to load the configuration for providers again.
-        """
+        """Lazy initialization of provider configuration metadata and merge it into ``conf``."""
         self.initialize_providers_list()
         self._discover_config()
-        # Now update conf with the new provider configuration from providers
-        from airflow.configuration import conf
-
-        conf.load_providers_configuration()
 
     @provider_info_cache("plugins")
     def initialize_providers_plugins(self):
         self.initialize_providers_list()
         self._discover_plugins()
 
-    def _discover_all_providers_from_packages(self) -> None:
-        """
-        Discover all providers by scanning packages installed.
-
-        The list of providers should be returned via the 'apache_airflow_provider'
-        entrypoint as a dictionary conforming to the 'airflow/provider_info.schema.json'
-        schema. Note that the schema is different at runtime than provider.yaml.schema.json.
-        The development version of provider schema is more strict and changes together with
-        the code. The runtime version is more relaxed (allows for additional properties)
-        and verifies only the subset of fields that are needed at runtime.
-        """
-        for entry_point, dist in entry_points_with_dist("apache_airflow_provider"):
-            if not dist.metadata:
-                continue
-            package_name = canonicalize_name(dist.metadata["name"])
-            if package_name in self._provider_dict:
-                continue
-            log.debug("Loading %s from package %s", entry_point, package_name)
-            version = dist.version
-            provider_info = entry_point.load()()
-            self._provider_schema_validator.validate(provider_info)
-            provider_info_package_name = provider_info["package-name"]
-            if package_name != provider_info_package_name:
-                raise ValueError(
-                    f"The package '{package_name}' from packaging information "
-                    f"{provider_info_package_name} do not match. Please make sure they are aligned"
-                )
-            if package_name not in self._provider_dict:
-                self._provider_dict[package_name] = ProviderInfo(version, provider_info)
-            else:
-                log.warning(
-                    "The provider for package '%s' could not be registered from because providers for that "
-                    "package name have already been registered",
-                    package_name,
-                )
+    @provider_info_cache("cli_command")
+    def initialize_providers_cli_command(self):
+        """Lazy initialization of providers CLI commands."""
+        self.initialize_providers_list()
+        self._discover_cli_command()
 
     def _discover_hooks_from_connection_types(
         self,
@@ -878,6 +920,101 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
             return None
         return getattr(obj, attr_name)
 
+    def _get_connection_type_config(self, provider_info: ProviderInfo, connection_type: str) -> dict | None:
+        """Get connection type config from provider.yaml if it exists."""
+        connection_types = provider_info.data.get("connection-types", [])
+        for conn_config in connection_types:
+            if conn_config.get("connection-type") == connection_type:
+                return conn_config
+        return None
+
+    def _to_api_format(self, field_name: str, field_def: dict) -> dict:
+        """Convert conn-fields definition to format expected by the API."""
+        schema_def = field_def.get("schema", {})
+
+        # build schema dict with label moved to `title` per jsonschema convention
+        schema = schema_def.copy()
+        if "label" in field_def:
+            schema["title"] = field_def.get("label")
+
+        return {
+            "value": schema_def.get("default"),
+            "schema": schema,
+            "description": field_def.get("description"),
+            "source": None,
+        }
+
+    def _add_widgets(
+        self, package_name: str, hook_class_name: str, connection_type: str, conn_fields: dict
+    ) -> None:
+        """Parse conn-fields from provider info and add to connection_form_widgets."""
+        for field_name, field_def in conn_fields.items():
+            field_data = self._to_api_format(field_name, field_def)
+
+            prefixed_name = f"extra__{connection_type}__{field_name}"
+            if prefixed_name in self._connection_form_widgets:
+                log.warning(
+                    "Field %s for connection type %s already added, skipping",
+                    field_name,
+                    connection_type,
+                )
+                continue
+
+            schema_def = field_def.get("schema", {})
+            self._connection_form_widgets[prefixed_name] = ConnectionFormWidgetInfo(
+                hook_class_name=hook_class_name,
+                package_name=package_name,
+                field=field_data,
+                field_name=field_name,
+                is_sensitive=schema_def.get("format") == "password",
+            )
+
+    def _add_customized_fields(self, package_name: str, connection_type: str, behaviour: dict) -> None:
+        """Process ui-field-behaviour from provider info and add to field_behaviours."""
+        if connection_type in self._field_behaviours:
+            log.warning(
+                "Field behaviour for connection type %s already exists, skipping",
+                connection_type,
+            )
+            return
+
+        # convert kebab-case keys to python style
+        customized_fields = {
+            "hidden_fields": behaviour.get("hidden-fields", []),
+            "relabeling": behaviour.get("relabeling", {}),
+            "placeholders": behaviour.get("placeholders", {}),
+        }
+
+        try:
+            self._customized_form_fields_schema_validator.validate(customized_fields)
+            customized_fields = _ensure_prefix_for_placeholders(customized_fields, connection_type)
+            self._field_behaviours[connection_type] = customized_fields
+        except Exception as e:
+            log.warning(
+                "Failed to add field behaviour for %s in package %s: %s",
+                connection_type,
+                package_name,
+                e,
+            )
+
+    def _load_ui_metadata(self) -> None:
+        """Load connection form UI metadata from provider info without importing hooks."""
+        for package_name, provider in self._provider_dict.items():
+            for conn_config in provider.data.get("connection-types", []):
+                connection_type = conn_config.get("connection-type")
+                hook_class_name = conn_config.get("hook-class-name")
+                if not connection_type or not hook_class_name:
+                    continue
+
+                if hook_name := conn_config.get("hook-name"):
+                    self._hook_name_dict[connection_type] = hook_name
+
+                if conn_fields := conn_config.get("conn-fields"):
+                    self._add_widgets(package_name, hook_class_name, connection_type, conn_fields)
+
+                if behaviour := conn_config.get("ui-field-behaviour"):
+                    self._add_customized_fields(package_name, connection_type, behaviour)
+
     def _import_hook(
         self,
         connection_type: str | None,
@@ -918,48 +1055,75 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
         hook_class: type[BaseHook] | None = _correctness_check(package_name, hook_class_name, provider_info)
         if hook_class is None:
             return None
-        try:
-            from wtforms import BooleanField, IntegerField, PasswordField, StringField
 
-            allowed_field_classes = [IntegerField, PasswordField, StringField, BooleanField]
-            module, class_name = hook_class_name.rsplit(".", maxsplit=1)
-            # Do not use attr here. We want to check only direct class fields not those
-            # inherited from parent hook. This way we add form fields only once for the whole
-            # hierarchy and we add it only from the parent hook that provides those!
-            if "get_connection_form_widgets" in hook_class.__dict__:
-                widgets = hook_class.get_connection_form_widgets()
-                if widgets:
-                    for widget in widgets.values():
-                        if widget.field_class not in allowed_field_classes:
-                            log.warning(
-                                "The hook_class '%s' uses field of unsupported class '%s'. "
-                                "Only '%s' field classes are supported",
-                                hook_class_name,
-                                widget.field_class,
-                                allowed_field_classes,
-                            )
-                            return None
-                    self._add_widgets(package_name, hook_class, widgets)
-            if "get_ui_field_behaviour" in hook_class.__dict__:
-                field_behaviours = hook_class.get_ui_field_behaviour()
-                if field_behaviours:
-                    self._add_customized_fields(package_name, hook_class, field_behaviours)
-        except ImportError as e:
-            if e.name in ["flask_appbuilder", "wtforms"]:
-                log.info(
-                    "The hook_class '%s' is not fully initialized (UI widgets will be missing), because "
-                    "the 'flask_appbuilder' package is not installed, however it is not required for "
-                    "Airflow components to work",
-                    hook_class_name,
-                )
-        except Exception as e:
-            log.warning(
-                "Exception when importing '%s' from '%s' package: %s",
-                hook_class_name,
-                package_name,
-                e,
+        # Check if provider info already has UI metadata and skip Python hook methods
+        # to avoid duplicate initialization and unnecessary wtforms imports
+        ui_metadata_loaded = False
+        if provider_info and connection_type:
+            conn_config = self._get_connection_type_config(provider_info, connection_type)
+            ui_metadata_loaded = conn_config is not None and bool(
+                conn_config.get("conn-fields") or conn_config.get("ui-field-behaviour")
             )
-            return None
+
+        if not ui_metadata_loaded:
+            try:
+                from wtforms import BooleanField, IntegerField, PasswordField, StringField
+
+                allowed_field_classes = [IntegerField, PasswordField, StringField, BooleanField]
+                # Do not use attr here. We want to check only direct class fields not those
+                # inherited from parent hook. This way we add form fields only once for the whole
+                # hierarchy and we add it only from the parent hook that provides those!
+                if "get_connection_form_widgets" in hook_class.__dict__:
+                    warning = AirflowProviderDeprecationWarning(
+                        f"Hook '{hook_class_name}' defines get_connection_form_widgets(). "
+                        "This method is deprecated. Define connection fields declaratively in "
+                        "provider.yaml under 'conn-fields' instead. See "
+                        "https://airflow.apache.org/docs/apache-airflow/stable/howto/connection.html"
+                    )
+                    warning.deprecated_provider_since = "3.2.0"
+                    warnings.warn(warning, stacklevel=2)
+                    widgets = hook_class.get_connection_form_widgets()
+                    if widgets:
+                        for widget in widgets.values():
+                            if widget.field_class not in allowed_field_classes:
+                                log.warning(
+                                    "The hook_class '%s' uses field of unsupported class '%s'. "
+                                    "Only '%s' field classes are supported",
+                                    hook_class_name,
+                                    widget.field_class,
+                                    allowed_field_classes,
+                                )
+                                return None
+                        self._add_widgets_from_hook(package_name, hook_class, widgets)
+                if "get_ui_field_behaviour" in hook_class.__dict__:
+                    warning = AirflowProviderDeprecationWarning(
+                        f"Hook '{hook_class_name}' defines get_ui_field_behaviour(). "
+                        "This method is deprecated. Define field behaviour declaratively in "
+                        "provider.yaml under 'ui-field-behaviour' instead. See "
+                        "https://airflow.apache.org/docs/apache-airflow/stable/howto/connection.html"
+                    )
+                    warning.deprecated_provider_since = "3.2.0"
+                    warnings.warn(warning, stacklevel=2)
+                    field_behaviours = hook_class.get_ui_field_behaviour()
+                    if field_behaviours:
+                        self._add_customized_fields_from_hook(package_name, hook_class, field_behaviours)
+            except ImportError as e:
+                if e.name in ["flask_appbuilder", "wtforms"]:
+                    log.info(
+                        "The hook_class '%s' is not fully initialized (UI widgets will be missing), because "
+                        "the 'flask_appbuilder' package is not installed, however it is not required for "
+                        "Airflow components to work",
+                        hook_class_name,
+                    )
+            except Exception as e:
+                log.warning(
+                    "Exception when importing '%s' from '%s' package: %s",
+                    hook_class_name,
+                    package_name,
+                    e,
+                )
+                return None
+
         hook_connection_type = self._get_attr(hook_class, "conn_type")
         if connection_type:
             if hook_connection_type != connection_type:
@@ -995,7 +1159,7 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
             connection_testable=hasattr(hook_class, "test_connection"),
         )
 
-    def _add_widgets(self, package_name: str, hook_class: type, widgets: dict[str, Any]):
+    def _add_widgets_from_hook(self, package_name: str, hook_class: type, widgets: dict[str, Any]):
         conn_type = hook_class.conn_type  # type: ignore
         for field_identifier, field in widgets.items():
             if field_identifier.startswith("extra__"):
@@ -1019,7 +1183,7 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
                     and field.field_class.widget.input_type == "password",
                 )
 
-    def _add_customized_fields(self, package_name: str, hook_class: type, customized_fields: dict):
+    def _add_customized_fields_from_hook(self, package_name: str, hook_class: type, customized_fields: dict):
         try:
             connection_type = getattr(hook_class, "conn_type")
 
@@ -1046,13 +1210,27 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
                 e,
             )
 
-    def _discover_auth_managers(self) -> None:
+    def _discover_auth_managers(self, *, check: bool) -> None:
         """Retrieve all auth managers defined in the providers."""
         for provider_package, provider in self._provider_dict.items():
             if provider.data.get("auth-managers"):
                 for auth_manager_class_name in provider.data["auth-managers"]:
-                    if _correctness_check(provider_package, auth_manager_class_name, provider):
+                    if not check:
+                        self._auth_manager_without_check_set.add((auth_manager_class_name, provider_package))
+                    elif _correctness_check(provider_package, auth_manager_class_name, provider):
                         self._auth_manager_class_name_set.add(auth_manager_class_name)
+
+    def _discover_cli_command(self) -> None:
+        """Retrieve all CLI command functions defined in the providers."""
+        for provider_package, provider in self._provider_dict.items():
+            if provider.data.get("cli"):
+                for cli_command_function_name in provider.data["cli"]:
+                    # _correctness_check will return the function if found and correct
+                    # we store the function itself instead of its name to avoid importing it again later in cli_parser to speed up cli loading
+                    if cli_func := _correctness_check(provider_package, cli_command_function_name, provider):
+                        cli_func = cast("Callable[[], list[CLICommand]]", cli_func)
+                        self._cli_command_functions_set.add(cli_func)
+                        self._cli_command_provider_name_set.add(provider_package)
 
     def _discover_notifications(self) -> None:
         """Retrieve all notifications defined in the providers."""
@@ -1078,6 +1256,31 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
                     if _correctness_check(provider_package, logging_class_name, provider):
                         self._logging_class_name_set.add(logging_class_name)
 
+    def _discover_remote_logging(self) -> None:
+        """Retrieve all remote logging IO handlers defined in the providers."""
+        for provider_package, provider in self._provider_dict.items():
+            entries = provider.data.get("remote-logging") or []
+            for entry in entries:
+                classpath = entry["classpath"]
+                if not _correctness_check(provider_package, classpath, provider):
+                    continue
+                info = RemoteLoggingInfo(
+                    classpath=classpath,
+                    scheme=entry["scheme"],
+                    package_name=provider_package,
+                )
+                if (existing := self._remote_logging_by_scheme.get(info.scheme)) is not None:
+                    log.warning(
+                        "Remote logging scheme '%s' is already registered by %s; ignoring "
+                        "duplicate registration from %s.",
+                        info.scheme,
+                        existing.package_name,
+                        info.package_name,
+                    )
+                    continue
+                self._remote_logging_info_list.append(info)
+                self._remote_logging_by_scheme[info.scheme] = info
+
     def _discover_secrets_backends(self) -> None:
         """Retrieve all secrets backends defined in the providers."""
         for provider_package, provider in self._provider_dict.items():
@@ -1086,13 +1289,15 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
                     if _correctness_check(provider_package, secrets_backends_class_name, provider):
                         self._secrets_backend_class_name_set.add(secrets_backends_class_name)
 
-    def _discover_executors(self) -> None:
+    def _discover_executors(self, *, check: bool) -> None:
         """Retrieve all executors defined in the providers."""
         for provider_package, provider in self._provider_dict.items():
             if provider.data.get("executors"):
-                for executors_class_name in provider.data["executors"]:
-                    if _correctness_check(provider_package, executors_class_name, provider):
-                        self._executor_class_name_set.add(executors_class_name)
+                for executors_class_path in provider.data["executors"]:
+                    if not check:
+                        self._executor_without_check_set.add((executors_class_path, provider_package))
+                    elif _correctness_check(provider_package, executors_class_path, provider):
+                        self._executor_class_name_set.add(executors_class_path)
 
     def _discover_queues(self) -> None:
         """Retrieve all queues defined in the providers."""
@@ -1101,6 +1306,14 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
                 for queue_class_name in provider.data["queues"]:
                     if _correctness_check(provider_package, queue_class_name, provider):
                         self._queue_class_name_set.add(queue_class_name)
+
+    def _discover_db_managers(self) -> None:
+        """Retrieve all DB managers defined in the providers."""
+        for provider_package, provider in self._provider_dict.items():
+            if provider.data.get("db-managers"):
+                for db_manager_class_name in provider.data["db-managers"]:
+                    if _correctness_check(provider_package, db_manager_class_name, provider):
+                        self._db_manager_class_name_set.add(db_manager_class_name)
 
     def _discover_config(self) -> None:
         """Retrieve all configs defined in the providers."""
@@ -1145,6 +1358,24 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
         return sorted(self._auth_manager_class_name_set)
 
     @property
+    def auth_manager_without_check(self) -> set[tuple[str, str]]:
+        """Returns set of (auth manager class names, provider package name) without correctness check."""
+        self.initialize_providers_auth_managers_without_check()
+        return self._auth_manager_without_check_set
+
+    @property
+    def cli_command_functions(self) -> set[Callable[[], list[CLICommand]]]:
+        """Returns list of CLI command function names from providers."""
+        self.initialize_providers_cli_command()
+        return self._cli_command_functions_set
+
+    @property
+    def cli_command_providers(self) -> set[str]:
+        """Returns set of provider package names that provide CLI commands."""
+        self.initialize_providers_cli_command()
+        return self._cli_command_provider_name_set
+
+    @property
     def notification(self) -> list[NotificationInfo]:
         """Returns information about available providers notifications class."""
         self.initialize_providers_notifications()
@@ -1172,6 +1403,45 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
         self.initialize_providers_hooks()
         # When we return hooks here it will only be used to retrieve hook information
         return self._hooks_lazy_dict
+
+    def iter_connection_type_hook_ui_metadata(self) -> Iterator[ConnectionTypeHookUIMetadata]:
+        """
+        Yield hook metadata per connection type for the connection UI.
+
+        Does not import hook classes.
+        """
+        self.initialize_providers_hooks()
+        all_types = frozenset(self._hooks_lazy_dict) | frozenset(self._hook_provider_dict)
+        for conn_type in sorted(all_types):
+            raw_entry = self._hooks_lazy_dict._raw_dict.get(conn_type)
+            provider_entry = self._hook_provider_dict.get(conn_type)
+            if isinstance(raw_entry, HookInfo):
+                hook_name = raw_entry.hook_name
+                hook_class_name = raw_entry.hook_class_name
+            elif provider_entry:
+                hook_name = self._hook_name_dict.get(conn_type, conn_type)
+                hook_class_name = provider_entry.hook_class_name
+            else:
+                hook_name = self._hook_name_dict.get(conn_type, conn_type)
+                hook_class_name = None
+            yield ConnectionTypeHookUIMetadata(
+                connection_type=conn_type,
+                hook_name=hook_name,
+                hook_class_name=hook_class_name,
+                field_behaviour=self._field_behaviours.get(conn_type),
+            )
+
+    @property
+    def _connection_form_widgets_from_metadata(self) -> dict[str, ConnectionFormWidgetInfo]:
+        """Return connection form widgets from metadata without importing every hook."""
+        self.initialize_providers_hooks()
+        return self._connection_form_widgets
+
+    @property
+    def _field_behaviours_from_metadata(self) -> dict[str, dict]:
+        """Return field behaviour dicts from metadata without importing every hook."""
+        self.initialize_providers_hooks()
+        return self._field_behaviours
 
     @property
     def dialects(self) -> MutableMapping[str, DialectInfo]:
@@ -1222,6 +1492,17 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
         return sorted(self._logging_class_name_set)
 
     @property
+    def remote_logging_handlers(self) -> list[RemoteLoggingInfo]:
+        """Return all remote logging IO handlers contributed by providers."""
+        self.initialize_providers_remote_logging()
+        return list(self._remote_logging_info_list)
+
+    def remote_logging_handler_by_scheme(self, scheme: str) -> RemoteLoggingInfo | None:
+        """Return the remote logging IO handler registered for the given URL scheme, if any."""
+        self.initialize_providers_remote_logging()
+        return self._remote_logging_by_scheme.get(scheme)
+
+    @property
     def secrets_backend_class_names(self) -> list[str]:
         """Returns set of secret backend class names."""
         self.initialize_providers_secrets_backends()
@@ -1233,9 +1514,20 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
         return sorted(self._executor_class_name_set)
 
     @property
+    def executor_without_check(self) -> set[tuple[str, str]]:
+        """Returns set of (executor class names, provider package name) without correctness check."""
+        self.initialize_providers_executors_without_check()
+        return self._executor_without_check_set
+
+    @property
     def queue_class_names(self) -> list[str]:
         self.initialize_providers_queues()
         return sorted(self._queue_class_name_set)
+
+    @property
+    def db_managers(self) -> list[str]:
+        self.initialize_providers_db_managers()
+        return sorted(self._db_manager_class_name_set)
 
     @property
     def filesystem_module_names(self) -> list[str]:
@@ -1266,6 +1558,18 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
 
     @property
     def already_initialized_provider_configs(self) -> list[tuple[str, dict[str, Any]]]:
+        """
+        Return provider configs that have already been initialized.
+
+        .. deprecated:: 3.2.0
+            Use ``provider_configs`` instead.  This property is kept for backwards
+            compatibility and will be removed in a future version.
+        """
+        warnings.warn(
+            "already_initialized_provider_configs is deprecated. Use `provider_configs` instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return sorted(self._provider_configs.items(), key=lambda x: x[0])
 
     def _cleanup(self):
@@ -1280,14 +1584,26 @@ class ProvidersManager(LoggingMixin, metaclass=Singleton):
         self._field_behaviours.clear()
         self._extra_link_class_name_set.clear()
         self._logging_class_name_set.clear()
+        self._remote_logging_info_list.clear()
+        self._remote_logging_by_scheme.clear()
         self._auth_manager_class_name_set.clear()
+        self._auth_manager_without_check_set.clear()
         self._secrets_backend_class_name_set.clear()
         self._executor_class_name_set.clear()
+        self._executor_without_check_set.clear()
         self._queue_class_name_set.clear()
         self._provider_configs.clear()
+
+        # Imported lazily to avoid a configuration/providers_manager import cycle during cleanup.
+        from airflow.configuration import conf
+
+        conf.invalidate_cache()
+
         self._trigger_info_set.clear()
         self._notification_info_set.clear()
         self._plugins_set.clear()
+        self._cli_command_functions_set.clear()
+        self._cli_command_provider_name_set.clear()
 
         self._initialized = False
         self._initialization_stack_trace = None

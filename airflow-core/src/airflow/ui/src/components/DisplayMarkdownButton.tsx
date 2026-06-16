@@ -19,7 +19,7 @@
 import { Box, Heading, VStack } from "@chakra-ui/react";
 import { type ReactElement, useState } from "react";
 
-import { Button, Dialog } from "src/components/ui";
+import { IconButton, Dialog } from "src/components/ui";
 import { ResizableWrapper, MARKDOWN_DIALOG_STORAGE_KEY } from "src/components/ui/ResizableWrapper";
 
 import ReactMarkdown from "./ReactMarkdown";
@@ -39,10 +39,9 @@ const DisplayMarkdownButton = ({
 
   return (
     <Box>
-      <Button data-testid="markdown-button" onClick={() => setIsDocsOpen(true)} variant="outline">
+      <IconButton data-testid="markdown-button" label={text} onClick={() => setIsDocsOpen(true)}>
         {icon}
-        {text}
-      </Button>
+      </IconButton>
       <Dialog.Root
         data-testid="markdown-modal"
         onOpenChange={() => setIsDocsOpen(false)}

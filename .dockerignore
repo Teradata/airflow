@@ -39,6 +39,7 @@
 !task-sdk/
 !airflow-ctl/
 !go-sdk/
+!java-sdk/
 
 # Add all "test" distributions
 !tests
@@ -85,6 +86,7 @@
 
 # Setup/version configuration
 !pyproject.toml
+!uv.lock
 !manifests
 !generated
 

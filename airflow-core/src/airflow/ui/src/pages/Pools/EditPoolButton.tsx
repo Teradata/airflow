@@ -21,8 +21,7 @@ import { useTranslation } from "react-i18next";
 import { FiEdit } from "react-icons/fi";
 
 import type { PoolResponse } from "openapi/requests/types.gen";
-import { Dialog } from "src/components/ui";
-import ActionButton from "src/components/ui/ActionButton";
+import { IconButton, Dialog } from "src/components/ui";
 import { useEditPool } from "src/queries/useEditPool";
 
 import PoolForm, { type PoolBody } from "./PoolForm";
@@ -39,6 +38,7 @@ const EditPoolButton = ({ pool }: Props) => {
     include_deferred: pool.include_deferred,
     name: pool.name,
     slots: pool.slots,
+    team_name: pool.team_name ?? "",
   };
   const { editPool, error, isPending, setError } = useEditPool(initialPoolValue, {
     onSuccessConfirm: onClose,
@@ -51,17 +51,11 @@ const EditPoolButton = ({ pool }: Props) => {
 
   return (
     <>
-      <ActionButton
-        actionName={translate("pools.edit")}
-        icon={<FiEdit />}
-        onClick={() => {
-          onOpen();
-        }}
-        text={translate("pools.edit")}
-        withText={false}
-      />
+      <IconButton label={translate("pools.edit")} onClick={onOpen}>
+        <FiEdit />
+      </IconButton>
 
-      <Dialog.Root onOpenChange={handleClose} open={open} size="xl">
+      <Dialog.Root onOpenChange={handleClose} open={open}>
         <Dialog.Content backdrop>
           <Dialog.Header>
             <Heading size="xl">{translate("pools.edit")}</Heading>

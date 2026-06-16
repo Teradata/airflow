@@ -21,11 +21,13 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
     "noUncheckedIndexedAccess": true,
-    "baseUrl": ".",
     "paths": {
       "src/*": ["./src/*"],
-      "openapi/*": ["./openapi-gen/*"]
-    }
+      "openapi/*": ["./openapi-gen/*"],
+      "tests/*": ["./tests/*"],
+      "*": ["./*"]
+    },
+    "types": ["node"]
   },
-  "include": ["src"]
+  "include": ["src", "tests/**/*.ts"]
 }

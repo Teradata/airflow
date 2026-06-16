@@ -19,12 +19,12 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
-from uuid import UUID
 
 from pydantic import Field, JsonValue, model_validator
 
 from airflow._shared.secrets_masker import redact
-from airflow.api_fastapi.core_api.base import BaseModel, StrictBaseModel
+from airflow.api_fastapi.core_api.base import BaseModel, StrictBaseModel, make_partial_model
+from airflow.configuration import conf
 from airflow.models.base import ID_LEN
 from airflow.typing_compat import Self
 
@@ -33,10 +33,10 @@ class VariableResponse(BaseModel):
     """Variable serializer for responses."""
 
     key: str
-    val: str = Field(alias="value")
+    val: str | None = Field(alias="value", default=None)
     description: str | None
     is_encrypted: bool
-    team_id: UUID | None
+    team_name: str | None
 
     @model_validator(mode="after")
     def redact_val(self) -> Self:
@@ -44,7 +44,7 @@ class VariableResponse(BaseModel):
             return self
         try:
             val_dict = json.loads(self.val)
-            redacted_dict = redact(val_dict, max_depth=1)
+            redacted_dict = redact(val_dict, self.key)
             self.val = json.dumps(redacted_dict)
             return self
         except json.JSONDecodeError:
@@ -59,7 +59,18 @@ class VariableBody(StrictBaseModel):
     key: str = Field(max_length=ID_LEN)
     value: JsonValue = Field(serialization_alias="val")
     description: str | None = Field(default=None)
-    team_id: UUID | None = Field(default=None)
+    team_name: str | None = Field(max_length=50, default=None)
+
+    @model_validator(mode="after")
+    def validate_team_name(self) -> VariableBody:
+        if self.team_name is not None and not conf.getboolean("core", "multi_team"):
+            raise ValueError(
+                "team_name cannot be set when multi_team mode is disabled. Please contact your administrator."
+            )
+        return self
+
+
+VariableBodyPartial = make_partial_model(VariableBody)
 
 
 class VariableCollectionResponse(BaseModel):

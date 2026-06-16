@@ -21,19 +21,47 @@ from __future__ import annotations
 
 import csv
 import json
+import os
+import re
 from collections.abc import Sequence
 from functools import cached_property
+from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Any, ClassVar
+from urllib.parse import urlparse
 
 from databricks.sql.utils import ParamEscaper
 
-from airflow.exceptions import AirflowException
-from airflow.providers.common.compat.sdk import BaseOperator
+from airflow.providers.common.compat.sdk import (
+    AirflowException,
+    AirflowOptionalProviderFeatureException,
+    BaseOperator,
+)
 from airflow.providers.common.sql.operators.sql import SQLExecuteQueryOperator
 from airflow.providers.databricks.hooks.databricks_sql import DatabricksSqlHook
 
 if TYPE_CHECKING:
     from airflow.providers.common.compat.sdk import Context
+
+_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_DISALLOWED_SQL_TOKENS = (";", "--", "/*", "*/")
+
+
+def _get_airflow_query_tags(context: Context) -> dict[str, str | None]:
+    """Return Airflow context metadata as a query-tags dict."""
+    task_instance = context.get("ti")
+    if task_instance is None:
+        return {}
+
+    def _as_str(value: Any) -> str | None:
+        return None if value is None else str(value)
+
+    return {
+        "airflow_dag_id": _as_str(task_instance.dag_id),
+        "airflow_task_id": _as_str(task_instance.task_id),
+        "airflow_run_id": _as_str(task_instance.run_id),
+        "airflow_try_number": _as_str(task_instance.try_number),
+        "airflow_map_index": _as_str(task_instance.map_index),
+    }
 
 
 class DatabricksSqlOperator(SQLExecuteQueryOperator):
@@ -58,18 +86,35 @@ class DatabricksSqlOperator(SQLExecuteQueryOperator):
     :param session_configuration: An optional dictionary of Spark session parameters. Defaults to None.
         If not specified, it could be specified in the Databricks connection's extra parameters.
     :param client_parameters: Additional parameters internal to Databricks SQL Connector parameters
+    :param query_tags: Optional dictionary of query tags to attach to Databricks SQL queries.
+    :param include_airflow_query_tags: If True, add Airflow DAG/task/run metadata as query tags.
     :param http_headers: An optional list of (k, v) pairs that will be set as HTTP headers on every request.
          (templated)
     :param catalog: An optional initial catalog to use. Requires DBR version 9.0+ (templated)
     :param schema: An optional initial schema to use. Requires DBR version 9.0+ (templated)
     :param output_path: optional string specifying the file to which write selected data. (templated)
-    :param output_format: format of output data if ``output_path` is specified.
-        Possible values are ``csv``, ``json``, ``jsonl``. Default is ``csv``.
+        Supports local file paths and GCS URIs (e.g., ``gs://bucket/path/file.parquet``).
+        When using GCS URIs, requires the ``apache-airflow-providers-google`` package.
+    :param output_format: format of output data if ``output_path`` is specified.
+        Possible values are ``csv``, ``json``, ``jsonl``, ``parquet``, ``avro``. Default is ``csv``.
     :param csv_params: parameters that will be passed to the ``csv.DictWriter`` class used to write CSV data.
+    :param gcp_conn_id: The connection ID to use for connecting to Google Cloud when using GCS output path.
+        Default is ``google_cloud_default``.
+    :param gcs_impersonation_chain: Optional service account to impersonate using short-term
+        credentials for GCS upload, or chained list of accounts required to get the access_token
+        of the last account in the list, which will be impersonated in the request. (templated)
     """
 
     template_fields: Sequence[str] = tuple(
-        {"_output_path", "schema", "catalog", "http_headers", "databricks_conn_id"}
+        {
+            "_output_path",
+            "schema",
+            "catalog",
+            "http_headers",
+            "databricks_conn_id",
+            "_gcs_impersonation_chain",
+            "query_tags",
+        }
         | set(SQLExecuteQueryOperator.template_fields)
     )
 
@@ -91,6 +136,10 @@ class DatabricksSqlOperator(SQLExecuteQueryOperator):
         output_format: str = "csv",
         csv_params: dict[str, Any] | None = None,
         client_parameters: dict[str, Any] | None = None,
+        query_tags: dict[str, str | None] | None = None,
+        include_airflow_query_tags: bool = True,
+        gcp_conn_id: str = "google_cloud_default",
+        gcs_impersonation_chain: str | Sequence[str] | None = None,
         **kwargs,
     ) -> None:
         super().__init__(conn_id=databricks_conn_id, **kwargs)
@@ -106,6 +155,10 @@ class DatabricksSqlOperator(SQLExecuteQueryOperator):
         self.http_headers = http_headers
         self.catalog = catalog
         self.schema = schema
+        self.query_tags = query_tags or {}
+        self.include_airflow_query_tags = include_airflow_query_tags
+        self._gcp_conn_id = gcp_conn_id
+        self._gcs_impersonation_chain = gcs_impersonation_chain
 
     @cached_property
     def _hook(self) -> DatabricksSqlHook:
@@ -128,42 +181,166 @@ class DatabricksSqlOperator(SQLExecuteQueryOperator):
     def _should_run_output_processing(self) -> bool:
         return self.do_xcom_push or bool(self._output_path)
 
+    @property
+    def _is_gcs_output(self) -> bool:
+        """Check if the output path is a GCS URI."""
+        return self._output_path.startswith("gs://") if self._output_path else False
+
+    def _parse_gcs_path(self, path: str) -> tuple[str, str]:
+        """Parse a GCS URI into bucket and object name."""
+        parsed = urlparse(path)
+        bucket = parsed.netloc
+        object_name = parsed.path.lstrip("/")
+        return bucket, object_name
+
+    def _upload_to_gcs(self, local_path: str, gcs_path: str) -> None:
+        """Upload a local file to GCS."""
+        try:
+            from airflow.providers.google.cloud.hooks.gcs import GCSHook
+        except ImportError:
+            raise AirflowOptionalProviderFeatureException(
+                "The 'apache-airflow-providers-google' package is required for GCS output. "
+                "Install it with: pip install apache-airflow-providers-google"
+            )
+
+        bucket, object_name = self._parse_gcs_path(gcs_path)
+        hook = GCSHook(
+            gcp_conn_id=self._gcp_conn_id,
+            impersonation_chain=self._gcs_impersonation_chain,
+        )
+        hook.upload(
+            bucket_name=bucket,
+            object_name=object_name,
+            filename=local_path,
+        )
+        self.log.info("Uploaded output to %s", gcs_path)
+
+    def _write_parquet(self, file_path: str, field_names: list[str], rows: list[Any]) -> None:
+        """Write data to a Parquet file."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        data: dict[str, list] = {name: [] for name in field_names}
+        for row in rows:
+            row_dict = row._asdict()
+            for name in field_names:
+                data[name].append(row_dict[name])
+
+        table = pa.Table.from_pydict(data)
+        pq.write_table(table, file_path)
+
+    def _write_avro(self, file_path: str, field_names: list[str], rows: list[Any]) -> None:
+        """Write data to an Avro file using fastavro."""
+        try:
+            from fastavro import writer
+        except ImportError:
+            raise AirflowOptionalProviderFeatureException(
+                "The 'fastavro' package is required for Avro output. Install it with: pip install fastavro"
+            )
+
+        data: dict[str, list] = {name: [] for name in field_names}
+        for row in rows:
+            row_dict = row._asdict()
+            for name in field_names:
+                data[name].append(row_dict[name])
+
+        schema_fields = []
+        for name in field_names:
+            sample_val = next(
+                (data[name][i] for i in range(len(data[name])) if data[name][i] is not None), None
+            )
+            if sample_val is None:
+                avro_type = ["null", "string"]
+            elif isinstance(sample_val, bool):
+                avro_type = ["null", "boolean"]
+            elif isinstance(sample_val, int):
+                avro_type = ["null", "long"]
+            elif isinstance(sample_val, float):
+                avro_type = ["null", "double"]
+            else:
+                avro_type = ["null", "string"]
+            schema_fields.append({"name": name, "type": avro_type})
+
+        avro_schema = {
+            "type": "record",
+            "name": "QueryResult",
+            "fields": schema_fields,
+        }
+
+        records = [row._asdict() for row in rows]
+        with open(file_path, "wb") as f:
+            writer(f, avro_schema, records)
+
     def _process_output(self, results: list[Any], descriptions: list[Sequence[Sequence] | None]) -> list[Any]:
         if not self._output_path:
             return list(zip(descriptions, results))
         if not self._output_format:
             raise AirflowException("Output format should be specified!")
-        # Output to a file only the result of last query
+
         last_description = descriptions[-1]
         last_results = results[-1]
         if last_description is None:
-            raise AirflowException("There is missing description present for the output file. .")
+            raise AirflowException("There is missing description present for the output file.")
         field_names = [field[0] for field in last_description]
-        if self._output_format.lower() == "csv":
-            with open(self._output_path, "w", newline="") as file:
-                if self._csv_params:
-                    csv_params = self._csv_params
-                else:
-                    csv_params = {}
-                write_header = csv_params.get("header", True)
-                if "header" in csv_params:
-                    del csv_params["header"]
-                writer = csv.DictWriter(file, fieldnames=field_names, **csv_params)
-                if write_header:
-                    writer.writeheader()
-                for row in last_results:
-                    writer.writerow(row._asdict())
-        elif self._output_format.lower() == "json":
-            with open(self._output_path, "w") as file:
-                file.write(json.dumps([row._asdict() for row in last_results]))
-        elif self._output_format.lower() == "jsonl":
-            with open(self._output_path, "w") as file:
-                for row in last_results:
-                    file.write(json.dumps(row._asdict()))
-                    file.write("\n")
+
+        if self._is_gcs_output:
+            suffix = f".{self._output_format.lower()}"
+            tmp_file = NamedTemporaryFile(mode="w", suffix=suffix, delete=False, newline="")
+            local_path = tmp_file.name
+            tmp_file.close()
         else:
-            raise AirflowException(f"Unsupported output format: '{self._output_format}'")
+            local_path = self._output_path
+
+        try:
+            output_format = self._output_format.lower()
+            if output_format == "csv":
+                with open(local_path, "w", newline="") as file:
+                    if self._csv_params:
+                        csv_params = self._csv_params.copy()
+                    else:
+                        csv_params = {}
+                    write_header = csv_params.pop("header", True)
+                    writer = csv.DictWriter(file, fieldnames=field_names, **csv_params)
+                    if write_header:
+                        writer.writeheader()
+                    for row in last_results:
+                        writer.writerow(row._asdict())
+            elif output_format == "json":
+                with open(local_path, "w") as file:
+                    file.write(json.dumps([row._asdict() for row in last_results]))
+            elif output_format == "jsonl":
+                with open(local_path, "w") as file:
+                    for row in last_results:
+                        file.write(json.dumps(row._asdict()))
+                        file.write("\n")
+            elif output_format == "parquet":
+                self._write_parquet(local_path, field_names, last_results)
+            elif output_format == "avro":
+                self._write_avro(local_path, field_names, last_results)
+            else:
+                raise ValueError(f"Unsupported output format: '{self._output_format}'")
+
+            if self._is_gcs_output:
+                self._upload_to_gcs(local_path, self._output_path)
+        finally:
+            if self._is_gcs_output and os.path.exists(local_path):
+                os.unlink(local_path)
+
         return list(zip(descriptions, results))
+
+    def _get_query_tags(self, context: Context) -> dict[str, str | None] | None:
+        query_tags: dict[str, str | None] = {}
+
+        if self.include_airflow_query_tags and context is not None:
+            query_tags.update(_get_airflow_query_tags(context))
+
+        query_tags.update(self.query_tags)
+
+        return query_tags or None
+
+    def execute(self, context: Context) -> Any:
+        self.get_db_hook().query_tags = self._get_query_tags(context)
+        return super().execute(context)
 
 
 COPY_INTO_APPROVED_FORMATS = ["CSV", "JSON", "AVRO", "ORC", "PARQUET", "TEXT", "BINARYFILE"]
@@ -197,6 +374,8 @@ class DatabricksCopyIntoOperator(BaseOperator):
     :param catalog: An optional initial catalog to use. Requires DBR version 9.0+
     :param schema: An optional initial schema to use. Requires DBR version 9.0+
     :param client_parameters: Additional parameters internal to Databricks SQL Connector parameters
+    :param query_tags: Optional dictionary of query tags to attach to Databricks SQL queries.
+    :param include_airflow_query_tags: If True, add Airflow DAG/task/run metadata as query tags.
     :param files: optional list of files to import. Can't be specified together with ``pattern``. (templated)
     :param pattern: optional regex string to match file names to import.
         Can't be specified together with ``files``.
@@ -217,6 +396,7 @@ class DatabricksCopyIntoOperator(BaseOperator):
         "files",
         "table_name",
         "databricks_conn_id",
+        "query_tags",
     )
 
     def __init__(
@@ -243,9 +423,11 @@ class DatabricksCopyIntoOperator(BaseOperator):
         force_copy: bool | None = None,
         copy_options: dict[str, str] | None = None,
         validate: bool | int | None = None,
+        query_tags: dict[str, str | None] | None = None,
+        include_airflow_query_tags: bool = True,
         **kwargs,
     ) -> None:
-        """Create a new ``DatabricksSqlOperator``."""
+        """Create a new ``DatabricksCopyIntoOperator``."""
         super().__init__(**kwargs)
         if files is not None and pattern is not None:
             raise AirflowException("Only one of 'pattern' or 'files' should be specified")
@@ -275,6 +457,8 @@ class DatabricksCopyIntoOperator(BaseOperator):
         self._validate = validate
         self._http_headers = http_headers
         self._client_parameters = client_parameters or {}
+        self.query_tags = query_tags or {}
+        self.include_airflow_query_tags = include_airflow_query_tags
         if force_copy is not None:
             self._copy_options["force"] = "true" if force_copy else "false"
         self._sql: str | None = None
@@ -313,7 +497,25 @@ class DatabricksCopyIntoOperator(BaseOperator):
 
         return formatted_opts
 
+    def _validate_sql_fragments(self) -> None:
+        # Validate table_name segments (supports table, schema.table, catalog.schema.table).
+        parts = self.table_name.split(".")
+        for part in parts:
+            if not part or not _IDENTIFIER_RE.match(part):
+                raise ValueError(
+                    f"Invalid table identifier segment '{part}' in '{self.table_name}'. "
+                    "Only alphanumeric characters and underscores are allowed."
+                )
+
+        # Prevent multi-statement injection via expression_list.
+        if self._expression_list:
+            for token in _DISALLOWED_SQL_TOKENS:
+                if token in self._expression_list:
+                    raise ValueError("expression_list must not contain statement separators or comments.")
+
     def _create_sql_query(self) -> str:
+
+        self._validate_sql_fragments()
         escaper = ParamEscaper()
         maybe_with = ""
         if self._encryption is not None or self._credential is not None:
@@ -350,7 +552,7 @@ class DatabricksCopyIntoOperator(BaseOperator):
                 validation = f"VALIDATE {self._validate} ROWS\n"
             else:
                 raise AirflowException(f"Incorrect data type for validate parameter: {type(self._validate)}")
-        # TODO: think on how to make sure that table_name and expression_list aren't used for SQL injection
+
         sql = f"""COPY INTO {self.table_name}{storage_cred}
 FROM {location}
 FILEFORMAT = {self._file_format}
@@ -358,10 +560,21 @@ FILEFORMAT = {self._file_format}
 """
         return sql.strip()
 
+    def _get_query_tags(self, context: Context) -> dict[str, str | None] | None:
+        query_tags: dict[str, str | None] = {}
+
+        if self.include_airflow_query_tags and context is not None:
+            query_tags.update(_get_airflow_query_tags(context))
+
+        query_tags.update(self.query_tags)
+
+        return query_tags or None
+
     def execute(self, context: Context) -> Any:
         self._sql = self._create_sql_query()
         self.log.info("Executing: %s", self._sql)
         hook = self._get_hook()
+        hook.query_tags = self._get_query_tags(context)
         hook.run(self._sql)
 
     def on_kill(self) -> None:

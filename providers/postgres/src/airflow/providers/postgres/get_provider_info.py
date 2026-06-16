@@ -50,19 +50,25 @@ def get_provider_info():
         "connection-types": [
             {
                 "hook-class-name": "airflow.providers.postgres.hooks.postgres.PostgresHook",
+                "hook-name": "Postgres",
                 "connection-type": "postgres",
+                "ui-field-behaviour": {"relabeling": {"schema": "Database"}},
             }
         ],
         "asset-uris": [
             {
                 "schemes": ["postgres", "postgresql"],
                 "handler": "airflow.providers.postgres.assets.postgres.sanitize_uri",
+                "factory": "airflow.providers.postgres.assets.postgres.create_asset",
+                "to_openlineage_converter": "airflow.providers.postgres.assets.postgres.convert_asset_to_openlineage",
             }
         ],
         "dataset-uris": [
             {
                 "schemes": ["postgres", "postgresql"],
                 "handler": "airflow.providers.postgres.assets.postgres.sanitize_uri",
+                "factory": "airflow.providers.postgres.assets.postgres.create_asset",
+                "to_openlineage_converter": "airflow.providers.postgres.assets.postgres.convert_asset_to_openlineage",
             }
         ],
         "config": {

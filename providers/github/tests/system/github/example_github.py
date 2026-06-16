@@ -23,8 +23,8 @@ from typing import Any
 
 from github import GithubException
 
-from airflow.exceptions import AirflowException
 from airflow.models.dag import DAG
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.github.operators.github import GithubOperator
 from airflow.providers.github.sensors.github import GithubSensor, GithubTagSensor
 
@@ -102,5 +102,5 @@ with DAG(
 
 from tests_common.test_utils.system_tests import get_test_run  # noqa: E402
 
-# Needed to run the example DAG with pytest (see: tests/system/README.md#run_via_pytest)
+# Needed to run the example DAG with pytest (see: contributing-docs/testing/system_tests.rst)
 test_run = get_test_run(dag)

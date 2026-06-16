@@ -16,123 +16,103 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { Box, useToken } from "@chakra-ui/react";
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  BarElement,
-  Filler,
-  Title,
-  Tooltip,
-  Legend,
-  TimeScale,
-} from "chart.js";
-import "chart.js/auto";
-import "chartjs-adapter-dayjs-4/dist/chartjs-adapter-dayjs-4.esm";
-import annotationPlugin from "chartjs-plugin-annotation";
-import dayjs from "dayjs";
-import { useMemo, useDeferredValue } from "react";
-import { Bar } from "react-chartjs-2";
-import { useTranslation } from "react-i18next";
-import { useParams, useNavigate, useLocation } from "react-router-dom";
+import { Box, Flex } from "@chakra-ui/react";
+import { useRef } from "react";
+import type { RefObject } from "react";
+import { useParams, useSearchParams } from "react-router-dom";
 
-import { useTaskInstanceServiceGetTaskInstances } from "openapi/queries";
+import { useGanttServiceGetGanttData } from "openapi/queries";
 import type { DagRunState, DagRunType } from "openapi/requests/types.gen";
-import { useColorMode } from "src/context/colorMode";
+import { useGroups } from "src/context/groups";
 import { useHover } from "src/context/hover";
-import { useOpenGroups } from "src/context/openGroups";
 import { useTimezone } from "src/context/timezone";
+import { NavigationModes, useNavigation } from "src/hooks/navigation";
+import {
+  GANTT_AXIS_HEIGHT_PX,
+  GANTT_ROW_OFFSET_PX,
+  GANTT_TOP_PADDING_PX,
+} from "src/layouts/Details/Grid/constants";
 import { flattenNodes } from "src/layouts/Details/Grid/utils";
 import { useGridRuns } from "src/queries/useGridRuns";
 import { useGridStructure } from "src/queries/useGridStructure";
-import { useGridTiSummaries } from "src/queries/useGridTISummaries";
-import { getComputedCSSVariableValue } from "src/theme";
+import { useGridTiSummariesStream } from "src/queries/useGridTISummaries";
 import { isStatePending, useAutoRefresh } from "src/utils";
-import { DEFAULT_DATETIME_FORMAT_WITH_TZ, formatDate } from "src/utils/datetimeUtils";
 
-import { createHandleBarClick, createHandleBarHover, createChartOptions } from "./utils";
+import { GanttTimeline } from "./GanttTimeline";
+import { buildGanttRowSegments, computeGanttTimeRangeMs, transformGanttData } from "./utils";
 
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  BarElement,
-  LineElement,
-  Filler,
-  Title,
-  Tooltip,
-  Legend,
-  annotationPlugin,
-  TimeScale,
-);
+const GANTT_STANDALONE_VIRTUALIZER_PADDING_START_PX = GANTT_TOP_PADDING_PX + GANTT_AXIS_HEIGHT_PX;
 
 type Props = {
   readonly dagRunState?: DagRunState | undefined;
   readonly limit: number;
+  readonly offset?: number;
+  readonly runAfterGte?: string | undefined;
+  readonly runAfterLte?: string | undefined;
   readonly runType?: DagRunType | undefined;
+  readonly sharedScrollContainerRef?: RefObject<HTMLDivElement | null>;
   readonly triggeringUser?: string | undefined;
 };
 
-const CHART_PADDING = 36;
-const CHART_ROW_HEIGHT = 20;
-const MIN_BAR_WIDTH = 10;
+export const Gantt = ({
+  dagRunState,
+  limit,
+  offset,
+  runAfterGte,
+  runAfterLte,
+  runType,
+  sharedScrollContainerRef,
+  triggeringUser,
+}: Props) => {
+  const standaloneScrollRef = useRef<HTMLDivElement | null>(null);
+  const usesSharedScroll = sharedScrollContainerRef !== undefined;
 
-export const Gantt = ({ dagRunState, limit, runType, triggeringUser }: Props) => {
-  const { dagId = "", groupId: selectedGroupId, runId = "", taskId: selectedTaskId } = useParams();
-  const { openGroupIds } = useOpenGroups();
-  const deferredOpenGroupIds = useDeferredValue(openGroupIds);
-  const { t: translate } = useTranslation("common");
+  const scrollContainerRef = usesSharedScroll ? sharedScrollContainerRef : standaloneScrollRef;
+
+  const { dagId = "", runId = "" } = useParams();
+  const [searchParams] = useSearchParams();
+  const { openGroupIds, toggleGroupId } = useGroups();
   const { selectedTimezone } = useTimezone();
-  const { colorMode } = useColorMode();
-  const { hoveredTaskId, setHoveredTaskId } = useHover();
-  const navigate = useNavigate();
-  const location = useLocation();
+  const { setHoveredTaskId } = useHover();
 
-  const [
-    lightGridColor,
-    darkGridColor,
-    lightSelectedColor,
-    darkSelectedColor,
-    lightHoverColor,
-    darkHoverColor,
-  ] = useToken("colors", ["gray.200", "gray.800", "blue.200", "blue.800", "blue.100", "blue.900"]);
-  const gridColor = colorMode === "light" ? lightGridColor : darkGridColor;
-  const selectedItemColor = colorMode === "light" ? lightSelectedColor : darkSelectedColor;
-  const hoveredItemColor = colorMode === "light" ? lightHoverColor : darkHoverColor;
+  const filterRoot = searchParams.get("root") ?? undefined;
+  const includeUpstream = searchParams.get("upstream") === "true";
+  const includeDownstream = searchParams.get("downstream") === "true";
+  const depthParam = searchParams.get("depth");
+  const depth = depthParam !== null && depthParam !== "" ? parseInt(depthParam, 10) : undefined;
 
   const { data: gridRuns, isLoading: runsLoading } = useGridRuns({
     dagRunState,
     limit,
+    offset,
+    runAfterGte,
+    runAfterLte,
     runType,
     triggeringUser,
   });
   const { data: dagStructure, isLoading: structureLoading } = useGridStructure({
     dagRunState,
+    depth,
+    includeDownstream,
+    includeUpstream,
     limit,
+    root: filterRoot,
     runType,
     triggeringUser,
   });
   const selectedRun = gridRuns?.find((run) => run.run_id === runId);
   const refetchInterval = useAutoRefresh({ dagId });
 
-  // Get grid summaries for groups (which have min/max times)
-  const { data: gridTiSummaries, isLoading: summariesLoading } = useGridTiSummaries({
+  const { summariesByRunId } = useGridTiSummariesStream({
     dagId,
-    enabled: Boolean(selectedRun),
-    runId,
-    state: selectedRun?.state,
+    runIds: runId && selectedRun ? [runId] : [],
+    states: selectedRun ? [selectedRun.state] : [],
   });
+  const gridTiSummaries = summariesByRunId.get(runId);
+  const summariesLoading = Boolean(runId && selectedRun && !summariesByRunId.has(runId));
 
-  // Get non mapped task instances for tasks (which have start/end times)
-  const { data: taskInstancesData, isLoading: tiLoading } = useTaskInstanceServiceGetTaskInstances(
-    {
-      dagId,
-      dagRunId: runId,
-      mapIndex: [-1],
-    },
+  const { data: ganttData, isLoading: ganttLoading } = useGanttServiceGetGanttData(
+    { dagId, runId },
     undefined,
     {
       enabled: Boolean(dagId) && Boolean(runId) && Boolean(selectedRun),
@@ -141,162 +121,80 @@ export const Gantt = ({ dagRunState, limit, runType, triggeringUser }: Props) =>
     },
   );
 
-  const { flatNodes } = useMemo(
-    () => flattenNodes(dagStructure, deferredOpenGroupIds),
-    [dagStructure, deferredOpenGroupIds],
-  );
+  const { flatNodes } = flattenNodes(dagStructure, openGroupIds);
 
-  const isLoading = runsLoading || structureLoading || summariesLoading || tiLoading;
+  const { setMode } = useNavigation({
+    onToggleGroup: toggleGroupId,
+    runs: gridRuns ?? [],
+    tasks: flatNodes,
+  });
 
-  const currentTime = dayjs().tz(selectedTimezone).format(DEFAULT_DATETIME_FORMAT_WITH_TZ);
+  const isLoading = runsLoading || structureLoading || summariesLoading || ganttLoading;
 
-  const data = useMemo(() => {
-    if (isLoading || runId === "") {
-      return [];
-    }
+  const allTries = ganttData?.task_instances ?? [];
+  const gridSummaries = gridTiSummaries?.task_instances ?? [];
 
-    const gridSummaries = gridTiSummaries?.task_instances ?? [];
-    const taskInstances = taskInstancesData?.task_instances ?? [];
+  const ganttDataItems =
+    isLoading || runId === "" ? [] : transformGanttData({ allTries, flatNodes, gridSummaries });
 
-    return flatNodes
-      .map((node) => {
-        const gridSummary = gridSummaries.find((ti) => ti.task_id === node.id);
+  const rowSegments = buildGanttRowSegments(flatNodes, ganttDataItems);
 
-        if ((node.isGroup ?? node.is_mapped) && gridSummary) {
-          // Use min/max times from grid summary
-          return {
-            isGroup: node.isGroup,
-            isMapped: node.is_mapped,
-            state: gridSummary.state,
-            taskId: gridSummary.task_id,
-            x: [
-              formatDate(gridSummary.min_start_date, selectedTimezone, DEFAULT_DATETIME_FORMAT_WITH_TZ),
-              formatDate(gridSummary.max_end_date, selectedTimezone, DEFAULT_DATETIME_FORMAT_WITH_TZ),
-            ],
-            y: gridSummary.task_id,
-          };
-        } else if (!node.isGroup) {
-          // Individual task - use individual task instance data
-          const taskInstance = taskInstances.find((ti) => ti.task_id === node.id);
+  const { maxMs, minMs } = computeGanttTimeRangeMs({
+    ganttItems: ganttDataItems,
+    selectedRun,
+    selectedTimezone,
+  });
 
-          if (taskInstance) {
-            const hasTaskRunning = isStatePending(taskInstance.state);
-            const endTime = hasTaskRunning ? currentTime : taskInstance.end_date;
+  const virtualizerScrollPaddingStart = usesSharedScroll
+    ? GANTT_ROW_OFFSET_PX
+    : GANTT_STANDALONE_VIRTUALIZER_PADDING_START_PX;
 
-            return {
-              isGroup: node.isGroup,
-              isMapped: node.is_mapped,
-              state: taskInstance.state,
-              taskId: taskInstance.task_id,
-              x: [
-                formatDate(taskInstance.start_date, selectedTimezone, DEFAULT_DATETIME_FORMAT_WITH_TZ),
-                formatDate(endTime, selectedTimezone, DEFAULT_DATETIME_FORMAT_WITH_TZ),
-              ],
-              y: taskInstance.task_id,
-            };
-          }
-        }
-
-        return undefined;
-      })
-      .filter((item) => item !== undefined);
-  }, [flatNodes, gridTiSummaries, taskInstancesData, selectedTimezone, isLoading, runId, currentTime]);
-
-  // Get all unique states and their colors
-  const states = [...new Set(data.map((item) => item.state ?? "none"))];
-  const stateColorTokens = useToken(
-    "colors",
-    states.map((state) => `${state}.solid`),
-  );
-  const stateColorMap = Object.fromEntries(
-    states.map((state, index) => [
-      state,
-      getComputedCSSVariableValue(stateColorTokens[index] ?? "oklch(0.5 0 0)"),
-    ]),
-  );
-
-  const chartData = useMemo(
-    () => ({
-      datasets: [
-        {
-          backgroundColor: data.map((dataItem) => stateColorMap[dataItem.state ?? "none"]),
-          data: Boolean(selectedRun) ? data : [],
-          maxBarThickness: CHART_ROW_HEIGHT,
-          minBarLength: MIN_BAR_WIDTH,
-        },
-      ],
-      labels: flatNodes.map((node) => node.id),
-    }),
-    [data, flatNodes, stateColorMap, selectedRun],
-  );
-
-  const fixedHeight = flatNodes.length * CHART_ROW_HEIGHT + CHART_PADDING;
-  const selectedId = selectedTaskId ?? selectedGroupId;
-
-  const handleBarClick = useMemo(
-    () => createHandleBarClick({ dagId, data, location, navigate, runId }),
-    [data, dagId, runId, navigate, location],
-  );
-
-  const handleBarHover = useMemo(
-    () => createHandleBarHover(data, setHoveredTaskId),
-    [data, setHoveredTaskId],
-  );
-
-  const chartOptions = useMemo(
-    () =>
-      createChartOptions({
-        data,
-        gridColor,
-        handleBarClick,
-        handleBarHover,
-        hoveredId: hoveredTaskId,
-        hoveredItemColor,
-        selectedId,
-        selectedItemColor,
-        selectedRun,
-        selectedTimezone,
-        translate,
-      }),
-    [
-      data,
-      hoveredTaskId,
-      hoveredItemColor,
-      selectedId,
-      selectedItemColor,
-      gridColor,
-      selectedRun,
-      selectedTimezone,
-      translate,
-      handleBarClick,
-      handleBarHover,
-    ],
-  );
-
-  if (runId === "") {
+  if (runId === "" || (!isLoading && !selectedRun)) {
     return undefined;
   }
 
-  const handleChartMouseLeave = () => {
+  const handleStandaloneMouseLeave = () => {
     setHoveredTaskId(undefined);
-
-    // Clear all hover styles when mouse leaves the chart area
-    const allTasks = document.querySelectorAll<HTMLDivElement>('[id*="-"]');
-
-    allTasks.forEach((task) => {
-      task.style.backgroundColor = "";
-    });
   };
 
-  return (
-    <Box height={`${fixedHeight}px`} minW="250px" ml={-2} onMouseLeave={handleChartMouseLeave} w="100%">
-      <Bar
-        data={chartData}
-        options={chartOptions}
-        style={{
-          paddingTop: flatNodes.length === 1 ? 15 : 1.5,
-        }}
+  const timeline =
+    Boolean(selectedRun) && dagId ? (
+      <GanttTimeline
+        dagId={dagId}
+        flatNodes={flatNodes}
+        ganttDataItems={ganttDataItems}
+        gridSummaries={gridSummaries}
+        maxMs={maxMs}
+        minMs={minMs}
+        onSegmentClick={() => setMode(NavigationModes.TI)}
+        rowSegments={rowSegments}
+        runId={runId}
+        scrollContainerRef={scrollContainerRef}
+        virtualizerScrollPaddingStart={virtualizerScrollPaddingStart}
       />
-    </Box>
+    ) : undefined;
+
+  if (usesSharedScroll) {
+    return (
+      <Flex flex={1} flexDirection="column" maxW="100%" minW={0} overflow="clip" pt={0}>
+        {timeline}
+      </Flex>
+    );
+  }
+
+  return (
+    <Flex flex={1} flexDirection="column" maxW="100%" minH={0} minW={0} overflow="hidden">
+      <Box
+        flex={1}
+        minH={0}
+        minW={0}
+        onMouseLeave={handleStandaloneMouseLeave}
+        overflowX="hidden"
+        overflowY="auto"
+        ref={standaloneScrollRef}
+      >
+        {timeline}
+      </Box>
+    </Flex>
   );
 };

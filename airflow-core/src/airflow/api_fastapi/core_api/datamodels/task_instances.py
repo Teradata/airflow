@@ -19,14 +19,17 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import datetime
 from typing import Annotated, Any
+from uuid import UUID
 
 from pydantic import (
     AliasPath,
     AwareDatetime,
     BeforeValidator,
+    Discriminator,
     Field,
     NonNegativeInt,
     StringConstraints,
+    Tag,
     ValidationError,
     field_validator,
     model_validator,
@@ -39,10 +42,17 @@ from airflow.api_fastapi.core_api.datamodels.trigger import TriggerResponse
 from airflow.utils.state import TaskInstanceState
 
 
+class NewTaskResponse(BaseModel):
+    """Lightweight response for new tasks that don't have TaskInstances yet."""
+
+    task_id: str
+    task_display_name: str
+
+
 class TaskInstanceResponse(BaseModel):
     """TaskInstance serializer for responses."""
 
-    id: str
+    id: UUID
     task_id: str
     dag_id: str
     run_id: str = Field(alias="dag_run_id")
@@ -82,9 +92,54 @@ class TaskInstanceResponse(BaseModel):
 
 
 class TaskInstanceCollectionResponse(BaseModel):
-    """Task Instance Collection serializer for responses."""
+    """
+    Task instance collection response supporting both offset and cursor pagination.
+
+    A single flat model is used instead of a discriminated union
+    (``Annotated[Offset | Cursor, Field(discriminator=...)]``) because
+    the OpenAPI ``oneOf`` + ``discriminator`` construct is not handled
+    correctly by ``@hey-api/openapi-ts`` / ``@7nohe/openapi-react-query-codegen``:
+    return types degrade to ``unknown`` in JSDoc and can produce
+    incorrect TypeScript types (see hey-api/openapi-ts#1613, #3270).
+    """
 
     task_instances: Iterable[TaskInstanceResponse]
+    total_entries: int | None = Field(
+        default=None,
+        description="Total number of matching items. Populated for offset pagination, "
+        "``null`` when using cursor pagination.",
+    )
+    next_cursor: str | None = Field(
+        default=None,
+        description="Token pointing to the next page. Populated for cursor pagination, "
+        "``null`` when using offset pagination or when there is no next page.",
+    )
+    previous_cursor: str | None = Field(
+        default=None,
+        description="Token pointing to the previous page. Populated for cursor pagination, "
+        "``null`` when using offset pagination or when on the first page.",
+    )
+
+
+def _task_instance_discriminator(v: Any) -> str:
+    """Discriminate between TaskInstanceResponse and NewTaskResponse in the union."""
+    if isinstance(v, NewTaskResponse):
+        return "new"
+    if isinstance(v, dict):
+        return "new" if "id" not in v else "full"
+    # ORM objects and TaskInstanceResponse instances
+    return "full"
+
+
+class ClearTaskInstanceCollectionResponse(BaseModel):
+    """Response for clear dag run dry run, which may contain new tasks without full TaskInstance data."""
+
+    task_instances: Iterable[
+        Annotated[
+            Annotated[TaskInstanceResponse, Tag("full")] | Annotated[NewTaskResponse, Tag("new")],
+            Discriminator(_task_instance_discriminator),
+        ]
+    ]
     total_entries: int
 
 
@@ -161,12 +216,16 @@ class ClearTaskInstancesBody(StrictBaseModel):
     include_downstream: bool = False
     include_future: bool = False
     include_past: bool = False
-    run_on_latest_version: bool = Field(
-        default=False,
+    run_on_latest_version: bool | None = Field(
+        default=None,
         description="(Experimental) Run on the latest bundle version of the dag after "
-        "clearing the task instances.",
+        "clearing the task instances. "
+        "If not specified, falls back to the DAG-level ``rerun_with_latest_version`` parameter, "
+        "then the ``[core] rerun_with_latest_version`` config option, "
+        "and finally ``False`` (the historical default for clear/rerun).",
     )
     prevent_running_task: bool = False
+    note: Annotated[str, StringConstraints(max_length=1000)] | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -189,7 +248,7 @@ class ClearTaskInstancesBody(StrictBaseModel):
 
 
 class PatchTaskInstanceBody(StrictBaseModel):
-    """Request body for Clear Task Instances endpoint."""
+    """Request body for patching task instance state."""
 
     new_state: TaskInstanceState | None = None
     note: Annotated[str, StringConstraints(max_length=1000)] | None = None
@@ -219,3 +278,5 @@ class BulkTaskInstanceBody(PatchTaskInstanceBody, StrictBaseModel):
 
     task_id: str
     map_index: int | None = None
+    dag_id: str | None = None
+    dag_run_id: str | None = None

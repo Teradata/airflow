@@ -26,7 +26,12 @@ if [[ "$#" != 1 ]]; then
 fi
 
 AIRFLOW_PYTHON_VERSION=${AIRFLOW_PYTHON_VERSION:-3.10.18}
+PYTHON_LTO=${PYTHON_LTO:-true}
 GOLANG_MAJOR_MINOR_VERSION=${GOLANG_MAJOR_MINOR_VERSION:-1.24.4}
+TEMURIN_VERSION=${TEMURIN_VERSION:-11}
+RUSTUP_DEFAULT_TOOLCHAIN=${RUSTUP_DEFAULT_TOOLCHAIN:-stable}
+RUSTUP_VERSION=${RUSTUP_VERSION:-1.29.0}
+COSIGN_VERSION=${COSIGN_VERSION:-3.0.5}
 
 if [[ "${1}" == "runtime" ]]; then
     INSTALLATION_TYPE="RUNTIME"
@@ -64,7 +69,6 @@ libev-dev \
 libev4 \
 libffi-dev \
 libgdbm-compat-dev \
-libgdbm-dev \
 libgdbm-dev \
 libgeos-dev \
 libkrb5-dev \
@@ -159,7 +163,7 @@ function install_docker_cli() {
     apt-get update
     apt-get install ca-certificates curl
     install -m 0755 -d /etc/apt/keyrings
-    curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
+    curl -fsSL --retry 3 --retry-delay 5 https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc
     chmod a+r /etc/apt/keyrings/docker.asc
     # shellcheck disable=SC1091
     echo \
@@ -251,6 +255,26 @@ function install_debian_runtime_dependencies() {
     rm -rf /var/lib/apt/lists/* /var/log/*
 }
 
+function install_cosign() {
+    local arch
+    arch="$(dpkg --print-architecture)"
+    declare -A cosign_sha256s=(
+        # https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign_checksums.txt
+        [amd64]="db15cc99e6e4837daabab023742aaddc3841ce57f193d11b7c3e06c8003642b2"
+        [arm64]="d098f3168ae4b3aa70b4ca78947329b953272b487727d1722cb3cb098a1a20ab"
+    )
+    local cosign_sha256="${cosign_sha256s[${arch}]}"
+    if [[ -z "${cosign_sha256}" ]]; then
+        echo "Unsupported architecture for cosign: ${arch}"
+        exit 1
+    fi
+    curl -fsSL --retry 3 --retry-delay 5 \
+        "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-${arch}" \
+        -o /tmp/cosign
+    echo "${cosign_sha256}  /tmp/cosign" | sha256sum --check
+    chmod +x /tmp/cosign
+}
+
 function install_python() {
     # If system python (3.11 in bookworm) is installed (via automatic installation of some dependencies for example), we need
     # to fail and make sure that it is not there, because there can be strange interactions if we install
@@ -273,34 +297,59 @@ function install_python() {
         echo "GOOD! System python is not installed - OK"
         echo
     fi
-    wget -O python.tar.xz "https://www.python.org/ftp/python/${AIRFLOW_PYTHON_VERSION%%[a-z]*}/Python-${AIRFLOW_PYTHON_VERSION}.tar.xz"
-    wget -O python.tar.xz.asc "https://www.python.org/ftp/python/${AIRFLOW_PYTHON_VERSION%%[a-z]*}/Python-${AIRFLOW_PYTHON_VERSION}.tar.xz.asc";
-    declare -A keys=(
-        # gpg: key B26995E310250568: public key "\xc5\x81ukasz Langa (GPG langa.pl) <lukasz@langa.pl>" imported
-        # https://peps.python.org/pep-0596/#release-manager-and-crew
-        [3.9]="E3FF2839C048B25C084DEBE9B26995E310250568"
-        # gpg: key 64E628F8D684696D: public key "Pablo Galindo Salgado <pablogsal@gmail.com>" imported
-        # https://peps.python.org/pep-0619/#release-manager-and-crew
-        [3.10]="A035C8C19219BA821ECEA86B64E628F8D684696D"
-        # gpg: key 64E628F8D684696D: public key "Pablo Galindo Salgado <pablogsal@gmail.com>" imported
-        # https://peps.python.org/pep-0664/#release-manager-and-crew
-        [3.11]="A035C8C19219BA821ECEA86B64E628F8D684696D"
-        # gpg: key A821E680E5FA6305: public key "Thomas Wouters <thomas@python.org>" imported
-        # https://peps.python.org/pep-0693/#release-manager-and-crew
-        [3.12]="7169605F62C751356D054A26A821E680E5FA6305"
-        # gpg: key A821E680E5FA6305: public key "Thomas Wouters <thomas@python.org>" imported
-        # https://peps.python.org/pep-0719/#release-manager-and-crew
-        [3.13]="7169605F62C751356D054A26A821E680E5FA6305"
-    )
+    wget --tries=3 --waitretry=5 -O python.tar.xz "https://www.python.org/ftp/python/${AIRFLOW_PYTHON_VERSION%%[a-z]*}/Python-${AIRFLOW_PYTHON_VERSION}.tar.xz"
+    local major_minor_version
     major_minor_version="${AIRFLOW_PYTHON_VERSION%.*}"
+    local major minor
+    major="${major_minor_version%.*}"
+    minor="${major_minor_version#*.}"
     echo "Verifying Python ${AIRFLOW_PYTHON_VERSION} (${major_minor_version})"
-    GNUPGHOME="$(mktemp -d)"; export GNUPGHOME;
-    gpg_key="${keys[${major_minor_version}]}"
-    echo "Using GPG key ${gpg_key}"
-    gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys "${gpg_key}"
-    gpg --batch --verify python.tar.xz.asc python.tar.xz;
-    gpgconf --kill all
-    rm -rf "$GNUPGHOME" python.tar.xz.asc
+    if [[ "${major}" -gt 3 ]] || [[ "${major}" -eq 3 && "${minor}" -ge 11 ]]; then
+        # Sigstore verification for Python >= 3.11 (PEP 761)
+        declare -A sigstore_identities=(
+            # https://peps.python.org/pep-0664/#release-manager-and-crew
+            [3.11]="pablogsal@python.org"
+            # https://peps.python.org/pep-0693/#release-manager-and-crew
+            [3.12]="thomas@python.org"
+            # https://peps.python.org/pep-0719/#release-manager-and-crew
+            [3.13]="thomas@python.org"
+            # https://peps.python.org/pep-0745/#release-manager-and-crew
+            [3.14]="hugo@python.org"
+        )
+        declare -A sigstore_issuers=(
+            [3.11]="https://accounts.google.com"
+            [3.12]="https://accounts.google.com"
+            [3.13]="https://accounts.google.com"
+            [3.14]="https://github.com/login/oauth"
+        )
+        wget --tries=3 --waitretry=5 -O python.tar.xz.sigstore \
+            "https://www.python.org/ftp/python/${AIRFLOW_PYTHON_VERSION%%[a-z]*}/Python-${AIRFLOW_PYTHON_VERSION}.tar.xz.sigstore"
+        install_cosign
+        local identity="${sigstore_identities[${major_minor_version}]}"
+        local issuer="${sigstore_issuers[${major_minor_version}]}"
+        /tmp/cosign verify-blob \
+            --bundle python.tar.xz.sigstore \
+            --certificate-identity "${identity}" \
+            --certificate-oidc-issuer "${issuer}" \
+            python.tar.xz
+        rm -f python.tar.xz.sigstore /tmp/cosign
+    else
+        # PGP verification for Python 3.10
+        declare -A keys=(
+            # gpg: key 64E628F8D684696D: public key "Pablo Galindo Salgado <pablogsal@gmail.com>" imported
+            # https://peps.python.org/pep-0619/#release-manager-and-crew
+            [3.10]="A035C8C19219BA821ECEA86B64E628F8D684696D"
+        )
+        wget --tries=3 --waitretry=5 -O python.tar.xz.asc \
+            "https://www.python.org/ftp/python/${AIRFLOW_PYTHON_VERSION%%[a-z]*}/Python-${AIRFLOW_PYTHON_VERSION}.tar.xz.asc"
+        GNUPGHOME="$(mktemp -d)"; export GNUPGHOME
+        local gpg_key="${keys[${major_minor_version}]}"
+        echo "Using GPG key ${gpg_key}"
+        gpg --batch --import "/scripts/docker/keys/python-${major_minor_version}.asc"
+        gpg --batch --verify python.tar.xz.asc python.tar.xz
+        gpgconf --kill all
+        rm -rf "${GNUPGHOME}" python.tar.xz.asc
+    fi
     mkdir -p /usr/src/python
     tar --extract --directory /usr/src/python --strip-components=1 --file python.tar.xz
     rm python.tar.xz
@@ -311,25 +360,91 @@ function install_python() {
     EXTRA_CFLAGS="${EXTRA_CFLAGS:-} -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer";
     LDFLAGS="$(dpkg-buildflags --get LDFLAGS)"
     LDFLAGS="${LDFLAGS:--Wl},--strip-all"
-    ./configure --enable-optimizations --prefix=/usr/python/ --with-ensurepip --build="$gnuArch" \
-        --enable-loadable-sqlite-extensions --enable-option-checking=fatal \
-            --enable-shared --with-lto
-    make -s -j "$(nproc)" "EXTRA_CFLAGS=${EXTRA_CFLAGS:-}" \
-        "LDFLAGS=${LDFLAGS:--Wl},-rpath='\$\$ORIGIN/../lib'" python
-    make -s -j "$(nproc)" install
+    # Link-Time Optimization (LTO) uses MD5 checksums for object file verification during
+    # compilation. In FIPS mode, MD5 is blocked as a non-approved algorithm, causing builds
+    # to fail. The PYTHON_LTO variable allows disabling LTO for FIPS-compliant builds.
+    # See: https://github.com/apache/airflow/issues/58337
+    local lto_option=""
+    if [[ "${PYTHON_LTO:-true}" == "true" ]]; then
+        lto_option="--with-lto"
+    fi
+    local build_log
+    build_log=$(mktemp)
+    echo "Building Python ${AIRFLOW_PYTHON_VERSION} from source..."
+    if ! (
+        ./configure --enable-optimizations --prefix=/usr/python/ --with-ensurepip --build="$gnuArch" \
+            --enable-loadable-sqlite-extensions --enable-option-checking=fatal \
+                --enable-shared ${lto_option} && \
+        make -s -j "$(nproc)" "EXTRA_CFLAGS=${EXTRA_CFLAGS:-}" \
+            "LDFLAGS=${LDFLAGS:--Wl},-rpath='\$\$ORIGIN/../lib'" python && \
+        make -s -j "$(nproc)" install
+    ) > "${build_log}" 2>&1; then
+        echo
+        echo "ERROR! Python build failed. Build output:"
+        echo
+        cat "${build_log}"
+        rm -f "${build_log}"
+        exit 1
+    fi
+    rm -f "${build_log}"
     cd /
     rm -rf /usr/src/python
     find /usr/python -depth \
       \( \
         \( -type d -a \( -name test -o -name tests -o -name idle_test \) \) \
-        -o \( -type f -a \( -name '*.pyc' -o -name '*.pyo' -o -name 'libpython*.a' \) \) \
+        -o \( -type f -a \( -name 'libpython*.a' \) \) \
     \) -exec rm -rf '{}' +
     link_python
 }
 
 function install_golang() {
-    curl "https://dl.google.com/go/go${GOLANG_MAJOR_MINOR_VERSION}.linux-$(dpkg --print-architecture).tar.gz" -o "go${GOLANG_MAJOR_MINOR_VERSION}.linux.tar.gz"
+    curl --retry 3 --retry-delay 5 "https://dl.google.com/go/go${GOLANG_MAJOR_MINOR_VERSION}.linux-$(dpkg --print-architecture).tar.gz" -o "go${GOLANG_MAJOR_MINOR_VERSION}.linux.tar.gz"
     rm -rf /usr/local/go && tar -C /usr/local -xzf go"${GOLANG_MAJOR_MINOR_VERSION}".linux.tar.gz
+}
+
+function install_jdk() {
+    # Install Eclipse Temurin JDK from the Adoptium apt repository (https://adoptium.net/installation/linux/).
+    apt-get update -qq
+    apt-get install -y --no-install-recommends wget gnupg apt-transport-https ca-certificates
+    mkdir -p /etc/apt/keyrings
+    wget -qO - https://packages.adoptium.net/artifactory/api/gpg/key/public \
+        | tee /etc/apt/keyrings/adoptium.asc > /dev/null
+    # shellcheck disable=SC1091
+    DISTRO_CODENAME=$(. /etc/os-release; echo "${VERSION_CODENAME}")
+    echo "deb [signed-by=/etc/apt/keyrings/adoptium.asc] \
+https://packages.adoptium.net/artifactory/deb ${DISTRO_CODENAME} main" \
+        | tee /etc/apt/sources.list.d/adoptium.list > /dev/null
+    apt-get update -qq
+    apt-get install -y --no-install-recommends "temurin-${TEMURIN_VERSION}-jdk"
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+}
+
+function install_rustup() {
+    local arch
+    arch="$(dpkg --print-architecture)"
+    declare -A rustup_targets=(
+        [amd64]="x86_64-unknown-linux-gnu"
+        [arm64]="aarch64-unknown-linux-gnu"
+    )
+    declare -A rustup_sha256s=(
+        # https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/{target}/rustup-init.sha256
+        [amd64]="4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10"
+        [arm64]="9732d6c5e2a098d3521fca8145d826ae0aaa067ef2385ead08e6feac88fa5792"
+    )
+    local target="${rustup_targets[${arch}]}"
+    local rustup_sha256="${rustup_sha256s[${arch}]}"
+    if [[ -z "${target}" ]]; then
+        echo "Unsupported architecture for rustup: ${arch}"
+        exit 1
+    fi
+    curl --proto '=https' --tlsv1.2 -sSf --retry 3 --retry-delay 5 \
+        "https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION}/${target}/rustup-init" \
+        -o /tmp/rustup-init
+    echo "${rustup_sha256}  /tmp/rustup-init" | sha256sum --check
+    chmod +x /tmp/rustup-init
+    /tmp/rustup-init -y --default-toolchain "${RUSTUP_DEFAULT_TOOLCHAIN}"
+    rm -f /tmp/rustup-init
 }
 
 function apt_clean() {
@@ -347,8 +462,10 @@ else
     install_debian_dev_dependencies
     install_python
     install_additional_dev_dependencies
+    install_rustup
     if [[ "${INSTALLATION_TYPE}" == "CI" ]]; then
         install_golang
+        install_jdk
     fi
     install_docker_cli
     apt_clean

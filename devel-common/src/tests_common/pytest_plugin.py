@@ -21,17 +21,15 @@ import importlib
 import json
 import logging
 import os
-import platform
 import re
 import subprocess
 import sys
-import uuid
 import warnings
 from collections.abc import Callable, Generator
 from contextlib import ExitStack, suppress
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
 from unittest import mock
 
 import pytest
@@ -53,8 +51,9 @@ if TYPE_CHECKING:
     from airflow.sdk.execution_time.comms import StartupDetails, ToSupervisor
     from airflow.sdk.execution_time.task_runner import RuntimeTaskInstance
     from airflow.sdk.types import DagRunProtocol, Operator
-    from airflow.serialization.serialized_objects import SerializedDAG
-    from airflow.timetables.base import DataInterval
+    from airflow.serialization.definitions.dag import SerializedDAG
+    from airflow.timetables.base import DagRunInfo, DataInterval
+    from airflow.triggers.base import StartTriggerArgs
     from airflow.typing_compat import Self
     from airflow.utils.state import DagRunState, TaskInstanceState
 
@@ -152,8 +151,8 @@ AIRFLOW_PYPROJECT_TOML_FILE_PATH = AIRFLOW_ROOT_PATH / "pyproject.toml"
 AIRFLOW_CORE_SOURCES_PATH = AIRFLOW_ROOT_PATH / "airflow-core" / "src"
 AIRFLOW_CORE_TESTS_PATH = AIRFLOW_ROOT_PATH / "airflow-core" / "tests"
 AIRFLOW_PROVIDERS_ROOT_PATH = AIRFLOW_ROOT_PATH / "providers"
-AIRFLOW_GENERATED_PROVIDER_DEPENDENCIES_PATH = AIRFLOW_ROOT_PATH / "generated" / "provider_dependencies.json"
-AIRFLOW_GENERATED_PROVIDER_DEPENDENCIES_HASH_PATH = (
+PROVIDER_DEPENDENCIES_JSON_PATH = AIRFLOW_ROOT_PATH / "generated" / "provider_dependencies.json"
+PROVIDER_DEPENDENCIES_JSON_HASH_PATH = (
     AIRFLOW_ROOT_PATH / "generated" / "provider_dependencies.json.sha256sum"
 )
 UPDATE_PROVIDER_DEPENDENCIES_SCRIPT = (
@@ -162,7 +161,7 @@ UPDATE_PROVIDER_DEPENDENCIES_SCRIPT = (
 
 # Deliberately copied from breeze - we want to keep it in sync but we do not want to import code from
 # Breeze here as we want to do it quickly
-ALL_PYPROJECT_TOML_FILES = []
+ALL_PYPROJECT_TOML_FILES: list[Path] = []
 
 
 def get_all_provider_pyproject_toml_provider_yaml_files() -> Generator[Path, None, None]:
@@ -194,19 +193,13 @@ def _calculate_provider_deps_hash():
     return hasher.hexdigest()
 
 
-if (
-    not AIRFLOW_GENERATED_PROVIDER_DEPENDENCIES_PATH.exists()
-    or not AIRFLOW_GENERATED_PROVIDER_DEPENDENCIES_HASH_PATH.exists()
-):
+if not PROVIDER_DEPENDENCIES_JSON_PATH.exists() or not PROVIDER_DEPENDENCIES_JSON_HASH_PATH.exists():
     subprocess.check_call(["uv", "run", UPDATE_PROVIDER_DEPENDENCIES_SCRIPT.as_posix()])
 else:
     calculated_provider_deps_hash = _calculate_provider_deps_hash()
-    if (
-        calculated_provider_deps_hash.strip()
-        != AIRFLOW_GENERATED_PROVIDER_DEPENDENCIES_HASH_PATH.read_text().strip()
-    ):
+    if calculated_provider_deps_hash.strip() != PROVIDER_DEPENDENCIES_JSON_HASH_PATH.read_text().strip():
         subprocess.check_call(["uv", "run", UPDATE_PROVIDER_DEPENDENCIES_SCRIPT.as_posix()])
-        AIRFLOW_GENERATED_PROVIDER_DEPENDENCIES_HASH_PATH.write_text(calculated_provider_deps_hash)
+        PROVIDER_DEPENDENCIES_JSON_HASH_PATH.write_text(calculated_provider_deps_hash)
 # End of copied code from breeze
 
 os.environ["AIRFLOW__CORE__ALLOWED_DESERIALIZATION_CLASSES"] = "airflow.*\nunit.*\n"
@@ -224,7 +217,7 @@ def mock_plugins_manager_for_all_non_db_tests():
         return
     from tests_common.test_utils.mock_plugins import mock_plugin_manager
 
-    with mock_plugin_manager() as _fixture:
+    with mock_plugin_manager(plugins=[]) as _fixture:
         yield _fixture
 
 
@@ -232,11 +225,15 @@ os.environ["AIRFLOW__CORE__DAGS_FOLDER"] = os.fspath(AIRFLOW_CORE_TESTS_PATH / "
 os.environ["AIRFLOW__CORE__UNIT_TEST_MODE"] = "True"
 os.environ["AWS_DEFAULT_REGION"] = os.environ.get("AWS_DEFAULT_REGION") or "us-east-1"
 os.environ["CREDENTIALS_DIR"] = os.environ.get("CREDENTIALS_DIR") or "/files/airflow-breeze-config/keys"
-
-if platform.system() == "Darwin":
-    # mocks from unittest.mock work correctly in subprocesses only if they are created by "fork" method
-    # but macOS uses "spawn" by default
-    os.environ["AIRFLOW__CORE__MP_START_METHOD"] = "fork"
+# PyJWT 2.12.0 (2026-03-12) added strict type validation that rejects iss=None.
+# Current main's airflow-core deletes iss from the claims when the configured
+# `[api_auth] jwt_issuer` is falsy (commit a440d1db93, 2026-01-31), but the
+# `Compat 3.0.x` matrix tests install older airflow-core releases (e.g. 3.0.6,
+# 2025-08-25) that predate that fix. Setting a default test issuer here keeps
+# every JWT-generating test path safe across all supported airflow-core versions
+# without leaking the upper bound to user-facing dependencies. Tests that need
+# to override this still can via `conf_vars(...)`.
+os.environ.setdefault("AIRFLOW__API_AUTH__JWT_ISSUER", "test-airflow-issuer")
 
 
 @pytest.fixture
@@ -393,6 +390,12 @@ def pytest_addoption(parser: pytest.Parser):
         help="Disable internal capture warnings.",
     )
     group.addoption(
+        "--load-config",
+        action="store",
+        dest="load_config",
+        help="[DANGER] Load an airflow config file instead of test environment defaults [DANGER]",
+    )
+    group.addoption(
         "--warning-output-path",
         action="store",
         dest="warning_output_path",
@@ -421,6 +424,19 @@ def initialize_airflow_tests(request):
     airflow_home = os.environ.get("AIRFLOW_HOME") or os.path.join(home, "airflow")
 
     print(f"Home of the user: {home}\nAirflow home {airflow_home}")
+
+    if request.config.option.load_config:
+        from airflow.configuration import AIRFLOW_CONFIG, conf, load_standard_airflow_configuration
+
+        saved_af_conf = AIRFLOW_CONFIG
+        AIRFLOW_CONFIG = request.config.option.load_config
+        try:
+            load_standard_airflow_configuration(conf)
+        except:
+            raise
+        finally:
+            AIRFLOW_CONFIG = saved_af_conf
+        conf.validate()
 
     if not skip_db_tests and not request.config.option.no_db_init:
         _initialize_airflow_db(request.config.option.db_init, airflow_home)
@@ -648,37 +664,6 @@ def skip_quarantined_test(item):
         )
 
 
-def skip_db_test(item):
-    if next(item.iter_markers(name="db_test"), None):
-        if next(item.iter_markers(name="non_db_test_override"), None):
-            # non_db_test can override the db_test set for example on module or class level
-            return
-        pytest.skip(
-            f"The test is skipped as it is DB test and --skip-db-tests is flag is passed to pytest. {item}"
-        )
-    if next(item.iter_markers(name="backend"), None):
-        # also automatically skip tests marked with `backend` marker as they are implicitly
-        # db tests
-        pytest.skip(
-            f"The test is skipped as it is DB test and --skip-db-tests is flag is passed to pytest. {item}"
-        )
-
-
-def only_run_db_test(item):
-    if next(item.iter_markers(name="db_test"), None) and not next(
-        item.iter_markers(name="non_db_test_override"), None
-    ):
-        # non_db_test at individual level can override the db_test set for example on module or class level
-        return
-    if next(item.iter_markers(name="backend"), None):
-        # Also do not skip the tests marked with `backend` marker - as it is implicitly a db test
-        return
-    pytest.skip(
-        f"The test is skipped as it is not a DB tests "
-        f"and --run-db-tests-only flag is passed to pytest. {item}"
-    )
-
-
 def skip_if_integration_disabled(marker, item):
     integration_name = marker.args[0]
     environment_variable_name = "INTEGRATION_" + integration_name.upper()
@@ -725,6 +710,43 @@ def skip_if_credential_file_missing(item):
             pytest.skip(f"The test requires credential file {credential_path}: {item}")
 
 
+def _is_db_test(item) -> bool:
+    """Check if a test item should be treated as a DB test."""
+    if next(item.iter_markers(name="db_test"), None):
+        if next(item.iter_markers(name="non_db_test_override"), None):
+            return False
+        return True
+    if next(item.iter_markers(name="backend"), None):
+        return True
+    return False
+
+
+def pytest_collection_modifyitems(config, items):
+    """Deselect DB/non-DB tests early so pytest-xdist workers never receive them.
+
+    Previously these tests were skipped at runtime via pytest_runtest_setup, which
+    still required every xdist worker to import the test modules. With thousands of
+    DB tests being skipped in non-DB runs, this caused excessive memory usage — enough
+    to OOM on Python 3.14 CI runners. Deselecting during collection avoids distributing
+    these items to workers entirely.
+    """
+    if not skip_db_tests and not run_db_tests_only:
+        return
+
+    selected = []
+    deselected = []
+    for item in items:
+        is_db = _is_db_test(item)
+        if (skip_db_tests and is_db) or (run_db_tests_only and not is_db):
+            deselected.append(item)
+        else:
+            selected.append(item)
+
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = selected
+
+
 def pytest_runtest_setup(item):
     selected_integrations_list = item.config.option.integration
 
@@ -750,10 +772,6 @@ def pytest_runtest_setup(item):
         skip_long_running_test(item)
     if not include_quarantined:
         skip_quarantined_test(item)
-    if skip_db_tests:
-        skip_db_test(item)
-    if run_db_tests_only:
-        only_run_db_test(item)
     skip_if_credential_file_missing(item)
 
 
@@ -814,6 +832,8 @@ class DagMaker(Generic[Dag], Protocol):
 
     def get_serialized_data(self) -> dict[str, Any]: ...
 
+    def sync_dag_to_db(self) -> None: ...
+
     def create_dagrun(
         self,
         run_id: str = ...,
@@ -824,6 +844,15 @@ class DagMaker(Generic[Dag], Protocol):
     ) -> DagRun: ...
 
     def create_dagrun_after(self, dagrun: DagRun, **kwargs) -> DagRun: ...
+
+    def create_ti(
+        self,
+        task_id: str,
+        dag_run: DagRun | None = ...,
+        dag_run_kwargs: dict | None = ...,
+        map_index: int = ...,
+        **kwargs,
+    ) -> TaskInstance: ...
 
     def run_ti(
         self,
@@ -844,6 +873,9 @@ class DagMaker(Generic[Dag], Protocol):
         session: Session | None = None,
         **kwargs,
     ) -> Self: ...
+
+    @property
+    def serialized_dag(self) -> SerializedDAG: ...
 
 
 @pytest.fixture
@@ -883,7 +915,13 @@ def dag_maker(request) -> Generator[DagMaker, None, None]:
     # This fixture is "called" early on in the pytest collection process, and
     # if we import airflow.* here the wrong (non-test) config will be loaded
     # and "baked" in to various constants
-    from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS, AIRFLOW_V_3_1_PLUS, NOTSET
+    from tests_common.test_utils.version_compat import (
+        AIRFLOW_V_3_0_PLUS,
+        AIRFLOW_V_3_1_PLUS,
+        AIRFLOW_V_3_2_PLUS,
+        AIRFLOW_V_3_3_PLUS,
+        NOTSET,
+    )
 
     want_serialized = False
     want_activate_assets = True  # Only has effect if want_serialized=True on Airflow 3.
@@ -904,7 +942,10 @@ def dag_maker(request) -> Generator[DagMaker, None, None]:
             from airflow.models import DagBag
 
             # Keep all the serialized dags we've created in this test
-            self.dagbag = DagBag(os.devnull, include_examples=False)
+            if AIRFLOW_V_3_3_PLUS:
+                self.dagbag = DagBag(os.devnull)
+            else:
+                self.dagbag = DagBag(os.devnull, include_examples=False)  # type: ignore[call-arg]
 
         def __enter__(self):
             self.serialized_model = None
@@ -916,17 +957,22 @@ def dag_maker(request) -> Generator[DagMaker, None, None]:
                 class DAGProxy(lazy_object_proxy.Proxy):
                     """Wrapper to make test patterns work with serialized dag."""
 
-                    task = factory.dag.task  # Expose the @dag.task decorator.
+                    @property
+                    def task(self):
+                        # Forward explicitly so Proxy binding does not leak the proxy
+                        # instance into the decorator callable on Python 3.14.
+                        return factory.dag.task
 
                     # When adding a task to the dag, automatically re-serialize.
                     def add_task(self, task):
                         factory.dag.add_task(task)
                         factory._make_serdag(factory.dag)
 
-                return DAGProxy(self._serialized_dag)
+                return DAGProxy(lambda: self.serialized_dag)
             return self.dag
 
-        def _serialized_dag(self):
+        @property
+        def serialized_dag(self):
             return self.serialized_model.dag
 
         def get_serialized_data(self):
@@ -965,7 +1011,13 @@ def dag_maker(request) -> Generator[DagMaker, None, None]:
                     AssetModel.producing_tasks.any(TaskOutletAssetReference.dag_id == self.dag.dag_id),
                 )
 
-            assets = self.session.scalars(select(AssetModel).where(assets_select_condition)).all()
+            assets = select(AssetModel).where(assets_select_condition).cte()
+
+            if not AIRFLOW_V_3_2_PLUS:
+                assets = self.session.scalars(
+                    select(AssetModel).join(assets, AssetModel.id == AssetModel.id)
+                ).all()
+
             SchedulerJobRunner._activate_referenced_assets(assets, session=self.session)
 
         def __exit__(self, type, value, traceback):
@@ -1045,11 +1097,14 @@ def dag_maker(request) -> Generator[DagMaker, None, None]:
             self._bag_dag_compat(dag)
             self.session.flush()
 
+        def sync_dag_to_db(self):
+            self._make_serdag(self.dag)
+
         def create_dagrun(self, *, logical_date=NOTSET, **kwargs):
             from airflow.utils.state import DagRunState
             from airflow.utils.types import DagRunType
 
-            timezone = _import_timezone()
+            airflow_timezone = _import_timezone()
 
             if AIRFLOW_V_3_0_PLUS:
                 from airflow.utils.types import DagRunTriggeredByType
@@ -1065,7 +1120,7 @@ def dag_maker(request) -> Generator[DagMaker, None, None]:
                 )
                 logical_date = kwargs.pop("execution_date")
 
-            dag = self._serialized_dag()
+            dag = self.serialized_dag
             kwargs = {
                 "state": DagRunState.RUNNING,
                 "start_date": self.start_date,
@@ -1084,8 +1139,12 @@ def dag_maker(request) -> Generator[DagMaker, None, None]:
                 if run_type == DagRunType.MANUAL:
                     logical_date = self.start_date
                 else:
-                    logical_date = dag.next_dagrun_info(None).logical_date
-            logical_date = timezone.coerce_datetime(logical_date)
+                    if AIRFLOW_V_3_2_PLUS:
+                        next_run_kwargs = dict(last_automated_run_info=None)
+                    else:
+                        next_run_kwargs = dict(last_automated_dagrun=None)
+                    logical_date = dag.next_dagrun_info(**next_run_kwargs).logical_date
+            logical_date = airflow_timezone.coerce_datetime(logical_date)
 
             data_interval = None
             try:
@@ -1109,13 +1168,15 @@ def dag_maker(request) -> Generator[DagMaker, None, None]:
                     if AIRFLOW_V_3_0_PLUS:
                         kwargs["run_id"] = dag.timetable.generate_run_id(
                             run_type=run_type,
-                            run_after=logical_date or timezone.coerce_datetime(timezone.utcnow()),
+                            run_after=logical_date
+                            or airflow_timezone.coerce_datetime(airflow_timezone.utcnow()),
                             data_interval=data_interval,
                         )
                     else:
                         kwargs["run_id"] = dag.timetable.generate_run_id(
                             run_type=run_type,
-                            logical_date=logical_date or timezone.coerce_datetime(timezone.utcnow()),
+                            logical_date=logical_date
+                            or airflow_timezone.coerce_datetime(airflow_timezone.utcnow()),
                             data_interval=data_interval,
                         )
             kwargs["run_type"] = run_type
@@ -1123,26 +1184,36 @@ def dag_maker(request) -> Generator[DagMaker, None, None]:
             if AIRFLOW_V_3_0_PLUS:
                 kwargs.setdefault("triggered_by", DagRunTriggeredByType.TEST)
                 kwargs["logical_date"] = logical_date
-                kwargs.setdefault("run_after", data_interval[-1] if data_interval else timezone.utcnow())
+                kwargs.setdefault(
+                    "run_after", data_interval[-1] if data_interval else airflow_timezone.utcnow()
+                )
             else:
                 kwargs.pop("triggered_by", None)
                 kwargs["execution_date"] = logical_date
 
             self.dag_run = dag.create_dagrun(**kwargs)
             for ti in self.dag_run.task_instances:
-                # This need to always operate on the _real_ dag
-                ti.refresh_from_task(self.dag.get_task(ti.task_id))
+                if AIRFLOW_V_3_3_PLUS:
+                    ti.refresh_from_task(dag.get_task(ti.task_id), dag_run=self.dag_run)
+                elif AIRFLOW_V_3_0_PLUS:
+                    ti.refresh_from_task(dag.get_task(ti.task_id))
+                else:
+                    ti.refresh_from_task(self.dag.get_task(ti.task_id))
             self.session.commit()
             return self.dag_run
 
         def create_dagrun_after(self, dagrun, **kwargs):
-            sdag = self._serialized_dag()
+            sdag = self.serialized_dag
             if AIRFLOW_V_3_1_PLUS:
                 from airflow.models.dag import get_run_data_interval
 
-                next_info = sdag.next_dagrun_info(get_run_data_interval(sdag.timetable, dagrun))
+                interval = get_run_data_interval(sdag.timetable, dagrun)
+                last_run_info = self._get_run_info(dagrun, sdag, interval)
+                next_info = sdag.next_dagrun_info(last_automated_run_info=last_run_info)
             else:
-                next_info = sdag.next_dagrun_info(sdag.get_run_data_interval(dagrun))
+                interval = sdag.get_run_data_interval(dagrun)
+                last_run_info = self._get_run_info(dagrun, sdag, interval)
+                next_info = sdag.next_dagrun_info(last_automated_run_info=last_run_info)
             if next_info is None:
                 raise ValueError(f"cannot create run after {dagrun}")
             return self.create_dagrun(
@@ -1151,15 +1222,29 @@ def dag_maker(request) -> Generator[DagMaker, None, None]:
                 **kwargs,
             )
 
-        def run_ti(self, task_id, dag_run=None, dag_run_kwargs=None, map_index=-1, **kwargs):
-            """
-            Create a dagrun and run a specific task instance with proper task refresh.
+        def _get_run_info(self, dagrun: DagRun, serdag: SerializedDAG, interval: DataInterval) -> DagRunInfo:
+            from airflow.timetables.base import DagRunInfo
 
-            This is a convenience method for running a single task instance:
+            if AIRFLOW_V_3_2_PLUS:
+                return serdag.timetable.run_info_from_dag_run(dag_run=dagrun)
+
+            airflow_timezone = _import_timezone()
+            return DagRunInfo(
+                run_after=airflow_timezone.coerce_datetime(dagrun.run_after),
+                data_interval=interval,
+                partition_date=None,
+                partition_key=None,
+            )
+
+        def create_ti(self, task_id, dag_run=None, dag_run_kwargs=None, map_index=-1):
+            """
+            Create a specific task instance with proper task refresh.
+
+            This is a convenience method for creating a single task instance:
+
             1. Create a dagrun if it does not exist
             2. Get the specific task instance by task_id
             3. Refresh the task instance from the DAG task
-            4. Run the task instance
 
             Returns the created TaskInstance.
             """
@@ -1174,8 +1259,24 @@ def dag_maker(request) -> Generator[DagMaker, None, None]:
                     f"Task instance with task_id '{task_id}' not found in dag run. "
                     f"Available task_ids: {available_task_ids}"
                 )
-            task = self.dag.get_task(ti.task_id)
+            if AIRFLOW_V_3_2_PLUS:
+                ti.refresh_from_task(self.serialized_dag.get_task(task_id))
+            else:
+                ti.refresh_from_task(self.dag.get_task(task_id))
+            return ti
 
+        def run_ti(self, task_id, dag_run=None, dag_run_kwargs=None, map_index=-1, **kwargs):
+            """
+            Run a specific task instance with proper task refresh.
+
+            This is a convenience method for running a single task instance:
+
+            1. Call ``create_ti()`` to obtain the task instance
+            2. Run the task instance
+
+            Returns the created and run TaskInstance.
+            """
+            task = self.dag.get_task(task_id)
             if not AIRFLOW_V_3_1_PLUS:
                 # Airflow <3.1 has a bug for DecoratedOperator has an unused signature for
                 # `DecoratedOperator._handle_output` for xcom_push
@@ -1188,8 +1289,14 @@ def dag_maker(request) -> Generator[DagMaker, None, None]:
                 #                                                                                      ^^^^^^^^^^^^^^
                 # E   AttributeError: '_PythonDecoratedOperator' object has no attribute 'xcom_push'
                 task.xcom_push = lambda *args, **kwargs: None
-            ti.refresh_from_task(task)
-            ti.run(**kwargs)
+
+            ti = self.create_ti(task_id, dag_run=dag_run, dag_run_kwargs=dag_run_kwargs, map_index=map_index)
+            if AIRFLOW_V_3_2_PLUS:
+                from tests_common.test_utils.taskinstance import run_task_instance
+
+                run_task_instance(ti, task, **kwargs)
+            else:
+                ti.run(**kwargs)
             return ti
 
         def sync_dagbag_to_db(self):
@@ -1259,10 +1366,16 @@ def dag_maker(request) -> Generator[DagMaker, None, None]:
             self.bundle_name = bundle_name or "dag_maker"
             self.bundle_version = bundle_version
             if AIRFLOW_V_3_0_PLUS:
+                from sqlalchemy import func, select
+
                 from airflow.models.dagbundle import DagBundleModel
 
                 if (
-                    self.session.query(DagBundleModel).filter(DagBundleModel.name == self.bundle_name).count()
+                    self.session.scalar(
+                        select(func.count())
+                        .select_from(DagBundleModel)
+                        .where(DagBundleModel.name == self.bundle_name)
+                    )
                     == 0
                 ):
                     self.session.add(DagBundleModel(name=self.bundle_name))
@@ -1292,39 +1405,25 @@ def dag_maker(request) -> Generator[DagMaker, None, None]:
                     self.session.rollback()
 
                     if AIRFLOW_V_3_0_PLUS:
+                        from sqlalchemy import delete
+
                         from airflow.models.dag_version import DagVersion
 
-                        self.session.query(DagRun).filter(DagRun.dag_id.in_(dag_ids)).delete(
-                            synchronize_session=False,
-                        )
-                        self.session.query(TaskInstance).filter(TaskInstance.dag_id.in_(dag_ids)).delete(
-                            synchronize_session=False,
-                        )
-                        self.session.query(DagVersion).filter(DagVersion.dag_id.in_(dag_ids)).delete(
-                            synchronize_session=False
-                        )
+                        self.session.execute(delete(DagRun).where(DagRun.dag_id.in_(dag_ids)))
+                        self.session.execute(delete(TaskInstance).where(TaskInstance.dag_id.in_(dag_ids)))
+                        self.session.execute(delete(DagVersion).where(DagVersion.dag_id.in_(dag_ids)))
                     else:
-                        self.session.query(SerializedDagModel).filter(
-                            SerializedDagModel.dag_id.in_(dag_ids)
-                        ).delete(synchronize_session=False)
-                        self.session.query(DagRun).filter(DagRun.dag_id.in_(dag_ids)).delete(
-                            synchronize_session=False,
+                        from sqlalchemy import delete
+
+                        self.session.execute(
+                            delete(SerializedDagModel).where(SerializedDagModel.dag_id.in_(dag_ids))
                         )
-                        self.session.query(TaskInstance).filter(TaskInstance.dag_id.in_(dag_ids)).delete(
-                            synchronize_session=False,
-                        )
-                    self.session.query(XCom).filter(XCom.dag_id.in_(dag_ids)).delete(
-                        synchronize_session=False,
-                    )
-                    self.session.query(DagModel).filter(DagModel.dag_id.in_(dag_ids)).delete(
-                        synchronize_session=False,
-                    )
-                    self.session.query(TaskMap).filter(TaskMap.dag_id.in_(dag_ids)).delete(
-                        synchronize_session=False,
-                    )
-                    self.session.query(AssetEvent).filter(AssetEvent.source_dag_id.in_(dag_ids)).delete(
-                        synchronize_session=False,
-                    )
+                        self.session.execute(delete(DagRun).where(DagRun.dag_id.in_(dag_ids)))
+                        self.session.execute(delete(TaskInstance).where(TaskInstance.dag_id.in_(dag_ids)))
+                    self.session.execute(delete(XCom).where(XCom.dag_id.in_(dag_ids)))
+                    self.session.execute(delete(DagModel).where(DagModel.dag_id.in_(dag_ids)))
+                    self.session.execute(delete(TaskMap).where(TaskMap.dag_id.in_(dag_ids)))
+                    self.session.execute(delete(AssetEvent).where(AssetEvent.source_dag_id.in_(dag_ids)))
                     self.session.commit()
                     if self._own_session:
                         self.session.expunge_all()
@@ -1457,7 +1556,10 @@ class CreateTaskInstance(Protocol):
 
 
 @pytest.fixture
-def create_task_instance(dag_maker: DagMaker, create_dummy_dag: CreateDummyDAG) -> CreateTaskInstance:
+def create_task_instance(
+    dag_maker: DagMaker,
+    create_dummy_dag: CreateDummyDAG,
+) -> CreateTaskInstance:
     """
     Create a TaskInstance, and associated DB rows (DagRun, DagModel, etc).
 
@@ -1465,6 +1567,7 @@ def create_task_instance(dag_maker: DagMaker, create_dummy_dag: CreateDummyDAG) 
     """
     from airflow.providers.standard.operators.empty import EmptyOperator
 
+    from tests_common.test_utils.taskinstance import TaskInstanceWrapper
     from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS, NOTSET, ArgNotSet
 
     def maker(
@@ -1496,6 +1599,9 @@ def create_task_instance(dag_maker: DagMaker, create_dummy_dag: CreateDummyDAG) 
         hostname=None,
         pid=None,
         last_heartbeat_at=None,
+        task: Operator | None = None,
+        start_from_trigger: bool = False,
+        start_trigger_args: StartTriggerArgs | None = None,
         **kwargs,
     ) -> TaskInstance:
         timezone = _import_timezone()
@@ -1504,26 +1610,33 @@ def create_task_instance(dag_maker: DagMaker, create_dummy_dag: CreateDummyDAG) 
         if logical_date is NOTSET:
             # For now: default to having a logical date if None is not explicitly passed.
             logical_date = timezone.utcnow()
-        with dag_maker(dag_id, **kwargs):
+        with dag_maker(dag_id, **kwargs) as dag:
             op_kwargs = {}
             op_kwargs["task_display_name"] = task_display_name
-            task = EmptyOperator(
-                task_id=task_id,
-                max_active_tis_per_dag=max_active_tis_per_dag,
-                max_active_tis_per_dagrun=max_active_tis_per_dagrun,
-                executor_config=executor_config or {},
-                on_success_callback=on_success_callback,
-                on_execute_callback=on_execute_callback,
-                on_failure_callback=on_failure_callback,
-                on_retry_callback=on_retry_callback,
-                on_skipped_callback=on_skipped_callback,
-                inlets=inlets,
-                outlets=outlets,
-                email=email,
-                pool=pool,
-                trigger_rule=trigger_rule,
-                **op_kwargs,
-            )
+            if not task:
+                task = EmptyOperator(
+                    task_id=task_id,
+                    max_active_tis_per_dag=max_active_tis_per_dag,
+                    max_active_tis_per_dagrun=max_active_tis_per_dagrun,
+                    executor_config=executor_config or {},
+                    on_success_callback=on_success_callback,
+                    on_execute_callback=on_execute_callback,
+                    on_failure_callback=on_failure_callback,
+                    on_retry_callback=on_retry_callback,
+                    on_skipped_callback=on_skipped_callback,
+                    inlets=inlets,
+                    outlets=outlets,
+                    email=email,
+                    pool=pool,
+                    trigger_rule=trigger_rule,
+                    **op_kwargs,
+                )
+            else:
+                task_id = task.task_id
+                task.dag = dag
+            task.start_from_trigger = start_from_trigger
+            task.start_trigger_args = start_trigger_args
+
         if AIRFLOW_V_3_0_PLUS:
             dagrun_kwargs = {
                 "logical_date": logical_date,
@@ -1543,7 +1656,6 @@ def create_task_instance(dag_maker: DagMaker, create_dummy_dag: CreateDummyDAG) 
             dagrun_kwargs["data_interval"] = data_interval
         dagrun = dag_maker.create_dagrun(**dagrun_kwargs)
         (ti,) = dagrun.task_instances
-        ti.task = task
         ti.state = state
         ti.external_executor_id = external_executor_id
         ti.map_index = map_index
@@ -1551,19 +1663,21 @@ def create_task_instance(dag_maker: DagMaker, create_dummy_dag: CreateDummyDAG) 
         ti.pid = pid
         ti.last_heartbeat_at = last_heartbeat_at
         dag_maker.session.flush()
-        return ti
+        ti.task = dag_maker.serialized_dag.get_task(task_id)
+        return cast("TaskInstance", TaskInstanceWrapper(ti, task))
 
     return maker
 
 
 class CreateTaskInstanceOfOperator(Protocol):
-    """Type stub for create_task_instance_of_operator and create_serialized_task_instance_of_operator."""
+    """Type stub for create_task_instance_of_operator."""
 
     def __call__(
         self,
         operator_class: type[BaseOperator],
         *,
         dag_id: str,
+        template_searchpath: str,
         logical_date: datetime = ...,
         session: Session = ...,
         **kwargs,
@@ -1571,41 +1685,23 @@ class CreateTaskInstanceOfOperator(Protocol):
 
 
 @pytest.fixture
-def create_serialized_task_instance_of_operator(dag_maker: DagMaker) -> CreateTaskInstanceOfOperator:
-    from tests_common.test_utils.version_compat import NOTSET
-
-    def _create_task_instance(
-        operator_class,
-        *,
-        dag_id,
-        logical_date=NOTSET,
-        session=None,
-        **operator_kwargs,
-    ) -> TaskInstance:
-        with dag_maker(dag_id=dag_id, serialized=True, session=session):
-            operator_class(**operator_kwargs)
-        (ti,) = dag_maker.create_dagrun(logical_date=logical_date).task_instances
-        return ti
-
-    return _create_task_instance
-
-
-@pytest.fixture
 def create_task_instance_of_operator(dag_maker: DagMaker) -> CreateTaskInstanceOfOperator:
+    from tests_common.test_utils.taskinstance import TaskInstanceWrapper
     from tests_common.test_utils.version_compat import NOTSET
 
     def _create_task_instance(
         operator_class,
         *,
         dag_id,
+        template_searchpath=None,
         logical_date=NOTSET,
         session=None,
         **operator_kwargs,
     ) -> TaskInstance:
-        with dag_maker(dag_id=dag_id, session=session, serialized=True):
-            operator_class(**operator_kwargs)
+        with dag_maker(dag_id=dag_id, template_searchpath=template_searchpath, session=session):
+            task = operator_class(**operator_kwargs)
         (ti,) = dag_maker.create_dagrun(logical_date=logical_date).task_instances
-        return ti
+        return cast("TaskInstance", TaskInstanceWrapper(ti, task))
 
     return _create_task_instance
 
@@ -1651,7 +1747,11 @@ def get_test_dag():
         from airflow import settings
         from airflow.models.serialized_dag import SerializedDagModel
 
-        from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS, AIRFLOW_V_3_2_PLUS
+        from tests_common.test_utils.version_compat import (
+            AIRFLOW_V_3_0_PLUS,
+            AIRFLOW_V_3_2_PLUS,
+            AIRFLOW_V_3_3_PLUS,
+        )
 
         if AIRFLOW_V_3_2_PLUS:
             from airflow.dag_processing.dagbag import DagBag
@@ -1659,7 +1759,10 @@ def get_test_dag():
             from airflow.models.dagbag import DagBag  # type: ignore[no-redef, attribute-defined]
 
         dag_file = AIRFLOW_CORE_TESTS_PATH / "unit" / "dags" / f"{dag_id}.py"
-        dagbag = DagBag(dag_folder=dag_file, include_examples=False)
+        if AIRFLOW_V_3_3_PLUS:
+            dagbag = DagBag(dag_folder=dag_file)
+        else:
+            dagbag = DagBag(dag_folder=dag_file, include_examples=False)  # type: ignore[call-arg]
 
         dag = dagbag.get_dag(dag_id)
 
@@ -1721,10 +1824,12 @@ def create_log_template(request):
         session.commit()
 
         def _delete_log_template():
+            from sqlalchemy import delete
+
             from airflow.models import DagRun, TaskInstance
 
-            session.query(TaskInstance).delete()
-            session.query(DagRun).delete()
+            session.execute(delete(TaskInstance))
+            session.execute(delete(DagRun))
             session.delete(log_template)
             session.commit()
 
@@ -1794,13 +1899,42 @@ def clear_lru_cache():
         yield
         return
 
-    from airflow.utils.entry_points import _get_grouped_entry_points
+    try:
+        from airflow_shared.module_loading import _get_grouped_entry_points
+    except ImportError:
+        # compat for airflow < 3.2
+        from airflow.utils.entry_points import _get_grouped_entry_points
 
     _get_grouped_entry_points.cache_clear()
     try:
         yield
     finally:
         _get_grouped_entry_points.cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def reset_team_name_cache():
+    """Reset the per-process Dag team-name cache between tests.
+
+    ``DagModel.get_team_name`` caches by dag_id; tests reuse dag_ids with different team
+    setups, so a stale entry would otherwise leak a wrong team into the next case.
+    """
+    if importlib.util.find_spec("airflow") is None:
+        yield
+        return
+
+    try:
+        from airflow.models.dag import clear_team_name_cache
+    except ImportError:
+        # compat for airflow versions without the team-name cache
+        yield
+        return
+
+    clear_team_name_cache()
+    try:
+        yield
+    finally:
+        clear_team_name_cache()
 
 
 @pytest.fixture(autouse=True)
@@ -1863,6 +1997,17 @@ def cleanup_providers_manager():
     finally:
         ProvidersManager()._cleanup()
         ProvidersManager().initialize_providers_configuration()
+
+
+@pytest.fixture
+def cleanup_providers_manager_runtime():
+    from airflow.sdk.providers_manager_runtime import ProvidersManagerTaskRuntime
+
+    ProvidersManagerTaskRuntime()._cleanup()
+    try:
+        yield
+    finally:
+        ProvidersManagerTaskRuntime()._cleanup()
 
 
 @pytest.fixture(autouse=True)
@@ -1944,17 +2089,30 @@ def _mock_plugins(request: pytest.FixtureRequest):
 
 @pytest.fixture
 def hook_lineage_collector():
-    from airflow.lineage.hook import HookLineageCollector
+    from airflow.providers.common.compat.sdk import HookLineageCollector
+
+    from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS, AIRFLOW_V_3_2_PLUS
 
     hlc = HookLineageCollector()
-    with mock.patch(
-        "airflow.lineage.hook.get_hook_lineage_collector",
-        return_value=hlc,
-    ):
-        # Redirect calls to compat provider to support back-compat tests of 2.x as well
+
+    if AIRFLOW_V_3_0_PLUS:
+        from unittest import mock
+
+        patch_target = "airflow.lineage.hook.get_hook_lineage_collector"
+        if AIRFLOW_V_3_2_PLUS:
+            patch_target = "airflow.sdk.lineage.get_hook_lineage_collector"
+
+        with mock.patch(patch_target, return_value=hlc):
+            from airflow.providers.common.compat.lineage.hook import get_hook_lineage_collector
+
+            yield get_hook_lineage_collector()
+    else:
+        from airflow.lineage import hook
         from airflow.providers.common.compat.lineage.hook import get_hook_lineage_collector
 
+        hook._hook_lineage_collector = hlc
         yield get_hook_lineage_collector()
+        hook._hook_lineage_collector = None
 
 
 @pytest.fixture
@@ -2399,9 +2557,15 @@ def create_runtime_ti(mocked_parse):
     from uuid6 import uuid7
 
     from airflow.sdk import DAG
-    from airflow.sdk.api.datamodels._generated import TaskInstance
     from airflow.sdk.execution_time.comms import BundleInfo, StartupDetails
     from airflow.timetables.base import TimeRestriction
+
+    from tests_common.test_utils.version_compat import AIRFLOW_V_3_2_PLUS
+
+    if AIRFLOW_V_3_2_PLUS:
+        from airflow.serialization.encoders import coerce_to_core_timetable
+    else:
+        coerce_to_core_timetable = lambda t: t
 
     timezone = _import_timezone()
 
@@ -2414,14 +2578,18 @@ def create_runtime_ti(mocked_parse):
         run_type: str = "manual",
         try_number: int = 1,
         map_index: int | None = -1,
-        upstream_map_indexes: dict[str, int | list[int] | None] | None = None,
         task_reschedule_count: int = 0,
         ti_id: UUID | None = None,
         conf: dict[str, Any] | None = None,
         should_retry: bool | None = None,
         max_tries: int | None = None,
     ) -> RuntimeTaskInstance:
-        from airflow.sdk.api.datamodels._generated import DagRun, DagRunState, TIRunContext
+        from airflow.sdk.api.datamodels._generated import (
+            DagRun,
+            DagRunState,
+            TaskInstance as TaskInstanceDTO,
+            TIRunContext,
+        )
         from airflow.utils.types import DagRunType
 
         if isinstance(logical_date, str):
@@ -2451,20 +2619,21 @@ def create_runtime_ti(mocked_parse):
         data_interval_start = None
         data_interval_end = None
 
-        if task.dag.timetable:
-            if run_type == DagRunType.MANUAL:
-                if logical_date is not None:
-                    data_interval_start, data_interval_end = task.dag.timetable.infer_manual_data_interval(
-                        run_after=logical_date,
-                    )
-            else:
-                drinfo = task.dag.timetable.next_dagrun_info(
-                    last_automated_data_interval=None,
-                    restriction=TimeRestriction(earliest=None, latest=None, catchup=False),
+        timetable = coerce_to_core_timetable(task.dag.timetable)
+        if run_type == DagRunType.MANUAL:
+            if logical_date is not None:
+                data_interval_start, data_interval_end = timetable.infer_manual_data_interval(
+                    run_after=logical_date,
                 )
-                if drinfo:
-                    data_interval = drinfo.data_interval
-                    data_interval_start, data_interval_end = data_interval.start, data_interval.end
+        else:
+            drinfo = timetable.next_dagrun_info(
+                last_automated_data_interval=None,
+                restriction=TimeRestriction(earliest=None, latest=None, catchup=False),
+            )
+            if drinfo:
+                data_interval = drinfo.data_interval
+                data_interval_start = data_interval and data_interval.start
+                data_interval_end = data_interval and data_interval.end
 
         dag_id = task.dag.dag_id
         task_retries = task.retries or 0
@@ -2489,11 +2658,7 @@ def create_runtime_ti(mocked_parse):
             task_reschedule_count=task_reschedule_count,
             max_tries=task_retries if max_tries is None else max_tries,
             should_retry=should_retry if should_retry is not None else try_number <= task_retries,
-            upstream_map_indexes=upstream_map_indexes,
         )
-
-        if upstream_map_indexes is not None:
-            ti_context.upstream_map_indexes = upstream_map_indexes
 
         compat_fields = {
             "requests_fd": 0,
@@ -2501,14 +2666,15 @@ def create_runtime_ti(mocked_parse):
         }
 
         startup_details = StartupDetails(
-            ti=TaskInstance(
+            ti=TaskInstanceDTO(
                 id=ti_id,
                 task_id=task.task_id,
                 dag_id=dag_id,
                 run_id=run_id,
                 try_number=try_number,
-                map_index=map_index,
+                map_index=map_index,  # type: ignore[arg-type]
                 dag_version_id=uuid7(),
+                queue="default",
             ),
             dag_rel_path="",
             bundle_info=BundleInfo(name="anything", version="any"),
@@ -2753,11 +2919,18 @@ def testing_dag_bundle():
     from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
 
     if AIRFLOW_V_3_0_PLUS:
+        from sqlalchemy import func, select
+
         from airflow.models.dagbundle import DagBundleModel
         from airflow.utils.session import create_session
 
         with create_session() as session:
-            if session.query(DagBundleModel).filter(DagBundleModel.name == "testing").count() == 0:
+            if (
+                session.scalar(
+                    select(func.count()).select_from(DagBundleModel).where(DagBundleModel.name == "testing")
+                )
+                == 0
+            ):
                 testing = DagBundleModel(name="testing")
                 session.add(testing)
 
@@ -2767,13 +2940,15 @@ def testing_team():
     from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
 
     if AIRFLOW_V_3_0_PLUS:
+        from sqlalchemy import select
+
         from airflow.models.team import Team
         from airflow.utils.session import create_session
 
         with create_session() as session:
-            team = session.query(Team).filter_by(name="testing").one_or_none()
+            team = session.scalar(select(Team).where(Team.name == "testing"))
             if not team:
-                team = Team(id=uuid.uuid4(), name="testing")
+                team = Team(name="testing")
                 session.add(team)
                 session.flush()
             yield team
@@ -2844,3 +3019,43 @@ def mock_task_instance():
         return mock_ti
 
     return _create_mock_task_instance
+
+
+@pytest.fixture
+def listener_manager():
+    """
+    Fixture that provides a listener manager for tests.
+
+    This fixture registers listeners with both the core listener manager
+    (used by Jobs, DAG runs, etc.) and the SDK listener manager (used by
+    task execution). This ensures listeners work correctly regardless of
+    which code path calls them.
+
+    Usage:
+        def test_something(listener_manager):
+            listener_manager(full_listener)
+    """
+    from airflow.listeners.listener import get_listener_manager as get_core_lm
+
+    try:
+        from airflow.sdk.listener import get_listener_manager as get_sdk_lm
+    except ImportError:
+        get_sdk_lm = None
+
+    core_lm = get_core_lm()
+    sdk_lm = get_sdk_lm() if get_sdk_lm else None
+
+    core_lm.clear()
+    if sdk_lm:
+        sdk_lm.clear()
+
+    def add_listener(listener):
+        core_lm.add_listener(listener)
+        if sdk_lm:
+            sdk_lm.add_listener(listener)
+
+    yield add_listener
+
+    core_lm.clear()
+    if sdk_lm:
+        sdk_lm.clear()

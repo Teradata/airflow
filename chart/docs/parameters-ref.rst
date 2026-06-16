@@ -18,46 +18,100 @@
 Parameters reference
 ====================
 
-The following tables lists the configurable parameters of the Airflow chart and their default values.
+The following tables lists the configurable parameters of the Airflow chart and their default values:
 
 .. jinja:: params_ctx
 
-    {% for section in sections %}
+   {% for section in sections %}
 
-    .. _parameters:{{ section["name"] }}:
+   .. _parameters:{{ section["name"] }}:
 
-    {{ section["name"] }}
-    {{ "=" * (section["name"]|length + 2) }}
+   {{ section["name"] }}
+   {{ "=" * (section["name"]|length + 2) }}
 
-    .. list-table::
-       :widths: 15 10 30
-       :header-rows: 1
+   .. list-table::
+      :widths: 15 10 30
+      :header-rows: 1
 
-       * - Parameter
-         - Description
-         - Default
+      * - Parameter
+        - Description
+        - Default
 
       {% for param in section["params"] %}
-       * - ``{{ param["name"] }}``
-         - {{ param["description"] }}
-         - ``{{ param["default"] }}``
-         {% if param["examples"] %}
-           Examples:
+         {% if "deprecated" not in param["description"] %}
 
-           .. code-block:: yaml
+      * - ``{{ param["name"] }}``
+        - {{ param["description"] }}
+        - ``{{ param["default"] }}``
+            {% if param["examples"] %}
 
-              {{ param["examples"] | indent(width=10) }}
+          .. code-block:: yaml
+             :caption: Examples
 
+             {{ param["examples"] | indent(width=10) }}
+
+            {% endif %}
          {% endif %}
       {% endfor %}
+   {% endfor %}
 
-    {% endfor %}
 
-
-Specify each parameter using the ``--set key=value[,key=value]`` argument to ``helm install``. For example,
+Specify each parameter using the ``--set key=value[,key=value]`` argument to ``helm install``:
 
 .. code-block:: bash
 
-  helm install my-release apache-airflow/airflow \
-    --set executor=CeleryExecutor \
-    --set enablePodLaunching=false .
+   helm install my-release apache-airflow/airflow \
+     --set executor=CeleryExecutor \
+     --set enablePodLaunching=false
+
+or override values by using the ``override-values.yaml`` file:
+
+.. code-block:: yaml
+   :caption: override-values.yaml
+
+   executor: CeleryExecutor
+   enablePodLaunching: false
+
+and install the chart:
+
+.. code-block:: bash
+
+   helm install my-release apache-airflow/airflow --values override-values.yaml
+
+Deprecated Parameters
+=====================
+
+The following table contains all deprecated configuration parameters of the Airflow chart with their default values. All values defined in below table with be removed
+in the next Helm Chart major release.
+
+.. jinja:: params_ctx
+
+   {% if deprecations_exist %}
+   .. list-table::
+      :widths: 15 10 30
+      :header-rows: 1
+
+      * - Parameter
+        - Description
+        - Default
+
+   {% for section in sections %}
+      {% for param in section["params"] %}
+         {% if "deprecated" in param["description"] %}
+      * - ``{{ param["name"] }}``
+        - {{ param["description"] }}
+        - ``{{ param["default"] }}``
+            {% if param["examples"] %}
+
+          .. code-block:: yaml
+             :caption: Examples
+
+             {{ param["examples"] | indent(width=10) }}
+
+            {% endif %}
+         {% endif %}
+      {% endfor %}
+   {% endfor %}
+   {% else %}
+   There are no deprecations within current release of Helm Chart.
+   {% endif %}

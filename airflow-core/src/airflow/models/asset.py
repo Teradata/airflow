@@ -21,8 +21,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
-import sqlalchemy_jsonfield
+import sqlalchemy as sa
 from sqlalchemy import (
+    JSON,
     Column,
     ForeignKey,
     ForeignKeyConstraint,
@@ -33,30 +34,28 @@ from sqlalchemy import (
     Table,
     delete,
     select,
-    text,
 )
 from sqlalchemy.ext.associationproxy import association_proxy
-from sqlalchemy.orm import Mapped, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from airflow._shared.timezones import timezone
 from airflow.models.base import Base, StringID
-from airflow.settings import json
-from airflow.utils.sqlalchemy import UtcDateTime, mapped_column
+from airflow.utils.sqlalchemy import UtcDateTime
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
-    from typing import Any
+    from typing import Any, TypeAlias
 
     from sqlalchemy.orm import Session
 
     from airflow.models.dag import DagModel
     from airflow.models.trigger import Trigger
-    from airflow.sdk.definitions.asset import Asset, AssetAlias
+    from airflow.serialization.definitions.assets import SerializedAsset, SerializedAssetAlias
 
 
-def fetch_active_assets_by_name(names: Iterable[str], session: Session) -> dict[str, Asset]:
+def fetch_active_assets_by_name(names: Iterable[str], session: Session) -> dict[str, SerializedAsset]:
     return {
-        asset_model.name: asset_model.to_public()
+        asset_model.name: asset_model.to_serialized()
         for asset_model in session.scalars(
             select(AssetModel)
             .join(AssetActive, AssetActive.name == AssetModel.name)
@@ -65,9 +64,9 @@ def fetch_active_assets_by_name(names: Iterable[str], session: Session) -> dict[
     }
 
 
-def fetch_active_assets_by_uri(uris: Iterable[str], session: Session) -> dict[str, Asset]:
+def fetch_active_assets_by_uri(uris: Iterable[str], session: Session) -> dict[str, SerializedAsset]:
     return {
-        asset_model.uri: asset_model.to_public()
+        asset_model.uri: asset_model.to_serialized()
         for asset_model in session.scalars(
             select(AssetModel)
             .join(AssetActive, AssetActive.uri == AssetModel.uri)
@@ -112,12 +111,17 @@ def remove_references_to_deleted_dags(session: Session):
         DagScheduleAssetAliasReference,
         TaskOutletAssetReference,
     ]
-    for model in models_to_check:
-        session.execute(
-            delete(model)
-            .where(model.dag_id.in_(select(DagModel.dag_id).where(DagModel.is_stale)))
-            .execution_options(synchronize_session="fetch")
-        )
+
+    # The queries need to be done in separate steps, because in the case of multiple
+    # dag processors on MySQL, there could be a deadlock caused by acquiring both an
+    # exclusive lock for deletion and shared lock for query in reverse sequence
+    if stale_dag_ids := session.scalars(select(DagModel.dag_id).where(DagModel.is_stale)).all():
+        for model in models_to_check:
+            session.execute(
+                delete(model)
+                .where(model.dag_id.in_(stale_dag_ids))
+                .execution_options(synchronize_session="fetch")
+            )
 
 
 alias_association_table = Table(
@@ -179,7 +183,10 @@ class AssetWatcherModel(Base):
     )
 
     def __repr__(self):
-        return f"{self.__class__.__name__}(name={self.name!r}, asset_id={self.asset_id!r}, trigger_id={self.trigger_id!r})"
+        return (
+            f"{self.__class__.__name__}"
+            f"(name={self.name!r}, asset_id={self.asset_id!r}, trigger_id={self.trigger_id!r})"
+        )
 
 
 class AssetAliasModel(Base):
@@ -235,8 +242,8 @@ class AssetAliasModel(Base):
     scheduled_dags = relationship("DagScheduleAssetAliasReference", back_populates="asset_alias")
 
     @classmethod
-    def from_public(cls, obj: AssetAlias) -> AssetAliasModel:
-        return cls(name=obj.name)
+    def from_serialized(cls, obj: SerializedAssetAlias) -> AssetAliasModel:
+        return cls(name=obj.name, group=obj.group)
 
     def __repr__(self):
         return f"{self.__class__.__name__}(name={self.name!r})"
@@ -245,16 +252,21 @@ class AssetAliasModel(Base):
         return hash(self.name)
 
     def __eq__(self, other: object) -> bool:
-        from airflow.sdk.definitions.asset import AssetAlias
+        from airflow.serialization.definitions.assets import SerializedAssetAlias
 
-        if isinstance(other, (self.__class__, AssetAlias)):
+        try:
+            from airflow.sdk import AssetAlias
+        except ModuleNotFoundError:
+            AssetAlias: TypeAlias = SerializedAssetAlias  # type: ignore[no-redef]
+
+        if isinstance(other, (self.__class__, AssetAlias, SerializedAssetAlias)):
             return self.name == other.name
         return NotImplemented
 
-    def to_public(self) -> AssetAlias:
-        from airflow.sdk.definitions.asset import AssetAlias
+    def to_serialized(self) -> SerializedAssetAlias:
+        from airflow.serialization.definitions.assets import SerializedAssetAlias
 
-        return AssetAlias(name=self.name)
+        return SerializedAssetAlias(name=self.name, group=self.group)
 
 
 class AssetModel(Base):
@@ -303,7 +315,7 @@ class AssetModel(Base):
         default=str,
         nullable=False,
     )
-    extra: Mapped[dict] = mapped_column(sqlalchemy_jsonfield.JSONField(json=json), nullable=False, default={})
+    extra: Mapped[dict] = mapped_column(sa.JSON(), nullable=False, default={})
 
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=timezone.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -325,8 +337,13 @@ class AssetModel(Base):
     )
 
     @classmethod
-    def from_public(cls, obj: Asset) -> AssetModel:
-        return cls(name=obj.name, uri=obj.uri, group=obj.group, extra=obj.extra)
+    def from_serialized(cls, obj: SerializedAsset) -> AssetModel:
+        return cls(
+            name=obj.name,
+            uri=obj.uri,
+            group=obj.group,
+            extra=dict(obj.extra),
+        )
 
     def __init__(self, name: str = "", uri: str = "", **kwargs):
         if not name and not uri:
@@ -345,9 +362,14 @@ class AssetModel(Base):
         super().__init__(name=name, uri=uri, **kwargs)
 
     def __eq__(self, other: object) -> bool:
-        from airflow.sdk.definitions.asset import Asset
+        from airflow.serialization.definitions.assets import SerializedAsset
 
-        if isinstance(other, (self.__class__, Asset)):
+        try:
+            from airflow.sdk import Asset
+        except ModuleNotFoundError:
+            Asset: TypeAlias = SerializedAsset  # type: ignore[no-redef]
+
+        if isinstance(other, (self.__class__, Asset, SerializedAsset)):
             return self.name == other.name and self.uri == other.uri
         return NotImplemented
 
@@ -357,10 +379,16 @@ class AssetModel(Base):
     def __repr__(self):
         return f"{self.__class__.__name__}(name={self.name!r}, uri={self.uri!r}, extra={self.extra!r})"
 
-    def to_public(self) -> Asset:
-        from airflow.sdk.definitions.asset import Asset
+    def to_serialized(self) -> SerializedAsset:
+        from airflow.serialization.definitions.assets import SerializedAsset
 
-        return Asset(name=self.name, uri=self.uri, group=self.group, extra=self.extra)
+        return SerializedAsset(
+            name=self.name,
+            uri=self.uri,
+            group=self.group,
+            extra=self.extra,
+            watchers=[],
+        )
 
     def add_trigger(self, trigger: Trigger, watcher_name: str):
         self.watchers.append(AssetWatcherModel(name=watcher_name, trigger_id=trigger.id))
@@ -564,6 +592,10 @@ class DagScheduleAssetReference(Base):
 
     asset_id: Mapped[int] = mapped_column(Integer, primary_key=True, nullable=False)
     dag_id: Mapped[str] = mapped_column(StringID(), primary_key=True, nullable=False)
+    allow_producer_teams: Mapped[list | None] = mapped_column(sa.JSON(), nullable=True)
+    allow_global_producers: Mapped[bool] = mapped_column(
+        sa.Boolean(), nullable=False, server_default=sa.true()
+    )
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=timezone.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         UtcDateTime, default=timezone.utcnow, onupdate=timezone.utcnow, nullable=False
@@ -618,6 +650,10 @@ class TaskOutletAssetReference(Base):
     asset_id: Mapped[int] = mapped_column(Integer, primary_key=True, nullable=False)
     dag_id: Mapped[str] = mapped_column(StringID(), primary_key=True, nullable=False)
     task_id: Mapped[str] = mapped_column(StringID(), primary_key=True, nullable=False)
+    allow_consumer_teams: Mapped[list | None] = mapped_column(sa.JSON(), nullable=True)
+    allow_global_consumers: Mapped[bool] = mapped_column(
+        sa.Boolean(), nullable=False, server_default=sa.true()
+    )
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=timezone.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         UtcDateTime, default=timezone.utcnow, onupdate=timezone.utcnow, nullable=False
@@ -780,11 +816,11 @@ class AssetEvent(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     asset_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    extra: Mapped[dict] = mapped_column(sqlalchemy_jsonfield.JSONField(json=json), nullable=False, default={})
+    extra: Mapped[dict] = mapped_column(sa.JSON(), nullable=False, default={})
     source_task_id: Mapped[str | None] = mapped_column(StringID(), nullable=True)
     source_dag_id: Mapped[str | None] = mapped_column(StringID(), nullable=True)
     source_run_id: Mapped[str | None] = mapped_column(StringID(), nullable=True)
-    source_map_index: Mapped[int | None] = mapped_column(Integer, nullable=True, server_default=text("-1"))
+    source_map_index: Mapped[int | None] = mapped_column(Integer, nullable=True, server_default="-1")
     timestamp: Mapped[datetime] = mapped_column(UtcDateTime, default=timezone.utcnow, nullable=False)
     partition_key: Mapped[str | None] = mapped_column(StringID(), nullable=True)
 
@@ -882,9 +918,19 @@ class AssetPartitionDagRun(Base):
     """
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    target_dag_id: Mapped[str | None] = mapped_column(StringID(), nullable=False)
+    target_dag_id: Mapped[str] = mapped_column(StringID(), nullable=False)
     created_dag_run_id: Mapped[int | None] = mapped_column(Integer(), nullable=True)
-    partition_key: Mapped[str | None] = mapped_column(StringID(), nullable=False)
+    partition_key: Mapped[str] = mapped_column(StringID(), nullable=False)
+    # Serialized snapshot of the rollup definition (mapper + window for every
+    # partitioned asset in the timetable) at the time this APDR was created.
+    # The scheduler discards APDRs whose stored fingerprint no longer matches
+    # the current timetable's fingerprint, because the mapper or window that
+    # drove the APDR's required upstream key set may have changed. Only
+    # mapper / window edits invalidate the fingerprint; unrelated Dag changes
+    # (task additions, description updates) do not. Nullable to tolerate
+    # legacy rows that pre-date the column; they are treated as stale on the
+    # next scheduler tick.
+    rollup_fingerprint: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=timezone.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         UtcDateTime, default=timezone.utcnow, onupdate=timezone.utcnow, nullable=False
@@ -913,12 +959,17 @@ class PartitionedAssetKeyLog(Base):
     asset_id: Mapped[int] = mapped_column(Integer, nullable=False)
     asset_event_id: Mapped[int] = mapped_column(Integer, nullable=False)
     asset_partition_dag_run_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    source_partition_key: Mapped[str | None] = mapped_column(StringID(), nullable=False)
-    target_dag_id: Mapped[str | None] = mapped_column(StringID(), nullable=False)
-    target_partition_key: Mapped[str | None] = mapped_column(StringID(), nullable=False)
+    source_partition_key: Mapped[str] = mapped_column(StringID(), nullable=False)
+    target_dag_id: Mapped[str] = mapped_column(StringID(), nullable=False)
+    target_partition_key: Mapped[str] = mapped_column(StringID(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(UtcDateTime, default=timezone.utcnow, nullable=False)
 
     __tablename__ = "partitioned_asset_key_log"
+    __table_args__ = (
+        # Filter column for the stale-APDR cleanup bulk DELETE in
+        # ``SchedulerJobRunner._create_dagruns_for_partitioned_asset_dags``.
+        Index("idx_pakl_apdr_id", "asset_partition_dag_run_id"),
+    )
 
     def __repr__(self):
         args = (f"{x.name}={getattr(self, x.name)!r}" for x in self.__mapper__.primary_key)

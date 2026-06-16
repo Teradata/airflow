@@ -34,7 +34,7 @@ from google.cloud.aiplatform_v1 import (
     types,
 )
 
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.cloud.hooks.vertex_ai.custom_job import CustomJobAsyncHook
 from airflow.providers.google.cloud.hooks.vertex_ai.pipeline_job import PipelineJobAsyncHook
 from airflow.providers.google.cloud.triggers.vertex_ai import (
@@ -414,7 +414,7 @@ class TestRunPipelineJobTrigger:
                 "impersonation_chain": TEST_IMPERSONATION_CHAIN,
             },
         )
-        actual_data == expected_data
+        assert actual_data == expected_data
 
     @pytest.mark.asyncio
     async def test_async_hook(self, run_pipeline_job_trigger):
@@ -554,7 +554,7 @@ class TestCustomTrainingJobTrigger:
                 "impersonation_chain": TEST_IMPERSONATION_CHAIN,
             },
         )
-        actual_data == expected_data
+        assert actual_data == expected_data
 
     @pytest.mark.parametrize(
         "pipeline_state_value",
@@ -704,7 +704,7 @@ class TestCustomContainerTrainingJobTrigger:
                 "impersonation_chain": TEST_IMPERSONATION_CHAIN,
             },
         )
-        actual_data == expected_data
+        assert actual_data == expected_data
 
     @pytest.mark.parametrize(
         "pipeline_state_value",
@@ -859,7 +859,7 @@ class TestCustomPythonPackageTrainingJobTrigger:
                 "impersonation_chain": TEST_IMPERSONATION_CHAIN,
             },
         )
-        actual_data == expected_data
+        assert actual_data == expected_data
 
     @pytest.mark.parametrize(
         "pipeline_state_value",

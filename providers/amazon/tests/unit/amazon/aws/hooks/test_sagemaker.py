@@ -27,7 +27,6 @@ from botocore.exceptions import ClientError
 from dateutil.tz import tzlocal
 from moto import mock_aws
 
-from airflow.exceptions import AirflowException
 from airflow.providers.amazon.aws.hooks.logs import AwsLogsHook
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.providers.amazon.aws.hooks.sagemaker import (
@@ -36,6 +35,7 @@ from airflow.providers.amazon.aws.hooks.sagemaker import (
     secondary_training_status_changed,
     secondary_training_status_message,
 )
+from airflow.providers.common.compat.sdk import AirflowException
 
 role = "arn:aws:iam:role/test-role"
 
@@ -703,7 +703,8 @@ class TestSageMakerHook:
             hook.delete_model(model_name="test")
         ex = raised_exception.value
         assert ex.operation_name == "DeleteModel"
-        assert ex.response["ResponseMetadata"]["HTTPStatusCode"] == 404
+        # moto changed from 404 to 400 (matching real AWS) in newer versions; accept both for compat
+        assert ex.response["ResponseMetadata"]["HTTPStatusCode"] in (400, 404)
 
     @patch("airflow.providers.amazon.aws.hooks.sagemaker.SageMakerHook.conn", new_callable=mock.PropertyMock)
     def test_start_pipeline_returns_arn(self, mock_conn):

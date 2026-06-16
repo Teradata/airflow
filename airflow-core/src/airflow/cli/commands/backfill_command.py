@@ -21,7 +21,10 @@ import json
 import logging
 import signal
 
+from tabulate import tabulate
+
 from airflow import settings
+from airflow.api_fastapi.core_api.services.public.common import resolve_run_on_latest_version
 from airflow.cli.simple_table import AirflowConsole
 from airflow.exceptions import AirflowConfigException
 from airflow.models.backfill import ReprocessBehavior, _create_backfill, _do_dry_run
@@ -37,8 +40,8 @@ log = logging.getLogger(__name__)
 @cli_utils.action_cli
 @providers_configuration_loaded
 def create_backfill(args) -> None:
-    """Create backfill job or dry run for a DAG or list of DAGs using regex."""
-    logging.basicConfig(level=settings.LOGGING_LEVEL, format=settings.SIMPLE_LOG_FORMAT)
+    """Create backfill job or dry run for a Dag or list of Dags using regex."""
+    logging.basicConfig(level=logging.INFO, format=settings.SIMPLE_LOG_FORMAT)
     signal.signal(signal.SIGTERM, sigint_handler)
     console = AirflowConsole()
 
@@ -46,6 +49,14 @@ def create_backfill(args) -> None:
         reprocess_behavior = ReprocessBehavior(args.reprocess_behavior)
     else:
         reprocess_behavior = None
+
+    with create_session() as session:
+        resolved_run_on_latest = resolve_run_on_latest_version(
+            args.run_on_latest_version,
+            args.dag_id,
+            session,
+            fallback=True,
+        )
 
     if args.dry_run:
         console.print("Performing dry run of backfill.")
@@ -58,12 +69,12 @@ def create_backfill(args) -> None:
             reverse=args.run_backwards,
             dag_run_conf=args.dag_run_conf,
             reprocess_behavior=reprocess_behavior,
-            run_on_latest_version=args.run_on_latest_version,
+            run_on_latest_version=resolved_run_on_latest,
         )
         for k, v in params.items():
             console.print(f"    - {k} = {v}")
         with create_session() as session:
-            logical_dates = _do_dry_run(
+            infos = _do_dry_run(
                 dag_id=args.dag_id,
                 from_date=args.from_date,
                 to_date=args.to_date,
@@ -71,9 +82,13 @@ def create_backfill(args) -> None:
                 reprocess_behavior=args.reprocess_behavior,
                 session=session,
             )
-        console.print("Logical dates to be attempted:")
-        for d in logical_dates:
-            console.print(f"    - {d}")
+        console.print("Runs to be attempted:")
+        rows = [
+            dict(logical_date=d.logical_date, partition_key=d.partition_key, partition_date=d.partition_date)
+            for d in infos
+        ]
+        output = tabulate(rows, tablefmt="grid", headers="keys")
+        console.print(output)
         return
 
     try:
@@ -99,5 +114,5 @@ def create_backfill(args) -> None:
         dag_run_conf=dag_run_conf,
         triggering_user_name=user,
         reprocess_behavior=reprocess_behavior,
-        run_on_latest_version=args.run_on_latest_version,
+        run_on_latest_version=resolved_run_on_latest,
     )

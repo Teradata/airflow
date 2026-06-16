@@ -16,15 +16,16 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { Box, Heading, Flex, Skeleton, Link } from "@chakra-ui/react";
+import { Box, Flex, Heading, HStack, Skeleton, Text } from "@chakra-ui/react";
 import { useTranslation } from "react-i18next";
 import { BiTargetLock } from "react-icons/bi";
-import { Link as RouterLink } from "react-router-dom";
 
 import { type PoolServiceGetPoolsDefaultResponse, useAuthLinksServiceGetAuthMenus } from "openapi/queries";
 import { usePoolServiceGetPools } from "openapi/queries/queries";
 import type { ApiError } from "openapi/requests";
-import { PoolBar } from "src/components/PoolBar";
+import { PoolBar, UNLIMITED_SLOTS } from "src/components/PoolBar";
+import { StateIcon } from "src/components/StateIcon";
+import { RouterLink, Tooltip } from "src/components/ui";
 import { useAutoRefresh } from "src/utils";
 import { type Slots, slotKeys } from "src/utils/slots";
 
@@ -52,7 +53,10 @@ export const PoolSummary = () => {
   }
 
   const pools = data?.pools;
-  const totalSlots = pools?.reduce((sum, pool) => sum + pool.slots, 0) ?? 0;
+  const hasUnlimitedPool = pools?.some((pool) => pool.slots === UNLIMITED_SLOTS) ?? false;
+  const totalSlots = hasUnlimitedPool
+    ? UNLIMITED_SLOTS
+    : (pools?.reduce((sum, pool) => sum + pool.slots, 0) ?? 0);
   const aggregatePool: Slots = {
     deferred_slots: 0,
     open_slots: 0,
@@ -68,13 +72,25 @@ export const PoolSummary = () => {
     running_slots: 0,
     scheduled_slots: 0,
   };
+  let deferredSlotsNotCounted = 0;
 
   pools?.forEach((pool) => {
     slotKeys.forEach((slotKey) => {
+      if (slotKey === "deferred_slots" && !pool.include_deferred) {
+        deferredSlotsNotCounted += pool.deferred_slots;
+
+        return;
+      }
+
       const slotValue = pool[slotKey];
 
-      if (slotValue > 0) {
-        aggregatePool[slotKey] += slotValue;
+      if (slotValue === UNLIMITED_SLOTS) {
+        aggregatePool[slotKey] = UNLIMITED_SLOTS;
+        poolsWithSlotType[slotKey] += 1;
+      } else if (slotValue > 0) {
+        if (aggregatePool[slotKey] !== UNLIMITED_SLOTS) {
+          aggregatePool[slotKey] += slotValue;
+        }
         poolsWithSlotType[slotKey] += 1;
       }
     });
@@ -90,18 +106,28 @@ export const PoolSummary = () => {
           </Heading>
         </Flex>
         {hasPoolsAccess ? (
-          <Link asChild color="fg.info" fontSize="xs" h={4}>
-            <RouterLink to="/pools">{translate("managePools")}</RouterLink>
-          </Link>
+          <RouterLink fontSize="xs" h={4} to="/pools">
+            {translate("managePools")}
+          </RouterLink>
         ) : undefined}
       </Flex>
 
       {isLoading ? (
         <Skeleton borderRadius="full" h={8} w="100%" />
       ) : (
-        <Flex bg="bg" borderRadius="full" display="flex" overflow="hidden" w="100%">
+        <>
           <PoolBar pool={aggregatePool} poolsWithSlotType={poolsWithSlotType} totalSlots={totalSlots} />
-        </Flex>
+          {deferredSlotsNotCounted > 0 ? (
+            <Tooltip content={translate("deferredSlotsNotCountedTooltip")}>
+              <HStack gap={1} mt={1} w="fit-content">
+                <StateIcon size={12} state="deferred" />
+                <Text color="fg.muted" fontSize="xs" fontWeight="medium">
+                  {translate("deferredSlotsNotCounted", { count: deferredSlotsNotCounted })}
+                </Text>
+              </HStack>
+            </Tooltip>
+          ) : undefined}
+        </>
       )}
     </Box>
   );

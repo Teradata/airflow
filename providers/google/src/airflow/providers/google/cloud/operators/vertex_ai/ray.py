@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Literal
 from google.api_core.exceptions import NotFound
 from google.cloud.aiplatform.vertex_ray.util import resources
 
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.cloud.hooks.vertex_ai.ray import RayHook
 from airflow.providers.google.cloud.links.vertex_ai import (
     VertexAIRayClusterLink,
@@ -140,7 +140,7 @@ class CreateRayClusterOperator(RayBaseOperator):
         self,
         python_version: str,
         ray_version: Literal["2.9.3", "2.33", "2.42"],
-        head_node_type: resources.Resources = resources.Resources(),
+        head_node_type: resources.Resources | None = None,
         network: str | None = None,
         service_account: str | None = None,
         cluster_name: str | None = None,
@@ -155,7 +155,7 @@ class CreateRayClusterOperator(RayBaseOperator):
         **kwargs,
     ) -> None:
         super().__init__(*args, **kwargs)
-        self.head_node_type = head_node_type
+        self.head_node_type = head_node_type or resources.Resources()
         self.python_version = python_version
         self.ray_version = ray_version
         self.network = network

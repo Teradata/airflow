@@ -15,10 +15,11 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
+
 from __future__ import annotations
 
 from collections.abc import Iterator
-from typing import TYPE_CHECKING, TypeAlias
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
 
@@ -28,13 +29,9 @@ from airflow.utils.state import State, TaskInstanceState
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from airflow.models.mappedoperator import MappedOperator
     from airflow.models.taskinstance import TaskInstance
-    from airflow.serialization.serialized_objects import SerializedBaseOperator
     from airflow.ti_deps.dep_context import DepContext
     from airflow.ti_deps.deps.base_ti_dep import TIDepStatus
-
-    Operator: TypeAlias = MappedOperator | SerializedBaseOperator
 
 
 class MappedTaskUpstreamDep(BaseTIDep):
@@ -52,11 +49,12 @@ class MappedTaskUpstreamDep(BaseTIDep):
     def _get_dep_statuses(
         self,
         ti: TaskInstance,
-        session: Session,
         dep_context: DepContext,
+        *,
+        session: Session,
     ) -> Iterator[TIDepStatus]:
-        from airflow.models.mappedoperator import is_mapped
         from airflow.models.taskinstance import TaskInstance
+        from airflow.serialization.definitions.mappedoperator import is_mapped
 
         if ti.task is None:
             return
@@ -106,6 +104,6 @@ class MappedTaskUpstreamDep(BaseTIDep):
                 new_state = TaskInstanceState.UPSTREAM_FAILED
             elif TaskInstanceState.SKIPPED in finished_states:
                 new_state = TaskInstanceState.SKIPPED
-            if new_state is not None and ti.set_state(new_state, session):
+            if new_state is not None and ti.set_state(new_state, session=session):
                 dep_context.have_changed_ti_states = True
         yield self._failing_status(reason="At least one of task's mapped dependencies has not succeeded!")

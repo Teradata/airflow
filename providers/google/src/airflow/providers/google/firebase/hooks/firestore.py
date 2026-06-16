@@ -24,7 +24,7 @@ from collections.abc import Sequence
 
 from googleapiclient.discovery import build, build_from_document
 
-from airflow.exceptions import AirflowException
+from airflow.providers.common.compat.sdk import AirflowException
 from airflow.providers.google.common.hooks.base_google import PROVIDE_PROJECT_ID, GoogleBaseHook
 
 # Time to sleep between active checks of the operation results
@@ -78,7 +78,9 @@ class CloudFirestoreHook(GoogleBaseHook):
             # then it will get the message below:
             # > Request contains an invalid argument.
             # At the same time, the Non-Authorized Client has no problems.
-            non_authorized_conn = build("firestore", self.api_version, cache_discovery=False)
+            non_authorized_conn = build(
+                "firestore", self.api_version, cache_discovery=False, client_options=self.get_client_options()
+            )
             self._conn = build_from_document(non_authorized_conn._rootDesc, http=http_authorized)
         return self._conn
 

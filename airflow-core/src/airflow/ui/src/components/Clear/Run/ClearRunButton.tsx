@@ -16,24 +16,22 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { Box, useDisclosure } from "@chakra-ui/react";
+import { useDisclosure } from "@chakra-ui/react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { useTranslation } from "react-i18next";
 import { CgRedo } from "react-icons/cg";
 
 import type { DAGRunResponse } from "openapi/requests/types.gen";
-import { Tooltip } from "src/components/ui";
-import ActionButton from "src/components/ui/ActionButton";
+import { IconButton } from "src/components/ui";
 
 import ClearRunDialog from "./ClearRunDialog";
 
 type Props = {
   readonly dagRun: DAGRunResponse;
   readonly isHotkeyEnabled?: boolean;
-  readonly withText?: boolean;
 };
 
-const ClearRunButton = ({ dagRun, isHotkeyEnabled = false, withText = true }: Props) => {
+const ClearRunButton = ({ dagRun, isHotkeyEnabled = false }: Props) => {
   const { onClose, onOpen, open } = useDisclosure();
   const { t: translate } = useTranslation();
 
@@ -46,24 +44,19 @@ const ClearRunButton = ({ dagRun, isHotkeyEnabled = false, withText = true }: Pr
   );
 
   return (
-    <Tooltip
-      closeDelay={100}
-      content={translate("dags:runAndTaskActions.clear.buttonTooltip")}
-      disabled={!isHotkeyEnabled}
-      openDelay={100}
-    >
-      <Box>
-        <ActionButton
-          actionName={translate("dags:runAndTaskActions.clear.button", { type: translate("dagRun_one") })}
-          icon={<CgRedo />}
-          onClick={onOpen}
-          text={translate("dags:runAndTaskActions.clear.button", { type: translate("dagRun_one") })}
-          withText={withText}
-        />
-
-        {open ? <ClearRunDialog dagRun={dagRun} onClose={onClose} open={open} /> : undefined}
-      </Box>
-    </Tooltip>
+    <>
+      <IconButton
+        label={
+          isHotkeyEnabled
+            ? translate("dags:runAndTaskActions.clear.buttonTooltip")
+            : translate("dags:runAndTaskActions.clear.button", { type: translate("dagRun_one") })
+        }
+        onClick={onOpen}
+      >
+        <CgRedo />
+      </IconButton>
+      <ClearRunDialog dagRun={dagRun} onClose={onClose} open={open} />
+    </>
   );
 };
 

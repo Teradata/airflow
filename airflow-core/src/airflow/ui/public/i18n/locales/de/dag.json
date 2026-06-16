@@ -40,17 +40,49 @@
     "parseDuration": "Einlesedauer:",
     "parsedAt": "Eingelesen um:"
   },
+  "deadlineAlerts": {
+    "completionRule": "Muss innerhalb von {{interval}} nach {{reference}} abgeschlossen sein",
+    "count_one": "{{count}} Frist",
+    "count_other": "{{count}} Fristen",
+    "referenceType": {
+      "AverageRuntimeDeadline": "durchschnittlicher Laufzeit",
+      "DagRunLogicalDateDeadline": "logischem Datum des Dag-Laufs",
+      "DagRunQueuedAtDeadline": "Einstellen in die Warteschlange"
+    }
+  },
+  "deadlineStatus": {
+    "actual": "Tatsächlich",
+    "expected": "Erwartet",
+    "finishedEarly": "{{duration}} vor der Frist abgeschlossen",
+    "finishedLate": "{{duration}} nach der Frist abgeschlossen",
+    "label": "Frist",
+    "met": "Erfüllt",
+    "missed": "Verpasst",
+    "missedCount_one": "{{count}} verpasste Frist",
+    "missedCount_other": "{{count}} verpasste Fristen",
+    "mixedCount": "{{missedCount}} verpasst, {{upcomingCount}} bevorstehend",
+    "stillRunning": "Noch laufend",
+    "upcoming": "Bevorstehend",
+    "upcomingCount_one": "{{count}} bevorstehende Frist",
+    "upcomingCount_other": "{{count}} bevorstehende Fristen"
+  },
   "extraLinks": "Extra Links",
   "grid": {
     "buttons": {
+      "newerRuns": "Neuere Läufe",
+      "olderRuns": "Ältere Läufe",
       "resetToLatest": "Auf Letzten zurücksetzen",
       "toggleGroup": "Gruppen umschalten"
-    }
+    },
+    "runTypeLegend": "Legende für Lauf-Typen"
   },
   "header": {
     "buttons": {
       "advanced": "Erweitert",
       "dagDocs": "Dag Dokumentation"
+    },
+    "status": {
+      "deactivated": "Deaktiviert"
     }
   },
   "logs": {
@@ -65,13 +97,25 @@
     },
     "info": "INFO",
     "noTryNumber": "Keine Versuchsnummer",
+    "search": {
+      "matchCount": "{{current}} von {{total}}",
+      "noMatches": "Keine Treffer",
+      "placeholder": "Protokolle durchsuchen..."
+    },
     "settings": "Protokoll-Ansicht",
     "viewInExternal": "Protokoll in {{name}} (Versuch {{attempt}}) ansehen",
     "warning": "WARNING"
   },
   "navigation": {
     "navigation": "Navigation: Umschalttaste+{{arrow}}",
+    "openGraphFilters": "Task-Filter: Strg+Umschalt+F",
     "toggleGroup": "Gruppen umschalten: Leertaste"
+  },
+  "notFound": {
+    "back": "Zurück",
+    "backToDags": "Zurück zu Dags",
+    "message": "Dag \"{{dagId}}\" existiert nicht.",
+    "title": "Dag nicht gefunden"
   },
   "overview": {
     "buttons": {
@@ -85,6 +129,10 @@
     "charts": {
       "assetEvent_one": "Erstelltes Datenset-Ereignis",
       "assetEvent_other": "Erstellte Datenset-Ereignisse"
+    },
+    "deadlines": {
+      "showAll": "Alle anzeigen",
+      "title": "Fristen"
     },
     "failedLogs": {
       "hideLogs": "Protokolle ausblenden",
@@ -115,11 +163,38 @@
     "graphDirection": {
       "label": "Richtung des Graph"
     },
+    "graphFilters": {
+      "clearFilters": "Filter zurücksetzen",
+      "durationGte": "Minimale Dauer (s)",
+      "durationGteHint": "Für gemappte Tasks wird die Gesamtdauer über alle Instanzen gemessen",
+      "mapIndex": "Min. Map-Index",
+      "mapIndexHint": "Zeigt gemappte Tasks an, die mindestens bis zu diesem Index erweitert sind",
+      "selectStatus": "Status auswählen",
+      "selectTaskGroup": "Task-Gruppe auswählen",
+      "title": "Task-Filter"
+    },
+    "showVersionIndicator": {
+      "label": "Versionsindikator anzeigen",
+      "options": {
+        "hideAll": "Alle ausblenden",
+        "showAll": "Alle anzeigen",
+        "showBundleVersion": "Bündelversion anzeigen",
+        "showDagVersion": "Dag-Version anzeigen"
+      }
+    },
     "taskStreamFilter": {
       "activeFilter": "Aktiver Filter",
       "clearFilter": "Filter zurücksetzen",
       "clickTask": "Klicken Sie auf einen Task, um ihn als Filterbasis auszuwählen",
+      "depth": "Tiefe",
+      "direction": "Richtung",
       "label": "Filter",
+      "mode": "Modus",
+      "modeTooltip": "Der Modus \"Statisch\" behält die aktuelle Ansicht beim Navigieren zwischen verschiedenen Tasks bei, während der Modus \"Traversieren\" den aktiven Filter automatisch auf den angeklickten Task aktualisiert, um die Dag-Navigation zu erleichtern.",
+      "modes": {
+        "static": "Statisch",
+        "traverse": "Traversieren"
+      },
       "options": {
         "both": "Sowohl Vorgänger als auch Nachfolger",
         "downstream": "Nachfolger",

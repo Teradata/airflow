@@ -16,16 +16,15 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { Box, Heading, VStack, Flex } from "@chakra-ui/react";
+import { Box, Button, Flex, Heading, VStack } from "@chakra-ui/react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import { PiNoteBlankLight, PiNoteLight } from "react-icons/pi";
+import { PiNoteBold, PiNoteBlankBold } from "react-icons/pi";
 
-import { Button, Dialog } from "src/components/ui";
+import { IconButton, Dialog } from "src/components/ui";
 import { ResizableWrapper, MARKDOWN_DIALOG_STORAGE_KEY } from "src/components/ui/ResizableWrapper";
 
 import EditableMarkdownArea from "./EditableMarkdownArea";
-import ActionButton from "./ui/ActionButton";
 
 const EditableMarkdownButton = ({
   header,
@@ -35,8 +34,6 @@ const EditableMarkdownButton = ({
   onOpen,
   placeholder,
   setMdContent,
-  text,
-  withText = true,
 }: {
   readonly header: string;
   readonly isPending: boolean;
@@ -45,42 +42,26 @@ const EditableMarkdownButton = ({
   readonly onOpen: () => void;
   readonly placeholder: string;
   readonly setMdContent: (value: string) => void;
-  readonly text: string;
-  readonly withText?: boolean;
 }) => {
   const { t: translate } = useTranslation("common");
   const [isOpen, setIsOpen] = useState(false);
 
-  const noteIcon = Boolean(mdContent?.trim()) ? <PiNoteLight /> : <PiNoteBlankLight />;
+  const hasContent = Boolean(mdContent?.trim());
+  const noteIcon = hasContent ? <PiNoteBold /> : <PiNoteBlankBold />;
+  const label = hasContent ? translate("note.label") : translate("note.add");
+
+  const handleOpen = () => {
+    if (!isOpen) {
+      onOpen();
+    }
+    setIsOpen(true);
+  };
 
   return (
-    <Box>
-      <Box display="inline-block" position="relative">
-        <ActionButton
-          actionName={placeholder}
-          icon={noteIcon}
-          onClick={() => {
-            if (!isOpen) {
-              onOpen();
-            }
-            setIsOpen(true);
-          }}
-          text={text}
-          variant="outline"
-          withText={withText}
-        />
-        {Boolean(mdContent?.trim()) && (
-          <Box
-            bg="brand.500"
-            borderRadius="full"
-            height={2.5}
-            position="absolute"
-            right={-0.5}
-            top={-0.5}
-            width={2.5}
-          />
-        )}
-      </Box>
+    <>
+      <IconButton label={label} onClick={handleOpen}>
+        {noteIcon}
+      </IconButton>
       <Dialog.Root
         data-testid="markdown-modal"
         lazyMount
@@ -106,7 +87,6 @@ const EditableMarkdownButton = ({
               <Box bg="bg.panel" flexShrink={0} width="100%">
                 <Flex justifyContent="end" p={4}>
                   <Button
-                    colorPalette="brand"
                     loading={isPending}
                     onClick={() => {
                       onConfirm();
@@ -121,7 +101,7 @@ const EditableMarkdownButton = ({
           </ResizableWrapper>
         </Dialog.Content>
       </Dialog.Root>
-    </Box>
+    </>
   );
 };
 

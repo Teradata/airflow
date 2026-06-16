@@ -20,12 +20,17 @@ from functools import cached_property
 from typing import TYPE_CHECKING
 
 import redshift_connector
-from redshift_connector import Connection as RedshiftConnection
-from sqlalchemy import create_engine
-from sqlalchemy.engine.url import URL
+import tenacity
+from redshift_connector import Connection as RedshiftConnection, InterfaceError, OperationalError
 
-from airflow.exceptions import AirflowException
+try:
+    from sqlalchemy import create_engine
+    from sqlalchemy.engine.url import URL
+except ImportError:
+    URL = create_engine = None  # type: ignore[assignment,misc]
+
 from airflow.providers.amazon.aws.hooks.base_aws import AwsBaseHook
+from airflow.providers.common.compat.sdk import AirflowException, AirflowOptionalProviderFeatureException
 from airflow.providers.common.sql.hooks.sql import DbApiHook
 
 if TYPE_CHECKING:
@@ -83,16 +88,20 @@ class RedshiftSQLHook(DbApiHook):
         conn_params: dict[str, str | int] = {}
 
         if conn.extra_dejson.get("iam", False):
-            conn.login, conn.password, conn.port = self.get_iam_token(conn)
+            login, password, port = self.get_iam_token(conn)
+        else:
+            login = conn.login
+            password = conn.password
+            port = conn.port
 
-        if conn.login:
-            conn_params["user"] = conn.login
-        if conn.password:
-            conn_params["password"] = conn.password
+        if login:
+            conn_params["user"] = login
+        if password:
+            conn_params["password"] = password
+        if port:
+            conn_params["port"] = port
         if conn.host:
             conn_params["host"] = conn.host
-        if conn.port:
-            conn_params["port"] = conn.port
         if conn.schema:
             conn_params["database"] = conn.schema
 
@@ -150,6 +159,11 @@ class RedshiftSQLHook(DbApiHook):
 
     def get_uri(self) -> str:
         """Overridden to use the Redshift dialect as driver name."""
+        if URL is None:
+            raise AirflowOptionalProviderFeatureException(
+                "sqlalchemy is required to generate the connection URI. "
+                "Install it with: pip install 'apache-airflow-providers-amazon[sqlalchemy]'"
+            )
         conn_params = self._get_conn_params()
 
         if "user" in conn_params:
@@ -173,6 +187,11 @@ class RedshiftSQLHook(DbApiHook):
 
     def get_sqlalchemy_engine(self, engine_kwargs=None):
         """Overridden to pass Redshift-specific arguments."""
+        if create_engine is None:
+            raise AirflowOptionalProviderFeatureException(
+                "sqlalchemy is required for creating the engine. Install it with"
+                ": pip install 'apache-airflow-providers-amazon[sqlalchemy]'"
+            )
         conn_kwargs = self.conn.extra_dejson
         if engine_kwargs is None:
             engine_kwargs = {}
@@ -206,6 +225,14 @@ class RedshiftSQLHook(DbApiHook):
         pk_columns = [row[0] for row in self.get_records(sql, (schema, table))]
         return pk_columns or None
 
+    @tenacity.retry(
+        stop=tenacity.stop_after_attempt(5),
+        wait=tenacity.wait_exponential(max=20),
+        # OperationalError is thrown when the connection times out
+        # InterfaceError is thrown when the connection is refused
+        retry=tenacity.retry_if_exception_type((OperationalError, InterfaceError)),
+        reraise=True,
+    )
     def get_conn(self) -> RedshiftConnection:
         """Get a ``redshift_connector.Connection`` object."""
         conn_params = self._get_conn_params()
@@ -257,6 +284,10 @@ class RedshiftSQLHook(DbApiHook):
     def _get_identifier_from_hostname(self, hostname: str) -> str:
         parts = hostname.split(".")
         if hostname.endswith("amazonaws.com") and len(parts) == 6:
+            return f"{parts[0]}.{parts[2]}"
+        # AWS China regions use the amazonaws.com.cn endpoint suffix
+        # e.g. my-cluster.id.cn-north-1.redshift.amazonaws.com.cn (7 parts vs 6 for global)
+        if hostname.endswith("amazonaws.com.cn") and len(parts) == 7:
             return f"{parts[0]}.{parts[2]}"
         self.log.debug(
             """Could not parse identifier from hostname '%s'.

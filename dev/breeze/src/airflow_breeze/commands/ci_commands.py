@@ -28,7 +28,7 @@ import tempfile
 from collections.abc import Iterable
 from io import StringIO
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import click
 
@@ -37,10 +37,13 @@ from airflow_breeze.commands.common_options import (
     option_answer,
     option_dry_run,
     option_github_repository,
+    option_github_token,
     option_verbose,
 )
 from airflow_breeze.global_constants import (
     DEFAULT_PYTHON_MAJOR_MINOR_VERSION,
+    MILESTONE_BUG_LABELS,
+    MILESTONE_SKIP_LABELS,
     PUBLIC_AMD_RUNNERS,
     GithubEvents,
     github_events,
@@ -48,15 +51,21 @@ from airflow_breeze.global_constants import (
 from airflow_breeze.params.shell_params import ShellParams
 from airflow_breeze.utils.click_utils import BreezeGroup
 from airflow_breeze.utils.confirm import Answer, user_confirm
-from airflow_breeze.utils.console import get_console
+from airflow_breeze.utils.console import console_print, get_console
 from airflow_breeze.utils.custom_param_types import BetterChoice
 from airflow_breeze.utils.docker_command_utils import (
     check_docker_resources,
     fix_ownership_using_docker,
     perform_environment_checks,
 )
+from airflow_breeze.utils.github import retrieve_github_token
 from airflow_breeze.utils.path_utils import AIRFLOW_HOME_PATH, AIRFLOW_ROOT_PATH
 from airflow_breeze.utils.run_utils import run_command
+
+if TYPE_CHECKING:
+    from github import Github
+    from github.IssueEvent import IssueEvent
+    from github.Repository import Issue, Milestone, Repository
 
 
 @click.group(cls=BreezeGroup, name="ci", help="Tools that CI workflows use to cleanup/manage CI environment")
@@ -109,14 +118,14 @@ DIRECTORIES_TO_FIX = [
 
 
 def fix_ownership_for_file(file: Path):
-    get_console().print(f"[info]Fixing ownership of {file}")
+    console_print(f"[info]Fixing ownership of {file}")
     result = run_command(
         ["sudo", "chown", f"{os.getuid}:{os.getgid()}", str(file.resolve())],
         check=False,
         stderr=subprocess.STDOUT,
     )
     if result.returncode != 0:
-        get_console().print(f"[warning]Could not fix ownership for {file}: {result.stdout}")
+        console_print(f"[warning]Could not fix ownership for {file}: {result.stdout}")
 
 
 def fix_ownership_for_path(path: Path):
@@ -146,15 +155,15 @@ def fix_ownership_without_docker():
 def fix_ownership(use_sudo: bool):
     system = platform.system().lower()
     if system != "linux":
-        get_console().print(
+        console_print(
             f"[warning]You should only need to run fix-ownership on Linux and your system is {system}"
         )
         sys.exit(0)
     if use_sudo:
-        get_console().print("[info]Fixing ownership using sudo.")
+        console_print("[info]Fixing ownership using sudo.")
         fix_ownership_without_docker()
         sys.exit(0)
-    get_console().print("[info]Fixing ownership using docker.")
+    console_print("[info]Fixing ownership using docker.")
     fix_ownership_using_docker(quiet=False)
     # Always succeed
     sys.exit(0)
@@ -174,14 +183,12 @@ def get_changed_files(commit_ref: str | None) -> tuple[str, ...]:
     ]
     result = run_command(cmd, check=False, capture_output=True, text=True)
     if result.returncode != 0:
-        get_console().print(
-            f"[warning] Error when running diff-tree command [/]\n{result.stdout}\n{result.stderr}"
-        )
+        console_print(f"[warning] Error when running diff-tree command [/]\n{result.stdout}\n{result.stderr}")
         return ()
     changed_files = tuple(result.stdout.splitlines()) if result.stdout else ()
-    get_console().print("\n[info]Changed files:[/]\n")
-    get_console().print(changed_files)
-    get_console().print()
+    console_print("\n[info]Changed files:[/]\n")
+    console_print(changed_files)
+    console_print()
     return changed_files
 
 
@@ -236,6 +243,13 @@ def get_changed_files(commit_ref: str | None) -> tuple[str, ...]:
     type=str,
     default="",
 )
+@click.option(
+    "--github-context-input",
+    help="File input (might be `-`) with JSON-formatted github context. "
+    "Use this instead of --github-context for large contexts that would exceed ARG_MAX as an env var.",
+    type=click.File("rt"),
+    envvar="GITHUB_CONTEXT_INPUT",
+)
 @option_verbose
 @option_dry_run
 def selective_check(
@@ -247,10 +261,16 @@ def selective_check(
     github_repository: str,
     github_actor: str,
     github_context: str,
+    github_context_input: StringIO | None,
 ):
     try:
         from airflow_breeze.utils.selective_checks import SelectiveChecks
 
+        if github_context and github_context_input:
+            console_print("[error]You can only specify one of --github-context or --github-context-input")
+            sys.exit(1)
+        if github_context_input:
+            github_context = github_context_input.read()
         github_context_dict = json.loads(github_context) if github_context else {}
         github_event = GithubEvents(github_event_name)
         if commit_ref is not None:
@@ -307,7 +327,7 @@ class WorkflowInfo(NamedTuple):
     def get_runs_on(self) -> str:
         for label in self.pull_request_labels:
             if "use public runners" in label:
-                get_console().print("[info]Force running on public runners")
+                console_print("[info]Force running on public runners")
                 return PUBLIC_AMD_RUNNERS
         return PUBLIC_AMD_RUNNERS
 
@@ -342,7 +362,7 @@ def workflow_info(context: str) -> WorkflowInfo:
     ctx: dict[Any, Any] = json.loads(context)
     event_name = ctx.get("event_name")
     if not event_name:
-        get_console().print(f"[error]Missing event_name in: {ctx}")
+        console_print(f"[error]Missing event_name in: {ctx}")
         sys.exit(1)
     pull_request_labels = []
     head_repo = ""
@@ -380,7 +400,7 @@ def workflow_info(context: str) -> WorkflowInfo:
         head_repo = ctx["repository"]
         event_name = ctx["event_name"]
     else:
-        get_console().print(f"[error]Wrong event name: {event_name}")
+        console_print(f"[error]Wrong event name: {event_name}")
         sys.exit(1)
     return WorkflowInfo(
         event_name=event_name,
@@ -408,21 +428,111 @@ def workflow_info(context: str) -> WorkflowInfo:
 )
 def get_workflow_info(github_context: str, github_context_input: StringIO):
     if github_context and github_context_input:
-        get_console().print(
-            "[error]You can only specify one of the two --github-context or --github-context-file"
-        )
+        console_print("[error]You can only specify one of the two --github-context or --github-context-file")
         sys.exit(1)
     if github_context:
         context = github_context
     elif github_context_input:
         context = github_context_input.read()
     else:
-        get_console().print(
-            "[error]You must specify one of the two --github-context or --github-context-file"
-        )
+        console_print("[error]You must specify one of the two --github-context or --github-context-file")
         sys.exit(1)
     wi = workflow_info(context=context)
     wi.print_all_ga_outputs()
+
+
+def _check_k8s_schema_published(version: str) -> bool:
+    """Check if K8s schemas for a given version are published on airflow.apache.org."""
+    from urllib.error import HTTPError, URLError
+    from urllib.request import Request, urlopen
+
+    url = f"https://airflow.apache.org/k8s-schemas/v{version}-standalone-strict/configmap-v1.json"
+    req = Request(url, method="HEAD")
+    try:
+        resp = urlopen(req, timeout=15)
+        return resp.status == 200
+    except (HTTPError, URLError):
+        return False
+
+
+def _sync_k8s_schemas_to_airflow_site(airflow_site: Path, force: bool, command_env: dict[str, str]) -> None:
+    """Sync K8s schemas to airflow-site directory if needed."""
+    from airflow_breeze.global_constants import ALLOWED_KUBERNETES_VERSIONS
+
+    versions = [v.lstrip("v") for v in ALLOWED_KUBERNETES_VERSIONS]
+    missing: list[str] = []
+    for version in versions:
+        if not _check_k8s_schema_published(version):
+            missing.append(version)
+
+    if not missing and not force:
+        console_print("[success]All K8s schema versions are already published. Skipping sync.[/]")
+        return
+
+    if missing:
+        console_print(f"[warning]K8s schemas missing for versions: {', '.join(f'v{v}' for v in missing)}[/]")
+    else:
+        console_print("[info]Force sync requested.[/]")
+
+    if not airflow_site.is_dir():
+        console_print(
+            f"[error]airflow-site directory not found at {airflow_site}. "
+            "Use --airflow-site to specify the path to the airflow-site checkout.[/]"
+        )
+        return
+
+    # Verify this is the airflow-site repo by checking git remote
+    remote_result = run_command(
+        ["git", "-C", str(airflow_site), "remote", "-v"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if remote_result.returncode != 0 or "airflow-site" not in remote_result.stdout:
+        console_print(
+            f"[error]{airflow_site} does not appear to be a clone of the airflow-site repository.[/]"
+        )
+        return
+
+    static_dir = airflow_site / "landing-pages" / "site" / "static"
+    if not static_dir.is_dir():
+        console_print(
+            f"[error]Expected directory structure not found: {static_dir}\n"
+            "The airflow-site checkout should contain landing-pages/site/static/.[/]"
+        )
+        return
+
+    output_dir = static_dir / "k8s-schemas"
+
+    # Filter out versions already present in the local airflow-site checkout
+    versions_to_download = missing if (missing and not force) else versions
+    versions_to_download = [
+        v
+        for v in versions_to_download
+        if not (output_dir / f"v{v}-standalone-strict").is_dir()
+        or not any((output_dir / f"v{v}-standalone-strict").iterdir())
+    ]
+
+    if not versions_to_download:
+        console_print(
+            "[success]All required K8s schema versions already exist in airflow-site. Skipping download.[/]"
+        )
+        return
+
+    console_print(
+        f"[info]Downloading K8s schemas for versions "
+        f"{', '.join(f'v{v}' for v in versions_to_download)} to {output_dir}...[/]"
+    )
+    cmd = [
+        "uv",
+        "run",
+        str(AIRFLOW_ROOT_PATH / "scripts" / "ci" / "prek" / "download_k8s_schemas.py"),
+        "--output-dir",
+        str(output_dir),
+        "--versions",
+        *versions_to_download,
+    ]
+    run_command(cmd, check=False, env=command_env)
 
 
 @ci_group.command(
@@ -442,19 +552,83 @@ def get_workflow_info(github_context: str, github_context_input: StringIO):
     is_flag=True,
 )
 @click.option(
+    "--draft/--no-draft",
+    default=False,
+    show_default=True,
+    help="Create the PR as a draft (useful for scheduled CI runs where a human undrafts to trigger CI)",
+    is_flag=True,
+)
+@click.option(
     "--switch-to-base/--no-switch-to-base",
     default=None,
     help="Automatically switch to the base branch if not already on it (if not specified, will ask)",
     is_flag=True,
 )
+@click.option(
+    "--airflow-site",
+    default="../airflow-site",
+    show_default=True,
+    type=click.Path(file_okay=False, dir_okay=True, resolve_path=True, path_type=Path),
+    help="Path to airflow-site checkout for publishing K8s schemas",
+)
+@click.option(
+    "--force-k8s-schema-sync",
+    is_flag=True,
+    default=False,
+    help="Force syncing K8s schemas to airflow-site even if all versions appear published",
+)
+@click.option(
+    "--autoupdate/--no-autoupdate",
+    default=True,
+    show_default=True,
+    help="Run prek autoupdate to update hook revisions",
+)
+@click.option(
+    "--update-chart-dependencies/--no-update-chart-dependencies",
+    default=True,
+    show_default=True,
+    help="Run update-chart-dependencies to update Helm chart dependencies",
+)
+@click.option(
+    "--upgrade-important-versions/--no-upgrade-important-versions",
+    default=True,
+    show_default=True,
+    help="Run upgrade-important-versions to bump key dependency versions",
+)
+@click.option(
+    "--update-uv-lock/--no-update-uv-lock",
+    default=True,
+    show_default=True,
+    help="Run update-uv-lock to regenerate uv.lock with latest resolutions inside Breeze CI image",
+)
+@click.option(
+    "--k8s-schema-sync/--no-k8s-schema-sync",
+    default=True,
+    show_default=True,
+    help="Sync K8s JSON schemas to airflow-site",
+)
+@option_github_token
 @option_answer
 @option_verbose
 @option_dry_run
-def upgrade(target_branch: str, create_pr: bool | None, switch_to_base: bool | None):
+def upgrade(
+    target_branch: str,
+    create_pr: bool | None,
+    draft: bool,
+    switch_to_base: bool | None,
+    airflow_site: Path,
+    force_k8s_schema_sync: bool,
+    autoupdate: bool,
+    update_chart_dependencies: bool,
+    upgrade_important_versions: bool,
+    update_uv_lock: bool,
+    k8s_schema_sync: bool,
+    github_token: str | None,
+):
     # Validate target_branch pattern
     target_branch_pattern = re.compile(r"^(main|v\d+-\d+-test)$")
     if not target_branch_pattern.match(target_branch):
-        get_console().print(
+        console_print(
             f"[error]Invalid target branch: '{target_branch}'. "
             "Must be 'main' or follow pattern 'vX-Y-test' where X and Y are numbers (e.g., 'v2-10-test').[/]"
         )
@@ -528,7 +702,7 @@ def upgrade(target_branch: str, create_pr: bool | None, switch_to_base: bool | N
         )
 
         if branch_exists.returncode != 0:
-            get_console().print(
+            console_print(
                 f"[error]Target branch '{target_branch}' does not exist in remote '{apache_remote_name}'.[/]"
             )
             sys.exit(1)
@@ -550,29 +724,29 @@ def upgrade(target_branch: str, create_pr: bool | None, switch_to_base: bool | N
         )
     else:
         at_apache_branch = False
-        get_console().print(
-            "[warning]No apache remote found. The command expects remote pointing to apache/airflow[/]"
+        console_print(
+            "[warning]No remote pointing to apache/airflow was found. "
+            "Airflow uses `upstream` for this remote by convention — "
+            "run `git remote add upstream https://github.com/apache/airflow.git` to add it.[/]"
         )
 
     # Track whether user chose to reset to target branch
     user_switched_to_target = False
 
     if not at_apache_branch or not is_clean:
-        get_console().print()
+        console_print()
         if not at_apache_branch:
-            get_console().print(
-                f"[warning]You are not at the top of apache/airflow {target_branch} branch.[/]"
-            )
-            get_console().print(f"[info]Current branch: {current_branch}[/]")
+            console_print(f"[warning]You are not at the top of apache/airflow {target_branch} branch.[/]")
+            console_print(f"[info]Current branch: {current_branch}[/]")
         if not is_clean:
-            get_console().print("[warning]Your repository has uncommitted changes.[/]")
-        get_console().print()
+            console_print("[warning]Your repository has uncommitted changes.[/]")
+        console_print()
 
         # Determine whether to switch to base branch
         should_switch = switch_to_base
         if should_switch is None:
             # Not specified, ask the user
-            get_console().print(
+            console_print(
                 f"[warning]Attempting to switch to switch to {target_branch}. "
                 f"This will lose not committed code.[/]\n\n"
                 "NO will continue to get changes on top of current branch, QUIT will exit."
@@ -581,7 +755,7 @@ def upgrade(target_branch: str, create_pr: bool | None, switch_to_base: bool | N
             if response == Answer.YES:
                 should_switch = True
             elif response == Answer.QUIT:
-                get_console().print(
+                console_print(
                     f"[error]Upgrade cancelled. Please ensure you are on apache/airflow {target_branch} with a clean repository.[/]"
                 )
                 sys.exit(1)
@@ -590,60 +764,77 @@ def upgrade(target_branch: str, create_pr: bool | None, switch_to_base: bool | N
 
         if should_switch:
             user_switched_to_target = True
-            get_console().print(f"[info]Resetting to apache/airflow {target_branch}...[/]")
+            console_print(f"[info]Resetting to apache/airflow {target_branch}...[/]")
             if current_branch != target_branch:
                 run_command(["git", "checkout", target_branch])
             run_command(["git", "fetch", apache_remote_name])
             run_command(["git", "reset", "--hard", f"{apache_remote_name}/{target_branch}"])
             run_command(["git", "clean", "-fdx"])
-            get_console().print(
+            console_print(
                 f"[success]Successfully reset to apache/airflow {target_branch} and cleaned repository.[/]"
             )
         else:
-            get_console().print(
+            console_print(
                 f"[info]Continuing with current branch {current_branch}. Changes will be on top of it.[/]"
             )
 
-    get_console().print("[info]Running upgrade of important CI environment.[/]")
+    console_print("[info]Running upgrade of important CI environment.[/]")
 
-    # Get GitHub token from gh CLI and set it in environment copy
-    gh_token_result = run_command(
-        ["gh", "auth", "token"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    github_token = retrieve_github_token(github_token)
 
     # Create a copy of the environment to pass to commands
     command_env = os.environ.copy()
 
-    if gh_token_result.returncode == 0 and gh_token_result.stdout.strip():
-        github_token = gh_token_result.stdout.strip()
+    if github_token:
         command_env["GITHUB_TOKEN"] = github_token
-        get_console().print("[success]GitHub token retrieved from gh CLI and set in environment.[/]")
+        console_print("[success]GitHub token set in environment.[/]")
     else:
-        get_console().print(
-            "[warning]Could not retrieve GitHub token from gh CLI. "
+        console_print(
+            "[warning]Could not retrieve GitHub token from --github-token, gh CLI, or token env. "
             "Commands may fail if they require authentication.[/]"
         )
 
-    # Define all upgrade commands to run (all run with check=False to continue on errors)
-    upgrade_commands = [
-        "prek autoupdate --freeze",
-        "prek autoupdate --bleeding-edge --freeze --repo https://github.com/Lucas-C/pre-commit-hooks",
-        "prek autoupdate --bleeding-edge --freeze --repo https://github.com/eclipse-csi/octopin",
-        "prek --all-files --verbose --hook-stage manual pin-versions",
-        "prek --all-files --show-diff-on-failure --color always --verbose --hook-stage manual update-chart-dependencies",
-        "prek --all-files --show-diff-on-failure --color always --verbose --hook-stage manual upgrade-important-versions",
+    # All upgrade commands run locally with check=False to continue on errors.
+    # The uv lock --upgrade step must run last so it can incorporate changes from the other steps.
+    upgrade_commands: list[tuple[str, str]] = [
+        ("autoupdate", "prek autoupdate --cooldown-days 4 --freeze"),
+        (
+            "update-chart-dependencies",
+            "prek --all-files --show-diff-on-failure --color always --verbose --stage manual update-chart-dependencies",
+        ),
+        (
+            "upgrade-important-versions",
+            "prek --all-files --show-diff-on-failure --color always --verbose --stage manual upgrade-important-versions",
+        ),
+        (
+            "update-uv-lock",
+            "uv lock --upgrade",
+        ),
     ]
 
-    # Execute all upgrade commands with the environment containing GitHub token
-    for command in upgrade_commands:
-        run_command(command.split(), check=False, env=command_env)
+    step_enabled = {
+        "autoupdate": autoupdate,
+        "update-chart-dependencies": update_chart_dependencies,
+        "upgrade-important-versions": upgrade_important_versions,
+        "update-uv-lock": update_uv_lock,
+    }
+
+    # Execute upgrade commands
+    for step_name, command in upgrade_commands:
+        if step_enabled[step_name]:
+            run_command(command.split(), check=False, env=command_env)
+        else:
+            console_print(f"[info]Skipping {step_name} (disabled).[/]")
+
+    # Sync K8s schemas to airflow-site
+    if k8s_schema_sync:
+        _sync_k8s_schemas_to_airflow_site(airflow_site, force_k8s_schema_sync, command_env)
+    else:
+        console_print("[info]Skipping K8s schema sync (disabled).[/]")
 
     res = run_command(["git", "diff", "--exit-code"], check=False)
     if res.returncode == 0:
-        get_console().print("[success]No changes were made during the upgrade. Exiting[/]")
+        console_print("[success]No changes were made during the upgrade. Exiting[/]")
         sys.exit(0)
 
     # Determine whether to create a PR
@@ -653,28 +844,40 @@ def upgrade(target_branch: str, create_pr: bool | None, switch_to_base: bool | N
         should_create_pr = user_confirm("Do you want to create a PR with the upgrade changes?") == Answer.YES
 
     if should_create_pr:
-        # Get current HEAD commit hash for unique branch name
-        head_result = run_command(
-            ["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False
-        )
-        commit_hash = head_result.stdout.strip() if head_result.returncode == 0 else "unknown"
-        branch_name = f"ci-upgrade-{commit_hash}"
+        # Use a stable branch name based on target branch so scheduled runs can reuse/update the same PR
+        branch_name = f"ci-upgrade-{target_branch}"
 
         # Check if branch already exists and delete it
         branch_check = run_command(
             ["git", "rev-parse", "--verify", branch_name], capture_output=True, check=False
         )
         if branch_check.returncode == 0:
-            get_console().print(f"[info]Branch {branch_name} already exists, deleting it...[/]")
+            console_print(f"[info]Branch {branch_name} already exists, deleting it...[/]")
             run_command(["git", "branch", "-D", branch_name])
 
         run_command(["git", "checkout", "-b", branch_name])
         run_command(["git", "add", "."])
-        run_command(["git", "commit", "-m", "CI: Upgrade important CI environment"])
+        try:
+            run_command(
+                ["git", "commit", "--message", f"[{target_branch}] CI: Upgrade important CI environment"]
+            )
+        except subprocess.CalledProcessError:
+            console_print("[info]Commit failed, assume some auto-fixes might have been made...[/]")
+            run_command(["git", "add", "."])
+            run_command(
+                [
+                    "git",
+                    "commit",
+                    # postpone pre-commit checks to CI, not to fail in automation if e.g. mypy changes force code checks
+                    "--no-verify",
+                    "--message",
+                    f"[{target_branch}] CI: Upgrade important CI environment",
+                ]
+            )
 
         # Push the branch to origin (use detected origin or fallback to 'origin')
         push_remote = origin_remote_name if origin_remote_name else "origin"
-        get_console().print(f"[info]Pushing branch {branch_name} to {push_remote}...[/]")
+        console_print(f"[info]Pushing branch {branch_name} to {push_remote}...[/]")
         push_result = run_command(
             ["git", "push", "-u", push_remote, branch_name, "--force"],
             capture_output=True,
@@ -682,11 +885,9 @@ def upgrade(target_branch: str, create_pr: bool | None, switch_to_base: bool | N
             check=False,
         )
         if push_result.returncode != 0:
-            get_console().print(
-                f"[error]Failed to push branch:\n{push_result.stdout}\n{push_result.stderr}[/]"
-            )
+            console_print(f"[error]Failed to push branch:\n{push_result.stdout}\n{push_result.stderr}[/]")
             sys.exit(1)
-        get_console().print(f"[success]Branch {branch_name} pushed to {push_remote}.[/]")
+        console_print(f"[success]Branch {branch_name} pushed to {push_remote}.[/]")
 
         # Create PR from the pushed branch
         # gh pr create needs --head in format "username:branch" when creating a PR from a fork
@@ -694,20 +895,70 @@ def upgrade(target_branch: str, create_pr: bool | None, switch_to_base: bool | N
         if origin_repo:
             owner = origin_repo.split("/")[0]
             head_ref = f"{owner}:{branch_name}"
-            get_console().print(
+            console_print(
                 f"[info]Creating PR from {origin_repo} branch {branch_name} to apache/airflow {target_branch}...[/]"
             )
         else:
             # Fallback to just branch name if we couldn't determine the fork
             head_ref = branch_name
-            get_console().print("[warning]Could not determine fork repository. Using branch name only.[/]")
+            console_print("[warning]Could not determine fork repository. Using branch name only.[/]")
 
-        pr_result = run_command(
+        pr_title = f"[{target_branch}] Upgrade important CI environment"
+        pr_body = "This PR upgrades important dependencies of the CI environment."
+
+        # Check if there's already an open PR for this branch
+        existing_pr_result = run_command(
             [
                 "gh",
                 "pr",
+                "list",
+                "--repo",
+                "apache/airflow",
+                "--head",
+                head_ref,
+                "--base",
+                target_branch,
+                "--state",
+                "open",
+                "--json",
+                "number,url",
+                "--jq",
+                ".[0]",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=command_env,
+        )
+
+        existing_pr = existing_pr_result.stdout.strip() if existing_pr_result.returncode == 0 else ""
+
+        if existing_pr and existing_pr != "null" and existing_pr != "":
+            console_print(f"[success]Existing PR found and updated with force push: {existing_pr}[/]")
+            if draft:
+                # Convert back to draft so a human must undraft to trigger CI
+                run_command(
+                    [
+                        "gh",
+                        "pr",
+                        "ready",
+                        "--repo",
+                        "apache/airflow",
+                        "--undo",
+                        head_ref,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=command_env,
+                )
+                console_print("[info]Existing PR converted back to draft.[/]")
+        else:
+            # Create a new PR
+            gh_create_cmd = [
+                "gh",
+                "pr",
                 "create",
-                "-w",
                 "--repo",
                 "apache/airflow",
                 "--head",
@@ -715,23 +966,28 @@ def upgrade(target_branch: str, create_pr: bool | None, switch_to_base: bool | N
                 "--base",
                 target_branch,
                 "--title",
-                f"[{target_branch}] Upgrade important CI environment",
+                pr_title,
                 "--body",
-                "This PR upgrades important dependencies of the CI environment.",
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            env=command_env,
-        )
-        if pr_result.returncode != 0:
-            get_console().print(f"[error]Failed to create PR:\n{pr_result.stdout}\n{pr_result.stderr}[/]")
-            sys.exit(1)
-        pr_url = pr_result.stdout.strip() if pr_result.returncode == 0 else ""
-        get_console().print(f"[success]PR created successfully: {pr_url}.[/]")
+                pr_body,
+            ]
+            if draft:
+                gh_create_cmd.append("--draft")
+
+            pr_result = run_command(
+                gh_create_cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=command_env,
+            )
+            if pr_result.returncode != 0:
+                console_print(f"[error]Failed to create PR:\n{pr_result.stdout}\n{pr_result.stderr}[/]")
+                sys.exit(1)
+            pr_url = pr_result.stdout.strip() if pr_result.returncode == 0 else ""
+            console_print(f"[success]PR created successfully: {pr_url}.[/]")
 
         # Switch back to appropriate branch and delete the temporary branch
-        get_console().print(f"[info]Cleaning up temporary branch {branch_name}...[/]")
+        console_print(f"[info]Cleaning up temporary branch {branch_name}...[/]")
         if user_switched_to_target:
             # User explicitly chose to switch to target branch, so stay there
             run_command(["git", "checkout", target_branch])
@@ -739,15 +995,476 @@ def upgrade(target_branch: str, create_pr: bool | None, switch_to_base: bool | N
             # User didn't switch initially, restore to original branch/commit
             if original_branch == "HEAD":
                 # Detached HEAD state, restore to original commit
-                get_console().print(f"[info]Restoring to original commit {original_commit[:8]}...[/]")
+                console_print(f"[info]Restoring to original commit {original_commit[:8]}...[/]")
                 run_command(["git", "checkout", original_commit])
             else:
                 # Named branch, restore to it
-                get_console().print(f"[info]Restoring to original branch {original_branch}...[/]")
+                console_print(f"[info]Restoring to original branch {original_branch}...[/]")
                 run_command(["git", "checkout", original_branch])
 
         # Delete local branch
         run_command(["git", "branch", "-D", branch_name])
-        get_console().print(f"[success]Local branch {branch_name} deleted.[/]")
+        console_print(f"[success]Local branch {branch_name} deleted.[/]")
     else:
-        get_console().print("[info]PR creation skipped. Changes are committed locally.[/]")
+        console_print("[info]PR creation skipped. Changes are committed locally.[/]")
+
+
+# ---------------------------------------------------------------------------
+# Milestone auto-tagging helpers (used by the ``set-milestone`` command and the
+# ``milestone-tag-assistant.yml`` workflow).
+#
+# Skip-decision pipeline
+# ----------------------
+# After fetching the PR (so the ``Issue`` is in scope), the ``set-milestone``
+# command runs these three checks IN ORDER and stops on the first one that
+# returns "skip":
+#
+# 1. **Milestone-already-set guard** (in ``set_milestone``): if
+#    ``issue.milestone`` is non-null, leave the existing milestone alone and
+#    exit.
+# 2. **GitHub events evaluation** (:func:`_should_skip_milestone_tagging`):
+#    if any ``unlabeled`` event in ``issue.get_events()`` removed a
+#    ``backport-to-*`` label AND no ``backport-to-*`` label remains on the
+#    PR, treat the removal as an explicit "don't auto-tag" signal and skip.
+#    GitHub repo settings restrict label changes to committers/triagers, so
+#    the actor's permission is NOT re-verified here — the change is
+#    implicitly authorised.
+# 3. **Static skip labels** (:func:`_should_skip_milestone_tagging`): if any
+#    ``MILESTONE_SKIP_LABELS`` label is currently on the PR, skip.
+#
+# The events check is intentionally ordered before the static-label check so
+# that an explicit maintainer "unbackport" overrides every other condition,
+# including the merge-to-version-branch heuristic that
+# :func:`_determine_milestone_version` would otherwise apply.
+#
+# Inputs the decision uses
+# ------------------------
+# - ``labels`` — the labels currently on the PR (live from ``issue.labels``,
+#   fetched fresh by the caller; the workflow's ``--pr-labels`` snapshot is
+#   no longer consulted for the decision).
+# - ``events`` — the issue events stream from ``issue.get_events()``,
+#   fetched fresh by the caller. Pass ``None`` to disable the events check
+#   (e.g. when the events fetch failed and only the static check should
+#   run).
+#
+# All milestone helpers log via :func:`console_print` with the workflow's
+# Rich console; callers do not need to add their own skip-related log lines.
+# ---------------------------------------------------------------------------
+
+
+VERSION_BRANCH_PATTERN = re.compile(r"^v(\d+)-(\d+)-test$")
+BACKPORT_LABEL_PATTERN = re.compile(r"^backport-to-v(\d+)-(\d+)-test$")
+
+
+def _parse_version_from_branch(branch: str) -> tuple[int, int] | None:
+    """Parse major and minor version from a branch name like 'v3-1-test'."""
+    match = VERSION_BRANCH_PATTERN.match(branch)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def _parse_version_from_backport_label(label: str) -> tuple[int, int] | None:
+    """Parse major and minor version from a backport label like 'backport-to-v3-1-test'."""
+    match = BACKPORT_LABEL_PATTERN.match(label)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def _get_milestone_prefix(major: int, minor: int) -> str:
+    """Get the milestone prefix for a given version like 'Airflow 3.1'."""
+    return f"Airflow {major}.{minor}"
+
+
+def _get_github_client(github_token: str) -> Github:
+    """Create a GitHub client with the given token."""
+    from github import Github
+
+    return Github(github_token)
+
+
+def _find_matching_milestone(repo: Repository, milestone_prefix: str) -> Milestone | None:
+    """Find the latest matching milestone that starts with the given prefix."""
+    try:
+        milestones = list(repo.get_milestones(state="open"))
+        matching = [m for m in milestones if m.title.startswith(milestone_prefix)]
+        if not matching:
+            return None
+        # Sort by title to get the latest patch version (e.g., Airflow 3.1.8 > Airflow 3.1.7)
+        matching.sort(key=lambda m: m.title, reverse=True)
+        return matching[0]
+    except Exception as e:
+        console_print(f"[error]Failed to get milestones: {e}[/]")
+        return None
+
+
+def _parse_milestone_version(title: str) -> tuple[int, int, int] | None:
+    """Parse version from milestone title like 'Airflow 3.1.8' or 'Airflow 3.2'."""
+    if not title.startswith("Airflow "):
+        return None
+    version_part = title.replace("Airflow ", "")
+    parts = version_part.split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        major = int(parts[0])
+        minor = int(parts[1])
+        patch = int(parts[2]) if len(parts) > 2 else 0
+        return major, minor, patch
+    except ValueError:
+        return None
+
+
+def _find_latest_milestone(repo: Repository) -> Milestone | None:
+    """Find the latest (highest version) open milestone."""
+    try:
+        milestones = list(repo.get_milestones(state="open"))
+        # Filter for Airflow milestones and parse versions
+        airflow_milestones: list[tuple[Milestone, tuple[int, int, int]]] = []
+        for m in milestones:
+            version = _parse_milestone_version(m.title)
+            if version:
+                airflow_milestones.append((m, version))
+
+        if not airflow_milestones:
+            return None
+
+        # Sort by version (major, minor, patch) descending to get the latest
+        airflow_milestones.sort(key=lambda x: x[1], reverse=True)
+        return airflow_milestones[0][0]
+    except Exception as e:
+        console_print(f"[error]Failed to get milestones: {e}[/]")
+        return None
+
+
+def _get_mention(merged_by_login: str) -> str:
+    """Get the mention string for a user."""
+    return f"@{merged_by_login}" if merged_by_login and merged_by_login != "unknown" else "maintainer"
+
+
+def _get_milestone_notification_comment(
+    milestone_title: str, milestone_number: int, merged_by_login: str, reason: str, github_repository: str
+) -> str:
+    """Generate the notification comment for auto-set milestone."""
+    mention = _get_mention(merged_by_login)
+
+    return f"""Hi {mention}, this PR was merged without a milestone set.
+We've automatically set the milestone to **[{milestone_title}](https://github.com/{github_repository}/milestone/{milestone_number})** based on: {reason}
+If this milestone is not correct, please update it to the appropriate milestone.
+
+> This comment was generated by [Milestone Tag Assistant](https://github.com/{github_repository}/blob/main/.github/workflows/milestone-tag-assistant.yml).
+"""
+
+
+def _get_milestone_not_found_comment(
+    merged_by_login: str, reason: str, github_repository: str, search_criteria: str
+) -> str:
+    """Generate the notification comment when no matching milestone is found."""
+    mention = _get_mention(merged_by_login)
+
+    return f"""Hi {mention}, this PR was merged without a milestone set.
+We tried to automatically set a milestone based on: {reason}
+However, **no open milestone was found** matching: {search_criteria}
+
+**Action required:** Please manually set the appropriate milestone for this PR.
+
+> This comment was generated by [Milestone Tag Assistant](https://github.com/{github_repository}/blob/main/.github/workflows/milestone-tag-assistant.yml).
+"""
+
+
+def _has_bug_fix_indicators(title: str, labels: list[str]) -> bool:
+    """Check if the PR has indicators that it's a bug fix."""
+    title_lower = title.lower()
+    if "fix" in title_lower or "bug" in title_lower:
+        return True
+    if set(labels) & MILESTONE_BUG_LABELS:
+        return True
+    return False
+
+
+def _get_removed_backport_labels_from_events(events: Iterable[IssueEvent]) -> set[str]:
+    """Return ``backport-to-*`` labels that appear in any ``unlabeled`` event.
+
+    Scans the issue events stream for ``unlabeled`` events on ``backport-to-*``
+    labels and returns the set of label names that were removed at any point
+    in the PR's lifecycle. The actor is intentionally NOT checked: GitHub
+    repo settings restrict label changes to users with write or triage
+    access, so any ``unlabeled`` event is implicitly authorised.
+
+    Combined with the live ``backport-to-*`` labels still on the PR, this is
+    enough to distinguish:
+
+    - Full removal (event present, no current backport) → skip signal.
+    - Replacement (event present, different current backport) → no skip;
+      the caller's regular evaluation picks up the new label.
+    - No removal (no event) → no skip.
+    """
+    return {
+        event.label.name
+        for event in events
+        if getattr(event, "event", None) == "unlabeled"
+        and getattr(getattr(event, "label", None), "name", "").startswith("backport-to-")
+    }
+
+
+def _should_skip_milestone_tagging(
+    labels: list[str],
+    events: Iterable[IssueEvent] | None = None,
+) -> bool:
+    """Decide whether milestone auto-tagging should be skipped for the PR.
+
+    Single decision point for the ``set-milestone`` command, covering
+    checks 2 and 3 of the pipeline documented in the module-level comment
+    above. Check 1 (milestone-already-set guard) is handled separately in
+    :func:`set_milestone` because it operates on ``issue.milestone`` rather
+    than labels. Applies the checks IN ORDER and short-circuits on the
+    first hit; each skip outcome emits its own ``console_print`` info log
+    so callers only need to react to the boolean return.
+
+    1. **GitHub events evaluation** (when ``events`` is supplied). If any
+       ``unlabeled`` event in ``events`` removed a ``backport-to-*`` label
+       AND ``labels`` contains no ``backport-to-*`` label now, treat the
+       removal as an explicit "don't auto-tag" signal and skip. Pure label
+       replacement (e.g. ``backport-to-v3-1-test`` swapped for
+       ``backport-to-v3-2-test``) leaves a backport on the PR and does NOT
+       trigger the skip — the caller's regular evaluation picks up the new
+       label. The unlabel actor's permission is NOT re-verified: GitHub
+       repo settings already restrict label changes to committers/triagers.
+    2. **Static skip labels.** If any ``MILESTONE_SKIP_LABELS`` label is
+       in ``labels``, skip.
+    3. Otherwise, do not skip.
+
+    The events check is ordered first so that an explicit unbackport
+    overrides every other condition, including the merge-to-version-branch
+    heuristic that :func:`_determine_milestone_version` would otherwise
+    apply.
+
+    :param labels: Labels currently on the PR (live, from ``issue.labels``).
+    :param events: Issue events stream (live, from ``issue.get_events()``).
+        Pass ``None`` to disable the events check — e.g. when the events
+        fetch failed and only the static skip-label check should run.
+    """
+    if events is not None:
+        removed_backports = _get_removed_backport_labels_from_events(events)
+        current_backports = {label for label in labels if label.startswith("backport-to-")}
+        if removed_backports and not current_backports:
+            console_print(
+                f"[info]Skipping milestone tagging - backport labels were removed during the "
+                f"PR lifecycle and no replacement remains, treated as explicit "
+                f"maintainer/triager signal: {sorted(removed_backports)}[/]"
+            )
+            return True
+
+    skip_labels_present = set(labels) & MILESTONE_SKIP_LABELS
+    if skip_labels_present:
+        console_print(f"[info]Skipping milestone tagging - PR has skip label(s): {skip_labels_present}[/]")
+        return True
+
+    return False
+
+
+def _get_backport_version_from_labels(labels: list[str]) -> tuple[int, int] | None:
+    """Find the first backport label and extract version from it."""
+    for label in labels:
+        if label.startswith("backport-to-"):
+            version = _parse_version_from_backport_label(label)
+            if version:
+                return version
+    return None
+
+
+def _determine_milestone_version(
+    labels: list[str], title: str, base_branch: str
+) -> tuple[tuple[int, int] | None, str]:
+    """Determine which milestone version to use based on PR criteria.
+
+    :returns: Tuple of (version, reason) where version can be:
+        - (major, minor) tuple for specific version milestone (patch releases)
+        - None if no milestone should be set
+    """
+    # Priority 1: Check for backport labels - use specific version milestone
+    backport_version = _get_backport_version_from_labels(labels)
+    if backport_version:
+        return backport_version, f"backport label targeting v{backport_version[0]}-{backport_version[1]}-test"
+
+    # Priority 2: Check if merged to a version branch - use that version's milestone
+    version = _parse_version_from_branch(base_branch)
+    if version:
+        if _has_bug_fix_indicators(title, labels):
+            return version, "bug fix merged to version branch"
+        # Non-bug fix merged to version branch still gets that version's milestone
+        return version, "merged to version branch"
+
+    return None, "no backport label and not merged to a version branch"
+
+
+@ci_group.command(
+    name="set-milestone",
+    help="Set milestone on a merged PR if it doesn't have one. Used by the milestone-tag-assistant workflow.",
+)
+@click.option(
+    "--pr-number",
+    help="The PR number to set milestone on",
+    envvar="PR_NUMBER",
+    required=True,
+    type=int,
+)
+@click.option(
+    "--pr-title",
+    help="The PR title",
+    envvar="PR_TITLE",
+    default="",
+)
+@click.option(
+    "--pr-labels",
+    help="JSON array of PR label names",
+    envvar="PR_LABELS",
+    default="[]",
+)
+@click.option(
+    "--base-branch",
+    help="The base branch the PR was merged to",
+    envvar="BASE_BRANCH",
+    default="",
+)
+@click.option(
+    "--merged-by",
+    help="GitHub username of the person who merged the PR",
+    envvar="MERGED_BY",
+    default="unknown",
+)
+@click.option(
+    "--github-token",
+    help="GitHub token for API access",
+    envvar="GH_TOKEN",
+    required=True,
+)
+@option_github_repository
+@option_verbose
+@option_dry_run
+def set_milestone(
+    pr_number: int,
+    pr_title: str,
+    pr_labels: str,
+    base_branch: str,
+    merged_by: str,
+    github_token: str,
+    github_repository: str,
+):
+    """Set milestone on a merged PR based on backport labels or bug fix indicators."""
+    from github import UnknownObjectException
+
+    console_print(f"[info]Processing PR #{pr_number}[/]")
+    console_print(f"[info]Title: {pr_title}[/]")
+    console_print(f"[info]Base branch: {base_branch}[/]")
+    console_print(f"[info]Merged by: {merged_by}[/]")
+
+    # The workflow's ``--pr-labels`` snapshot is logged for diagnostic visibility
+    # but is no longer used in the decision: live labels and live events are
+    # fetched fresh below. See the milestone-helpers module-level comment for
+    # the full skip-decision pipeline.
+    try:
+        snapshot_labels = json.loads(pr_labels)
+    except json.JSONDecodeError:
+        console_print(f"[warning]Could not parse labels JSON: {pr_labels}[/]")
+        snapshot_labels = []
+    console_print(f"[info]Workflow snapshot labels (diagnostic only): {snapshot_labels}[/]")
+
+    # Initialize GitHub client and get repository.
+    try:
+        gh = _get_github_client(github_token)
+        repo: Repository = gh.get_repo(github_repository)
+    except Exception as e:
+        console_print(f"[error]Failed to connect to GitHub: {e}[/]")
+        return
+
+    # Step 1: milestone-already-set guard — don't override an existing milestone.
+    try:
+        issue: Issue = repo.get_issue(pr_number)
+    except UnknownObjectException:
+        console_print(f"[error]PR #{pr_number} not found when checking existing milestone[/]")
+        return
+    except Exception as e:
+        console_print(f"[error]Failed to check existing milestone: {e}[/]")
+        return
+
+    if issue.milestone is not None:
+        console_print(
+            f"[info]PR #{pr_number} already has milestone '{issue.milestone.title}' set. Skipping.[/]"
+        )
+        return
+
+    # Pull live labels and events. Both feed the skip-decision function below
+    # (events → check 2, labels → check 3) and ``labels`` also feeds
+    # ``_determine_milestone_version`` once the skip pipeline lets the PR
+    # through.
+    try:
+        labels = [label.name for label in issue.labels]
+    except Exception as e:
+        console_print(f"[warning]Could not read live PR labels; falling back to snapshot: {e}[/]")
+        labels = snapshot_labels
+    console_print(f"[info]Live labels: {sorted(labels)}[/]")
+
+    events: list | None
+    try:
+        events = list(issue.get_events())
+    except Exception as e:
+        console_print(f"[warning]Could not fetch issue events; skipping events check: {e}[/]")
+        events = None
+
+    # Steps 2 and 3 of the pipeline: events-based unbackport signal, then
+    # static skip labels. The function logs its own reason when it returns True.
+    if _should_skip_milestone_tagging(labels, events=events):
+        return
+
+    # Determine which milestone to use from the live labels.
+    version, reason = _determine_milestone_version(labels, pr_title, base_branch)
+    if version is None:
+        console_print(f"[info]No milestone to set: {reason}[/]")
+        return
+
+    major, minor = version
+    milestone_prefix = _get_milestone_prefix(major, minor)
+    console_print(f"[info]Looking for milestone with prefix: {milestone_prefix}[/]")
+    milestone = _find_matching_milestone(repo, milestone_prefix)
+    search_criteria = f"prefix '{milestone_prefix}'"
+
+    if not milestone:
+        console_print(f"[warning]No open milestone found matching: {search_criteria}[/]")
+        # Add reminder comment for committer
+        try:
+            issue = repo.get_issue(pr_number)
+            comment = _get_milestone_not_found_comment(merged_by, reason, github_repository, search_criteria)
+            issue.create_comment(comment)
+            console_print(f"[info]Added reminder comment to PR #{pr_number}[/]")
+        except Exception as e:
+            console_print(f"[warning]Failed to add reminder comment: {e}[/]")
+        return
+
+    console_print(f"[info]Found milestone: {milestone.title} (#{milestone.number})[/]")
+
+    # Get the issue (PRs are issues in GitHub API)
+    try:
+        issue = repo.get_issue(pr_number)
+    except UnknownObjectException:
+        console_print(f"[error]PR #{pr_number} not found[/]")
+        return
+
+    # Set milestone on PR
+    try:
+        issue.edit(milestone=milestone)
+        console_print(f"[success]Successfully set milestone '{milestone.title}' on PR #{pr_number}[/]")
+    except Exception as e:
+        console_print(f"[error]Failed to set milestone on PR #{pr_number}: {e}[/]")
+        return
+
+    # Add notification comment
+    comment = _get_milestone_notification_comment(
+        milestone.title, milestone.number, merged_by, reason, github_repository
+    )
+    try:
+        issue.create_comment(comment)
+        console_print(f"[success]Added notification comment to PR #{pr_number}[/]")
+    except Exception as e:
+        console_print(f"[warning]Failed to add notification comment to PR #{pr_number}: {e}[/]")

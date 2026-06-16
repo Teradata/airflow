@@ -19,13 +19,14 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from airflow.api_fastapi.common.db.common import SessionDep, paginated_select
 from airflow.api_fastapi.common.parameters import (
     QueryLimit,
     QueryOffset,
     QueryVariableKeyPatternSearch,
+    QueryVariableKeyPrefixPatternSearch,
     SortParam,
 )
 from airflow.api_fastapi.common.router import AirflowRouter
@@ -62,7 +63,11 @@ def delete_variable(
     session: SessionDep,
 ):
     """Delete a variable entry."""
-    if Variable.delete(variable_key, session) == 0:
+    # Like the other endpoints (get, patch), we do not use Variable.delete/get/set here because these methods
+    # are intended to be used in task execution environment (execution API)
+    result = session.execute(delete(Variable).where(Variable.key == variable_key))
+    rows = getattr(result, "rowcount", 0) or 0
+    if rows == 0:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, f"The Variable with key: `{variable_key}` was not found"
         )
@@ -99,7 +104,7 @@ def get_variables(
         SortParam,
         Depends(
             SortParam(
-                ["key", "id", "_val", "description", "is_encrypted"],
+                ["key", "id", "_val", "description", "is_encrypted", "team_name"],
                 Variable,
             ).dynamic_depends()
         ),
@@ -107,11 +112,12 @@ def get_variables(
     readable_variables_filter: ReadableVariablesFilterDep,
     session: SessionDep,
     variable_key_pattern: QueryVariableKeyPatternSearch,
+    variable_key_prefix_pattern: QueryVariableKeyPrefixPatternSearch,
 ) -> VariableCollectionResponse:
     """Get all Variables entries."""
     variable_select, total_entries = paginated_select(
         statement=select(Variable),
-        filters=[variable_key_pattern, readable_variables_filter],
+        filters=[variable_key_pattern, variable_key_prefix_pattern, readable_variables_filter],
         order_by=order_by,
         offset=offset,
         limit=limit,

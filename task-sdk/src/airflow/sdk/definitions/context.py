@@ -22,13 +22,19 @@ import os
 from collections.abc import MutableMapping
 from typing import TYPE_CHECKING, Any, NamedTuple, TypedDict, cast
 
+from typing_extensions import NotRequired
+
 if TYPE_CHECKING:
     import jinja2
     from pendulum import DateTime
 
     from airflow.sdk.bases.operator import BaseOperator
     from airflow.sdk.definitions.dag import DAG
-    from airflow.sdk.execution_time.context import InletEventsAccessors
+    from airflow.sdk.execution_time.context import (
+        AssetStateStoreAccessors,
+        InletEventsAccessors,
+        TaskStateStoreAccessor,
+    )
     from airflow.sdk.types import (
         DagRunProtocol,
         Operator,
@@ -43,40 +49,42 @@ class Context(TypedDict, total=False):
     conn: Any
     dag: DAG
     dag_run: DagRunProtocol
-    data_interval_end: DateTime | None
-    data_interval_start: DateTime | None
+    data_interval_end: NotRequired[DateTime | None]
+    data_interval_start: NotRequired[DateTime | None]
     outlet_events: OutletEventAccessorsProtocol
     ds: str
     ds_nodash: str
-    expanded_ti_count: int | None
-    exception: None | str | BaseException
+    expanded_ti_count: NotRequired[int | None]
+    exception: NotRequired[None | str | BaseException]
     inlets: list
     inlet_events: InletEventsAccessors
     logical_date: DateTime
     macros: Any
-    map_index_template: str | None
+    map_index_template: NotRequired[str | None]
     outlets: list
     params: dict[str, Any]
-    prev_data_interval_start_success: DateTime | None
-    prev_data_interval_end_success: DateTime | None
-    prev_start_date_success: DateTime | None
-    prev_end_date_success: DateTime | None
-    reason: str | None
+    partition_key: NotRequired[str | None]
+    prev_data_interval_start_success: NotRequired[DateTime | None]
+    prev_data_interval_end_success: NotRequired[DateTime | None]
+    prev_start_date_success: NotRequired[DateTime | None]
+    prev_end_date_success: NotRequired[DateTime | None]
+    reason: NotRequired[str | None]
     run_id: str
-    start_date: DateTime
     # TODO: Remove Operator from below once we have MappedOperator to the Task SDK
     #   and once we can remove context related code from the Scheduler/models.TaskInstance
     task: BaseOperator | Operator
     task_reschedule_count: int
     task_instance: RuntimeTaskInstanceProtocol
     task_instance_key_str: str
+    task_state_store: TaskStateStoreAccessor
+    asset_state_store: AssetStateStoreAccessors
     # `templates_dict` is only set in PythonOperator
-    templates_dict: dict[str, Any] | None
+    templates_dict: NotRequired[dict[str, Any] | None]
     test_mode: bool
     ti: RuntimeTaskInstanceProtocol
     # triggering_asset_events: Mapping[str, Collection[AssetEvent | AssetEventPydantic]]
     triggering_asset_events: Any
-    try_number: int | None
+    try_number: NotRequired[int | None]
     ts: str
     ts_nodash: str
     ts_nodash_with_tz: str

@@ -26,20 +26,13 @@
 from __future__ import annotations
 
 import ast
-import pathlib
 import re
 import sys
 import typing
 
-sys.path.insert(0, str(pathlib.Path(__file__).parent.resolve()))  # make sure common_prek_utils is imported
-from common_prek_utils import (
-    AIRFLOW_CORE_ROOT_PATH,
-    AIRFLOW_CORE_SOURCES_PATH,
-    AIRFLOW_TASK_SDK_SOURCES_PATH,
-)
+from common_prek_utils import AIRFLOW_CORE_ROOT_PATH, AIRFLOW_TASK_SDK_SOURCES_PATH
 
 TASKRUNNER_PY = AIRFLOW_TASK_SDK_SOURCES_PATH / "airflow" / "sdk" / "execution_time" / "task_runner.py"
-CONTEXT_PY = AIRFLOW_CORE_SOURCES_PATH / "airflow" / "utils" / "context.py"
 CONTEXT_HINT = AIRFLOW_TASK_SDK_SOURCES_PATH / "airflow" / "sdk" / "definitions" / "context.py"
 TEMPLATES_REF_RST = AIRFLOW_CORE_ROOT_PATH / "docs" / "templates-ref.rst"
 
@@ -55,6 +48,9 @@ IGNORE = {
     "data_interval_start",
     "prev_data_interval_start_success",
     "prev_data_interval_end_success",
+    # AIP-103: task_state_store/asset_state_store aren't documented in templates-ref yet. Will be done in a later PR.
+    "task_state_store",
+    "asset_state_store",
 }
 
 
@@ -82,26 +78,37 @@ def _iter_template_context_keys_from_original_return() -> typing.Iterator[str]:
                 raise ValueError("Key in dictionary is not a string literal")
             yield key.value
 
-    # Extract keys from the main `context` dictionary assignment
-    context_assignment: ast.AnnAssign = next(
+    # Extract keys from the `if self._cached_template_context is None: self._cached_template_context = {...}` block
+    guard_stmt: ast.If = next(
         stmt
         for stmt in fn_get_template_context.body
-        if isinstance(stmt, ast.AnnAssign)
-        and isinstance(stmt.target, ast.Attribute)
-        and isinstance(stmt.target.value, ast.Name)
-        and stmt.target.value.id == "self"
-        and stmt.target.attr == "_context"
+        if isinstance(stmt, ast.If)
+        and isinstance(stmt.test, ast.Compare)
+        and isinstance(stmt.test.left, ast.Attribute)
+        and isinstance(stmt.test.left.value, ast.Name)
+        and stmt.test.left.value.id == "self"
+        and stmt.test.left.attr == "_cached_template_context"
+        and len(stmt.test.ops) == 1
+        and isinstance(stmt.test.ops[0], ast.Is)
+        and len(stmt.test.comparators) == 1
+        and isinstance(stmt.test.comparators[0], ast.Constant)
+        and stmt.test.comparators[0].value is None
     )
-
-    if not isinstance(context_assignment.value, ast.BoolOp):
-        raise TypeError("Expected a BoolOp like 'self._context or {...}'.")
-
-    context_assignment_op = context_assignment.value
-    _, context_assignment_value = context_assignment_op.values
-
-    if not isinstance(context_assignment_value, ast.Dict):
-        raise ValueError("'context' is not assigned a dictionary literal")
-    yield from extract_keys_from_dict(context_assignment_value)
+    context_assignment: ast.Assign = next(
+        s
+        for s in guard_stmt.body
+        if isinstance(s, ast.Assign)
+        and any(
+            isinstance(t, ast.Attribute)
+            and isinstance(t.value, ast.Name)
+            and t.value.id == "self"
+            and t.attr == "_cached_template_context"
+            for t in s.targets
+        )
+    )
+    if not isinstance(context_assignment.value, ast.Dict):
+        raise ValueError("'_cached_template_context' is not assigned a dictionary literal")
+    yield from extract_keys_from_dict(context_assignment.value)
 
     # Handle keys added conditionally in `if from_server`
     for stmt in fn_get_template_context.body:
@@ -115,23 +122,6 @@ def _iter_template_context_keys_from_original_return() -> typing.Iterator[str]:
                     and sub_stmt.target.id == "context_from_server"
                 ):
                     yield from extract_keys_from_dict(sub_stmt.value)
-
-
-def _iter_template_context_keys_from_declaration() -> typing.Iterator[str]:
-    context_mod = ast.parse(CONTEXT_PY.read_text("utf-8"), str(CONTEXT_PY))
-    st_known_context_keys = next(
-        stmt.value
-        for stmt in context_mod.body
-        if isinstance(stmt, ast.AnnAssign)
-        and isinstance(stmt.target, ast.Name)
-        and stmt.target.id == "KNOWN_CONTEXT_KEYS"
-    )
-    if not isinstance(st_known_context_keys, ast.Set):
-        raise ValueError("'KNOWN_CONTEXT_KEYS' is not assigned a set literal")
-    for expr in st_known_context_keys.elts:
-        if not isinstance(expr, ast.Constant) or not isinstance(expr.value, str):
-            raise ValueError("item in 'KNOWN_CONTEXT_KEYS' set is not a str literal")
-        yield expr.value
 
 
 def _iter_template_context_keys_from_type_hints() -> typing.Iterator[str]:
@@ -158,7 +148,7 @@ def _iter_template_context_keys_from_documentation() -> typing.Iterator[str]:
         yield match.group("name")
 
 
-def _compare_keys(retn_keys: set[str], decl_keys: set[str], hint_keys: set[str], docs_keys: set[str]) -> int:
+def _compare_keys(retn_keys: set[str], hint_keys: set[str], docs_keys: set[str]) -> int:
     # Added by PythonOperator and commonly used.
     # Not listed in templates-ref (but in operator docs).
     retn_keys.add("templates_dict")
@@ -168,21 +158,17 @@ def _compare_keys(retn_keys: set[str], decl_keys: set[str], hint_keys: set[str],
     retn_keys.add("expanded_ti_count")
 
     # TODO: These are the keys that are yet to be ported over to the Task SDK.
-    retn_keys.add("inlet_events")
-    retn_keys.add("params")
     retn_keys.add("test_mode")
-    retn_keys.add("triggering_asset_events")
 
     # Only present in callbacks. Not listed in templates-ref (that doc is for task execution).
     retn_keys.update(("exception", "reason", "try_number"))
     docs_keys.update(("exception", "reason", "try_number"))
 
     # Airflow 3 added:
-    retn_keys.update(("start_date", "task_reschedule_count"))
+    retn_keys.add("task_reschedule_count")
 
     check_candidates = [
         ("get_template_context()", retn_keys),
-        ("KNOWN_CONTEXT_KEYS", decl_keys),
         ("Context type hint", hint_keys),
         ("templates-ref", docs_keys),
     ]
@@ -198,10 +184,9 @@ def _compare_keys(retn_keys: set[str], decl_keys: set[str], hint_keys: set[str],
 
 def main() -> str | int | None:
     retn_keys = set(_iter_template_context_keys_from_original_return())
-    decl_keys = set(_iter_template_context_keys_from_declaration())
     hint_keys = set(_iter_template_context_keys_from_type_hints())
     docs_keys = set(_iter_template_context_keys_from_documentation())
-    return _compare_keys(retn_keys, decl_keys, hint_keys, docs_keys)
+    return _compare_keys(retn_keys, hint_keys, docs_keys)
 
 
 if __name__ == "__main__":

@@ -26,7 +26,6 @@ import os
 from datetime import datetime
 
 import requests
-from vertexai.preview.evaluation import MetricPromptTemplateExamples
 
 try:
     from airflow.sdk import task
@@ -66,7 +65,7 @@ def _get_actual_models(key) -> dict[str, str]:
     }
     try:
         response = requests.get(
-            "https://generativelanguage.googleapis.com/v1/models",
+            "https://generativelanguage.googleapis.com/v1beta/models",
             {"key": key},
             timeout=10,
         )
@@ -80,7 +79,7 @@ def _get_actual_models(key) -> dict[str, str]:
         try:
             model_name = model["name"].split("/")[-1]
             splited_model_name = model_name.split("-")
-            if not models["text-embedding"] and ("text" in model_name and "embedding" in model_name):
+            if not models["text-embedding"] and ("gemini" in model_name and "embedding" in model_name):
                 models["text-embedding"] = model_name
             elif (
                 models["text-embedding"]
@@ -166,17 +165,31 @@ EVAL_DATASET = {
         "Baking a decadent chocolate cake requires creaming butter and sugar, beating in eggs and alternating dry ingredients with buttermilk before baking until done.",
     ],
 }
-METRICS = [
-    MetricPromptTemplateExamples.Pointwise.SUMMARIZATION_QUALITY,
-    MetricPromptTemplateExamples.Pointwise.GROUNDEDNESS,
-    MetricPromptTemplateExamples.Pointwise.VERBOSITY,
-    MetricPromptTemplateExamples.Pointwise.INSTRUCTION_FOLLOWING,
-    "exact_match",
-    "bleu",
-    "rouge_1",
-    "rouge_2",
-    "rouge_l_sum",
-]
+REGION_GLOBAL = "global"
+
+
+def _get_metrics():
+    """
+    Lazily import and return the metrics list.
+
+    This avoids slow imports during DAG parsing by deferring the import
+    until the operator is actually created.
+    """
+    from vertexai.preview.evaluation import MetricPromptTemplateExamples
+
+    return [
+        MetricPromptTemplateExamples.Pointwise.SUMMARIZATION_QUALITY,
+        MetricPromptTemplateExamples.Pointwise.GROUNDEDNESS,
+        MetricPromptTemplateExamples.Pointwise.VERBOSITY,
+        MetricPromptTemplateExamples.Pointwise.INSTRUCTION_FOLLOWING,
+        "exact_match",
+        "bleu",
+        "rouge_1",
+        "rouge_2",
+        "rouge_l_sum",
+    ]
+
+
 EXPERIMENT_NAME = f"eval-test-experiment-airflow-operator-{ENV_ID}".replace("_", "-")
 EXPERIMENT_RUN_NAME = f"eval-experiment-airflow-operator-run-{ENV_ID}".replace("_", "-")
 PROMPT_TEMPLATE = "{instruction}. Article: {context}. Summary:"
@@ -186,22 +199,21 @@ CACHED_SYSTEM_INSTRUCTION = """
 You are an expert researcher. You always stick to the facts in the sources provided, and never make up new facts.
 Now look at these research papers, and answer the following questions.
 """
-CACHED_CONTENT_CONFIG = CreateCachedContentConfig(
-    contents=[
-        Content(
-            role="user",
-            parts=[
-                Part.from_uri(
-                    file_uri="gs://cloud-samples-data/generative-ai/pdf/2312.11805v3.pdf",
-                    mime_type="application/pdf",
-                ),
-                Part.from_uri(
-                    file_uri="gs://cloud-samples-data/generative-ai/pdf/2403.05530.pdf",
-                    mime_type="application/pdf",
-                ),
-            ],
-        )
+_CACHED_CONTENT = Content(
+    role="user",
+    parts=[
+        Part.from_uri(
+            file_uri="gs://cloud-samples-data/generative-ai/pdf/2312.11805v3.pdf",
+            mime_type="application/pdf",
+        ),
+        Part.from_uri(
+            file_uri="gs://cloud-samples-data/generative-ai/pdf/2403.05530.pdf",
+            mime_type="application/pdf",
+        ),
     ],
+)
+CACHED_CONTENT_CONFIG = CreateCachedContentConfig(
+    contents=_CACHED_CONTENT,
     system_instruction=CACHED_SYSTEM_INSTRUCTION,
     display_name="test-cache",
     ttl="3600s",
@@ -244,7 +256,7 @@ with DAG(
         task_id="count_tokens_task",
         project_id=PROJECT_ID,
         contents=CONTENTS,
-        location=REGION,
+        location=REGION_GLOBAL,
         model=MULTIMODAL_MODEL,
     )
     # [END how_to_cloud_gen_ai_count_tokens_operator]
@@ -254,7 +266,7 @@ with DAG(
         task_id="generate_content_task",
         project_id=PROJECT_ID,
         contents=CONTENTS,
-        location=REGION,
+        location=REGION_GLOBAL,
         generation_config=GENERATION_CONFIG_CREATE_CONTENT,
         model=MULTIMODAL_MODEL,
     )
@@ -281,7 +293,7 @@ with DAG(
         location=REGION,
         pretrained_model=MULTIMODAL_MODEL,
         eval_dataset=EVAL_DATASET,
-        metrics=METRICS,
+        metrics=_get_metrics(),
         experiment_name=EXPERIMENT_NAME,
         experiment_run_name=EXPERIMENT_RUN_NAME,
         prompt_template=PROMPT_TEMPLATE,
@@ -300,7 +312,7 @@ with DAG(
     create_cached_content_task = GenAICreateCachedContentOperator(
         task_id="create_cached_content_task",
         project_id=PROJECT_ID,
-        location=REGION,
+        location=REGION_GLOBAL,
         model=CACHED_MODEL,
         cached_content_config=CACHED_CONTENT_CONFIG,
     )
@@ -310,7 +322,7 @@ with DAG(
     generate_from_cached_content_task = GenAIGenerateContentOperator(
         task_id="generate_from_cached_content_task",
         project_id=PROJECT_ID,
-        location=REGION,
+        location=REGION_GLOBAL,
         contents=["What are the papers about?"],
         generation_config={
             "cached_content": create_cached_content_task.output,
@@ -338,5 +350,5 @@ with DAG(
 
 from tests_common.test_utils.system_tests import get_test_run  # noqa: E402
 
-# Needed to run the example DAG with pytest (see: tests/system/README.md#run_via_pytest)
+# Needed to run the example DAG with pytest (see: contributing-docs/testing/system_tests.rst)
 test_run = get_test_run(dag)

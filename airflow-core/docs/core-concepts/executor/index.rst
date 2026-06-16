@@ -92,7 +92,7 @@ Airflow tasks are sent to a central queue where remote workers pull tasks to exe
 
 * :doc:`CeleryExecutor <apache-airflow-providers-celery:celery_executor>`
 * :doc:`BatchExecutor <apache-airflow-providers-amazon:executors/batch-executor>`
-* :doc:`EdgeExecutor <apache-airflow-providers-edge3:edge_executor>` (Experimental Pre-Release)
+* :doc:`EdgeExecutor <apache-airflow-providers-edge3:edge_executor>`
 
 
 *Containerized Executors*
@@ -145,21 +145,45 @@ Some examples of valid multiple executor configuration:
     executor = KubernetesExecutor,my.custom.module.ExecutorClass
 
 
-.. note::
-    Using two instances of the _same_ executor class is not currently supported.
+Aliases
+"""""""
 
-To make it easier to specify executors on tasks and Dags, executor configuration now supports aliases. You may then use this alias to refer to the executor in your Dags (see below).
+To make it easier to specify executors on tasks and Dags, executor configuration supports aliases. You may then use this alias to refer to the executor in your Dags (see below).
+
+Aliases work with both custom executor module paths and built-in core executors:
 
 .. code-block:: ini
 
     [core]
-    executor = LocalExecutor,ShortName:my.custom.module.ExecutorClass
+    executor = LocalExecutor,short_name:my.custom.module.ExecutorClass
+
+.. code-block:: ini
+
+    [core]
+    executor = my_local_exec:LocalExecutor,my_celery_exec:CeleryExecutor
+
+Aliasing core executors is particularly useful when the same executor is used at both the global and team level when
+running Multi-Team Airflow, since it allows tasks to explicitly target a specific instance by alias:
+
+.. code-block:: ini
+
+    [core]
+    executor = global_celery_exec:CeleryExecutor;team1=team_celery_exec:CeleryExecutor
+
+
+.. note::
+    Using two instances of the same Executor class is only supported in multi-team Airflow. For example: Two separate
+    teams can both use the CeleryExecutor but one single team cannot use two instances of the CeleryExecutor. An executor
+    can also be used globally and in teams at the same time. Please see the :doc:`Multi-Team Airflow documentation </core-concepts/multi-team>` for
+    more details on this.
+
+
+Writing Dags and Tasks
+^^^^^^^^^^^^^^^^^^^^^^
 
 .. note::
     If a Dag specifies a task to use an executor that is not configured, the Dag will fail to parse and a warning dialog will be shown in the Airflow UI. Please ensure that all executors you wish to use are specified in Airflow configuration on *any* host/container that is running an Airflow component (scheduler, workers, etc).
 
-Writing Dags and Tasks
-^^^^^^^^^^^^^^^^^^^^^^
 
 To specify an executor for a task, make use of the executor parameter on Airflow Operators:
 
@@ -247,20 +271,18 @@ Example:
 
     ExecuteTask(
         token="mock",
-        ti=TaskInstance(
+        ti=TaskInstanceDTO(
             id=UUID("4d828a62-a417-4936-a7a6-2b3fabacecab"),
             task_id="mock",
             dag_id="mock",
             run_id="mock",
             try_number=1,
+            dag_version_id=UUID("4d828a62-a417-4936-a7a6-2b3fabacecab"),
             map_index=-1,
             pool_slots=1,
             queue="default",
             priority_weight=1,
             executor_config=None,
-            parent_context_carrier=None,
-            context_carrier=None,
-            queued_dttm=None,
         ),
         dag_rel_path=PurePosixPath("mock.py"),
         bundle_info=BundleInfo(name="n/a", version="no matter"),
@@ -288,6 +310,7 @@ The following methods must be overridden at minimum to have your executor suppor
 
 * ``sync``: Sync will get called periodically during executor heartbeats. Implement this method to update the state of the tasks which the executor knows about. Optionally, attempting to execute queued tasks that have been received from the scheduler.
 * ``execute_async``: Executes a *workload* asynchronously. This method is called (after a few layers) during executor heartbeat which is run periodically by the scheduler. In practice, this method often just enqueues tasks into an internal or external queue of tasks to be run (e.g. ``KubernetesExecutor``). But can also execute the tasks directly as well (e.g. ``LocalExecutor``). This will depend on the executor.
+* ``_process_workloads``: Processes a list of workloads that have been queued via ``queue_workload``. This method is called during executor heartbeat and defines how the executor handles the execution of workloads (e.g., queuing them to workers, submitting to external systems, etc.).
 
 
 Optional Interface Methods to Implement
@@ -316,6 +339,10 @@ The ``BaseExecutor`` class interface contains a set of attributes that Airflow c
 
 CLI
 ^^^
+
+.. important::
+  Starting in Airflow ``3.2.0``, provider-level CLI commands are available to manage core extensions such as auth managers and executors. Implementing provider-level CLI commands can reduce CLI startup time by avoiding heavy imports when they are not required.
+  See :doc:`provider-level CLI <apache-airflow-providers:core-extensions/cli-commands>` for implementation guidance.
 
 Executors may vend CLI commands which will be included in the ``airflow`` command line tool by implementing the ``get_cli_commands`` method. Executors such as ``CeleryExecutor`` and ``KubernetesExecutor`` for example, make use of this mechanism. The commands can be used to setup required workers, initialize environment or set other configuration. Commands are only vended for the currently configured executor. A pseudo-code example of implementing CLI command vending from an executor can be seen below:
 
@@ -350,7 +377,7 @@ Logging
 ^^^^^^^
 
 Executors may vend log messages which will be included in the Airflow task logs by implementing the ``get_task_logs`` method. This can be helpful if the execution environment has extra context in the case of task failures, which may be due to the execution environment itself rather than the Airflow task code. It can also be helpful to include setup/teardown logging from the execution environment.
-The ``KubernetesExecutor`` leverages this this capability to include logs from the pod which ran a specific Airflow task and display them in the logs for that Airflow task. A pseudo-code example of implementing task log vending from an executor can be seen below:
+The ``KubernetesExecutor`` leverages this capability to include logs from the pod which ran a specific Airflow task and display them in the logs for that Airflow task. A pseudo-code example of implementing task log vending from an executor can be seen below:
 
 .. code-block:: python
 

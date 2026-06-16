@@ -21,7 +21,6 @@ from unittest import mock
 import pytest
 from botocore.exceptions import ClientError
 
-from airflow.exceptions import AirflowException, TaskDeferred
 from airflow.providers.amazon.aws.hooks.sagemaker import SageMakerHook
 from airflow.providers.amazon.aws.operators import sagemaker
 from airflow.providers.amazon.aws.operators.sagemaker import (
@@ -30,6 +29,7 @@ from airflow.providers.amazon.aws.operators.sagemaker import (
 )
 from airflow.providers.amazon.aws.triggers.sagemaker import SageMakerTrigger
 from airflow.providers.common.compat.openlineage.facet import Dataset
+from airflow.providers.common.compat.sdk import AirflowException, TaskDeferred
 from airflow.providers.openlineage.extractors import OperatorLineage
 
 from unit.amazon.aws.utils.test_template_fields import validate_template_fields
@@ -149,7 +149,7 @@ class TestSageMakerProcessingOperator:
                 (key3,) = key3_raw
                 assert sagemaker.config[key1][key2][key3] == int(sagemaker.config[key1][key2][key3])
             else:
-                sagemaker.config[key1][key2] == int(sagemaker.config[key1][key2])
+                assert sagemaker.config[key1][key2] == int(sagemaker.config[key1][key2])
 
     @mock.patch.object(SageMakerHook, "describe_processing_job")
     @mock.patch.object(SageMakerHook, "count_processing_jobs_by_name", return_value=0)
@@ -304,6 +304,34 @@ class TestSageMakerProcessingOperator:
     )
     @mock.patch.object(SageMakerBaseOperator, "_check_if_job_exists", return_value=False)
     def test_operator_failed_before_defer(
+        self,
+        mock_job_exists,
+        mock_processing,
+        mock_describe,
+        mock_defer,
+    ):
+        sagemaker_operator = SageMakerProcessingOperator(
+            **self.defer_processing_config_kwargs,
+            config=CREATE_PROCESSING_PARAMS,
+        )
+        with pytest.raises(AirflowException):
+            sagemaker_operator.execute(context=None)
+
+        assert not mock_defer.called
+
+    @mock.patch("airflow.providers.amazon.aws.operators.sagemaker.SageMakerProcessingOperator.defer")
+    @mock.patch.object(
+        SageMakerHook,
+        "describe_processing_job",
+        return_value={"ProcessingJobStatus": "Stopped", "FailureReason": "It stopped"},
+    )
+    @mock.patch.object(
+        SageMakerHook,
+        "create_processing_job",
+        return_value={"ProcessingJobArn": "test_arn", "ResponseMetadata": {"HTTPStatusCode": 200}},
+    )
+    @mock.patch.object(SageMakerBaseOperator, "_check_if_job_exists", return_value=False)
+    def test_operator_stopped_before_defer(
         self,
         mock_job_exists,
         mock_processing,

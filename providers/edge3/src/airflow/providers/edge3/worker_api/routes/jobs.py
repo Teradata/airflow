@@ -17,31 +17,42 @@
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
+from fastapi import Body, Depends, HTTPException, status
 from sqlalchemy import select, update
 
-from airflow.providers.common.compat.sdk import timezone
+from airflow.api_fastapi.common.db.common import SessionDep  # noqa: TC001
+from airflow.api_fastapi.common.router import AirflowRouter
+from airflow.api_fastapi.core_api.openapi.exceptions import create_openapi_http_exception_doc
+from airflow.executors.workloads import ExecuteTask
+from airflow.providers.common.compat.sdk import Stats, timezone
 from airflow.providers.edge3.models.edge_job import EdgeJobModel
+from airflow.providers.edge3.models.edge_worker import EdgeWorkerModel
+from airflow.providers.edge3.version_compat import AIRFLOW_V_3_3_PLUS
 from airflow.providers.edge3.worker_api.auth import jwt_token_authorization_rest
 from airflow.providers.edge3.worker_api.datamodels import (
     EdgeJobFetched,
     WorkerApiDocs,
     WorkerQueuesBody,
 )
-from airflow.providers.edge3.worker_api.routes._v2_compat import (
-    AirflowRouter,
-    Body,
-    Depends,
-    SessionDep,
-    create_openapi_http_exception_doc,
-    parse_command,
-    status,
-)
-from airflow.stats import Stats
 from airflow.utils.state import TaskInstanceState
 
+if TYPE_CHECKING:
+    from airflow.providers.edge3.models.types import ExecuteTypeBody
+
 jobs_router = AirflowRouter(tags=["Jobs"], prefix="/jobs")
+
+
+def parse_command(command: str, dag_id: str, run_id: str) -> ExecuteTypeBody:
+    if AIRFLOW_V_3_3_PLUS:
+        from airflow.executors.workloads import ExecuteCallback
+        from airflow.providers.edge3.models.types import EXECUTE_CALLBACK_TAG
+
+        if dag_id == EXECUTE_CALLBACK_TAG and run_id.startswith(EXECUTE_CALLBACK_TAG):
+            return ExecuteCallback.model_validate_json(command)  # type: ignore[return-value]
+
+    return ExecuteTask.model_validate_json(command)
 
 
 @jobs_router.post(
@@ -51,6 +62,7 @@ jobs_router = AirflowRouter(tags=["Jobs"], prefix="/jobs")
         [
             status.HTTP_400_BAD_REQUEST,
             status.HTTP_403_FORBIDDEN,
+            status.HTTP_404_NOT_FOUND,
         ]
     ),
 )
@@ -66,6 +78,10 @@ def fetch(
     session: SessionDep,
 ) -> EdgeJobFetched | None:
     """Fetch a job to execute on the edge worker."""
+    worker = session.scalar(select(EdgeWorkerModel).where(EdgeWorkerModel.worker_name == worker_name))
+    if not worker:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Worker not found")
+
     query = (
         select(EdgeJobModel)
         .where(
@@ -76,18 +92,19 @@ def fetch(
     )
     if body.queues:
         query = query.where(EdgeJobModel.queue.in_(body.queues))
+    if worker.team_name is not None:
+        query = query.where(EdgeJobModel.team_name == worker.team_name)
     query = query.limit(1)
     query = query.with_for_update(skip_locked=True)
     job: EdgeJobModel | None = session.scalar(query)
     if not job:
         return None
-    job.state = TaskInstanceState.RUNNING
+    job.state = TaskInstanceState.RESTARTING  # keep this intermediate state until worker sets to running
     job.edge_worker = worker_name
     job.last_update = timezone.utcnow()
     session.commit()
     # Edge worker does not backport emitted Airflow metrics, so export some metrics
     tags = {"dag_id": job.dag_id, "task_id": job.task_id, "queue": job.queue}
-    Stats.incr(f"edge_worker.ti.start.{job.queue}.{job.dag_id}.{job.task_id}", tags=tags)
     Stats.incr("edge_worker.ti.start", tags=tags)
     return EdgeJobFetched(
         dag_id=job.dag_id,
@@ -95,7 +112,7 @@ def fetch(
         run_id=job.run_id,
         map_index=job.map_index,
         try_number=job.try_number,
-        command=parse_command(job.command),
+        command=parse_command(job.command, job.dag_id, job.run_id),
         concurrency_slots=job.concurrency_slots,
     )
 
@@ -141,10 +158,6 @@ def state(
                 "queue": job.queue,
                 "state": str(state),
             }
-            Stats.incr(
-                f"edge_worker.ti.finish.{job.queue}.{state}.{job.dag_id}.{job.task_id}",
-                tags=tags,
-            )
             Stats.incr("edge_worker.ti.finish", tags=tags)
 
     query2 = (

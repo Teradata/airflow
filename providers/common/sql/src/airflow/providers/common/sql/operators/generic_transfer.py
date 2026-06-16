@@ -17,12 +17,11 @@
 # under the License.
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
-from airflow.exceptions import AirflowException
-from airflow.providers.common.compat.sdk import BaseHook, BaseOperator
+from airflow.providers.common.compat.sdk import AirflowException, BaseHook, BaseOperator, conf
 from airflow.providers.common.sql.hooks.sql import DbApiHook
 from airflow.providers.common.sql.triggers.sql import SQLExecuteQueryTrigger
 
@@ -48,11 +47,16 @@ class GenericTransfer(BaseOperator):
     :param source_hook_params: source hook parameters.
     :param destination_conn_id: destination connection. (templated)
     :param destination_hook_params: destination hook parameters.
+    :param rows_processor: (optional) A callable applied once per batch of rows before insertion.
+        It receives the full list of rows and the task context, and must return a list of rows compatible with
+        the underlying hook's.
     :param preoperator: sql statement or list of statements to be
         executed prior to loading the data. (templated)
     :param insert_args: extra params for `insert_rows` method.
     :param page_size: number of records to be read in paginated mode (optional).
     :param paginated_sql_statement_clause: SQL statement clause to be used for pagination (optional).
+    :param deferrable: Run operator in deferrable mode (only effective in paginated mode, i.e.
+        when `page_size` is set and `sql` is a string).
     """
 
     template_fields: Sequence[str] = (
@@ -81,10 +85,14 @@ class GenericTransfer(BaseOperator):
         source_hook_params: dict | None = None,
         destination_conn_id: str,
         destination_hook_params: dict | None = None,
+        rows_processor: Callable[..., list[Any]] | None = None,
+        # rows_processor is called as rows_processor(rows, **context);
+        # context keys vary, so Callable[..., list[Any]] is intentional.
         preoperator: str | list[str] | None = None,
         insert_args: dict | None = None,
         page_size: int | None = None,
         paginated_sql_statement_clause: str | None = None,
+        deferrable: bool = conf.getboolean("operators", "default_deferrable", fallback=False),
         **kwargs,
     ) -> None:
         super().__init__(**kwargs)
@@ -94,10 +102,12 @@ class GenericTransfer(BaseOperator):
         self.source_hook_params = source_hook_params
         self.destination_conn_id = destination_conn_id
         self.destination_hook_params = destination_hook_params
+        self._rows_processor = rows_processor
         self.preoperator = preoperator
         self.insert_args = insert_args or {}
         self.page_size = page_size
         self.paginated_sql_statement_clause = paginated_sql_statement_clause or "{} LIMIT {} OFFSET {}"
+        self.deferrable = deferrable
 
     @classmethod
     def get_hook(cls, conn_id: str, hook_params: dict | None = None) -> DbApiHook:
@@ -140,6 +150,12 @@ class GenericTransfer(BaseOperator):
         if isinstance(commit_every, str):
             self.insert_args["commit_every"] = int(commit_every)
 
+    def _insert_rows(self, rows: list[Any], context: Context):
+        if self._rows_processor:
+            rows = self._rows_processor(rows, **context)
+
+        self.destination_hook.insert_rows(table=self.destination_table, rows=rows, **self.insert_args)
+
     def execute(self, context: Context):
         if self.preoperator:
             self.log.info("Running preoperator")
@@ -147,14 +163,32 @@ class GenericTransfer(BaseOperator):
             self.destination_hook.run(self.preoperator)
 
         if self.page_size and isinstance(self.sql, str):
-            self.defer(
-                trigger=SQLExecuteQueryTrigger(
-                    conn_id=self.source_conn_id,
-                    hook_params=self.source_hook_params,
-                    sql=self.get_paginated_sql(0),
-                ),
-                method_name=self.execute_complete.__name__,
-            )
+            if self.deferrable:
+                self.defer(
+                    trigger=SQLExecuteQueryTrigger(
+                        conn_id=self.source_conn_id,
+                        hook_params=self.source_hook_params,
+                        sql=self.get_paginated_sql(0),
+                    ),
+                    method_name=self.execute_complete.__name__,
+                )
+            else:
+                offset = 0
+                while True:
+                    paginated_sql = self.get_paginated_sql(offset)
+                    self.log.info("Executing: \n %s", paginated_sql)
+                    if rows := self.source_hook.get_records(paginated_sql):
+                        self._insert_rows(rows=rows, context=context)
+                        if len(rows) < self.page_size:
+                            break
+                        offset += self.page_size
+                        self.log.info("Offset increased to %d", offset)
+                    else:
+                        self.log.info(
+                            "No more rows to fetch into %s; ending transfer.",
+                            self.destination_table,
+                        )
+                        break
         else:
             if isinstance(self.sql, str):
                 self.sql = [self.sql]
@@ -163,12 +197,8 @@ class GenericTransfer(BaseOperator):
             for sql in self.sql:
                 self.log.info("Executing: \n %s", sql)
 
-                results = self.source_hook.get_records(sql)
-
-                self.log.info("Inserting rows into %s", self.destination_conn_id)
-                self.destination_hook.insert_rows(
-                    table=self.destination_table, rows=results, **self.insert_args
-                )
+                rows = self.source_hook.get_records(sql)
+                self._insert_rows(rows=rows, context=context)
 
     def execute_complete(
         self,
@@ -179,9 +209,9 @@ class GenericTransfer(BaseOperator):
             if event.get("status") == "failure":
                 raise AirflowException(event.get("message"))
 
-            results = event.get("results")
+            rows = event.get("results")
 
-            if results:
+            if rows:
                 map_index = context["ti"].map_index
                 offset = (
                     context["ti"].xcom_pull(
@@ -197,15 +227,7 @@ class GenericTransfer(BaseOperator):
                 self.log.info("Offset increased to %d", offset)
                 context["ti"].xcom_push(key="offset", value=offset)
 
-                self.log.info("Inserting %d rows into %s", len(results), self.destination_conn_id)
-                self.destination_hook.insert_rows(
-                    table=self.destination_table, rows=results, **self.insert_args
-                )
-                self.log.info(
-                    "Inserting %d rows into %s done!",
-                    len(results),
-                    self.destination_conn_id,
-                )
+                self._insert_rows(rows=rows, context=context)
 
                 self.defer(
                     trigger=SQLExecuteQueryTrigger(

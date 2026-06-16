@@ -63,7 +63,7 @@ deployed outside of the central Airflow cluster is connected via HTTP(s) to the 
 * **Workers** (Central) - Execute the assigned tasks - most standard setup has local or centralized workers, e.g. via Celery
 * **Edge Workers** - Special workers which pull tasks via HTTP(s) as provided as feature via this provider package
 * **Scheduler** - Responsible for adding the necessary tasks to the queue. The EdgeExecutor is running as a module inside the scheduler.
-* **API server** (webserver in Airflow 2.x) - HTTP REST API Server provides access to Dag/task status information. The required end-points are
+* **API server** - HTTP REST API Server provides access to Dag/task status information. The required end-points are
   provided by the Edge provider plugin. The Edge Worker uses this API to pull tasks and send back the results.
 * **Database** - Contains information about the status of tasks, Dags, Variables, connections, etc.
 
@@ -77,7 +77,7 @@ In detail the parts of the Edge provider are deployed as follows:
   need to set the ``executor`` configuration option in the ``airflow.cfg`` file to
   ``airflow.providers.edge3.executors.EdgeExecutor``. For more details see :doc:`edge_executor`. Note that also
   multiple executors can be used in parallel together with the EdgeExecutor.
-* **API server** (webserver in Airflow 2.x) - The API server is providing REST endpoints to the web UI as well
+* **API server** - The API server is providing REST endpoints to the web UI as well
   as serves static files. The Edge provider adds a plugin that provides additional REST API for the Edge Worker
   as well as UI elements to manage workers (not available in Airflow 3.0).
   The API server is responsible for handling requests from the Edge Worker and sending back the results. To
@@ -150,22 +150,18 @@ The current version of the EdgeExecutor is released with known limitations. It w
 
 The following features are known missing and will be implemented in increments:
 
-- API token per worker: Today there is a global API token available only
+- Per-worker or per-team authentication tokens: Today a single shared secret is used for all
+  workers and teams, so multi-team isolation is logical only (see :ref:`edge_executor:multi_team`).
 - Edge Worker Plugin
 
   - Overview about queues / jobs per queue
   - Allow starting Edge Worker REST API separate to api-server
-  - Add some hints how to setup an additional worker
+  - Fine granular access control (e.g. separate read only vs. management permissions for workers) (if demanded by somebody)
 
 - Edge Worker CLI
 
   - Use WebSockets instead of HTTP calls for communication
   - Send logs also to TaskFileHandler if external logging services are used
-  - Integration into telemetry to send metrics from remote site
-  - Publish system metrics with heartbeats (CPU, Disk space, RAM, Load)
-  - Be more liberal e.g. on patch version. Currently requires exact version match
-    (In current state if versions do not match, the worker will gracefully shut
-    down when jobs are completed, no new jobs will be started)
 
 - Tests
 

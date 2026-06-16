@@ -16,21 +16,21 @@
 # under the License.
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 from unittest import mock
 
 import pytest
 
+from tests_common.test_utils.compat import timezone
+from tests_common.test_utils.db import clear_db_dags, clear_db_runs, clear_rendered_ti_fields
+from tests_common.test_utils.taskinstance import get_template_context
 from tests_common.test_utils.version_compat import AIRFLOW_V_3_0_PLUS
 
 if AIRFLOW_V_3_0_PLUS:
     from airflow.sdk import setup, task, teardown
 else:
     from airflow.decorators import setup, task, teardown  # type: ignore[attr-defined,no-redef]
-
-from airflow.utils import timezone
-
-from tests_common.test_utils.db import clear_db_dags, clear_db_runs, clear_rendered_ti_fields
 
 TASK_FUNCTION_NAME_ID = "task_function_name"
 DEFAULT_DATE = timezone.datetime(2023, 1, 1)
@@ -100,7 +100,16 @@ class TestKubernetesDecoratorsBase:
         self.mock_extract_xcom.return_value = '{"key1": "value1", "key2": "value2"}'
 
         self.mock_await_pod_completion = mock.patch(f"{POD_MANAGER_CLASS}.await_pod_completion").start()
-        self.mock_await_pod_completion.return_value = mock.MagicMock(**{"status.phase": "Succeeded"})
+        base_container_status = mock.MagicMock()
+        base_container_status.name = "base"
+        base_container_status.state.terminated.exit_code = 0
+        self.mock_await_pod_completion.return_value = mock.MagicMock(
+            **{
+                "status.phase": "Succeeded",
+                "status.container_statuses": [base_container_status],
+                "status.init_container_statuses": None,
+            }
+        )
         self.mock_hook = mock.patch(HOOK_CLASS).start()
 
         # Without this patch each time pod manager would try to extract logs from the pod
@@ -109,10 +118,8 @@ class TestKubernetesDecoratorsBase:
         self.mock_fetch_logs = mock.patch(f"{POD_MANAGER_CLASS}.fetch_requested_container_logs").start()
         self.mock_fetch_logs.return_value = "logs"
 
-        try:
+        with contextlib.suppress(Exception):
             yield
-        except Exception:
-            pass
         mock.patch.stopall()
 
     def teardown_method(self):
@@ -124,8 +131,7 @@ class TestKubernetesDecoratorsBase:
         session = self.dag_maker.session
         dag_run = self.dag_maker.create_dagrun(run_id=f"k8s_decorator_test_{DEFAULT_DATE.date()}")
         ti = dag_run.get_task_instance(task.operator.task_id, session=session)
-        return_val = task.operator.execute(context=ti.get_template_context(session=session))
-
+        return_val = task.operator.execute(context=get_template_context(ti, task.operator, session=session))
         return ti, return_val
 
 

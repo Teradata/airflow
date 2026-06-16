@@ -3,6 +3,7 @@
     "description": "الوصف",
     "key": "المفتاح",
     "name": "الاسم",
+    "team": "الفريق",
     "value": "القيمة"
   },
   "config": {
@@ -61,6 +62,12 @@
     "searchPlaceholder": "البحث عن موَّصلات",
     "test": "اختبار الموَّصل",
     "testDisabled": "اختبار الموَّصل معطل. تواصل مع المسؤول لتفعيله.",
+    "testError": {
+      "title": "فشل اختبار الموَّصل"
+    },
+    "testSuccess": {
+      "title": "نجح اختبار الموَّصل"
+    },
     "typeMeta": {
       "error": "فشل في استرداد نوع الموَّصل",
       "standardFields": {
@@ -85,6 +92,23 @@
   },
   "formActions": {
     "save": "حفظ"
+  },
+  "jobs": {
+    "columns": {
+      "executorClass": "فئة المنفذ",
+      "hostname": "اسم المضيف",
+      "id": "المعرّف",
+      "jobType": "نوع المهمة",
+      "latestHeartbeat": "آخر نبضة",
+      "unixname": "اسم Unix"
+    },
+    "filters": {
+      "allStates": "جميع الحالات",
+      "allTypes": "جميع الأنواع",
+      "dagProcessorJob": "وظيفة معالج Dag",
+      "schedulerJob": "وظيفة المُجَدْوِل",
+      "triggererJob": "وظيفة المُطلِق"
+    }
   },
   "plugins": {
     "columns": {
@@ -112,7 +136,8 @@
       "includeDeferred": "شمل المهام المؤجلة",
       "nameMaxLength": "الاسم يمكن أن يحتوي على 250 حرف كحد أقصى",
       "nameRequired": "الاسم مطلوب",
-      "slots": "حصص"
+      "slots": "حصص",
+      "slotsHelperText": "استخدم -1 لحصص غير محدودة."
     },
     "noPoolsFound": "لا توجد مجموعات موارد متاحة",
     "pool_few": "مجموعات",

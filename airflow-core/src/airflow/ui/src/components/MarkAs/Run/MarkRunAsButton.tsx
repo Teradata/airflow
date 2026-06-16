@@ -16,16 +16,16 @@
  * specific language governing permissions and limitations
  * under the License.
  */
-import { Box, useDisclosure } from "@chakra-ui/react";
+import { Box, HStack, useDisclosure } from "@chakra-ui/react";
 import { useState } from "react";
 import { useHotkeys } from "react-hotkeys-hook";
 import { useTranslation } from "react-i18next";
-import { MdArrowDropDown } from "react-icons/md";
+import { FiX } from "react-icons/fi";
+import { LuCheck } from "react-icons/lu";
 
-import type { DAGRunPatchStates, DAGRunResponse } from "openapi/requests/types.gen";
+import type { DagRunMutableStates, DAGRunResponse } from "openapi/requests/types.gen";
 import { StateBadge } from "src/components/StateBadge";
-import { Menu, Tooltip } from "src/components/ui";
-import ActionButton from "src/components/ui/ActionButton";
+import { IconButton, Menu, Tooltip } from "src/components/ui";
 
 import { allowedStates } from "../utils";
 import MarkRunAsDialog from "./MarkRunAsDialog";
@@ -33,12 +33,11 @@ import MarkRunAsDialog from "./MarkRunAsDialog";
 type Props = {
   readonly dagRun: DAGRunResponse;
   readonly isHotkeyEnabled?: boolean;
-  readonly withText?: boolean;
 };
 
-const MarkRunAsButton = ({ dagRun, isHotkeyEnabled = false, withText = true }: Props) => {
+const MarkRunAsButton = ({ dagRun, isHotkeyEnabled = false }: Props) => {
   const { onClose, onOpen, open } = useDisclosure();
-  const [state, setState] = useState<DAGRunPatchStates>("success");
+  const [state, setState] = useState<DagRunMutableStates>("success");
   const { t: translate } = useTranslation();
 
   useHotkeys(
@@ -47,7 +46,7 @@ const MarkRunAsButton = ({ dagRun, isHotkeyEnabled = false, withText = true }: P
       setState("failed");
       onOpen();
     },
-    { enabled: isHotkeyEnabled && dagRun.state !== "failed" },
+    { enabled: isHotkeyEnabled },
   );
 
   useHotkeys(
@@ -56,20 +55,24 @@ const MarkRunAsButton = ({ dagRun, isHotkeyEnabled = false, withText = true }: P
       setState("success");
       onOpen();
     },
-    { enabled: isHotkeyEnabled && dagRun.state !== "success" },
+    { enabled: isHotkeyEnabled },
   );
+
+  const label = translate("dags:runAndTaskActions.markAs.button", {
+    type: translate("dagRun_one"),
+  });
 
   return (
     <Box>
-      <Menu.Root positioning={{ gutter: 0, placement: "bottom" }}>
+      <Menu.Root positioning={{ gutter: 0, placement: "bottom" }} tooltipLabel={label}>
         <Menu.Trigger asChild>
-          <ActionButton
-            actionName={translate("dags:runAndTaskActions.markAs.button", { type: translate("dagRun_one") })}
-            flexDirection="row-reverse"
-            icon={<MdArrowDropDown />}
-            text={translate("dags:runAndTaskActions.markAs.button", { type: translate("dagRun_one") })}
-            withText={withText}
-          />
+          <IconButton aria-label={label} data-testid="mark-run-as-button">
+            <HStack gap={1} mx={1}>
+              <LuCheck />
+              <span>/</span>
+              <FiX />
+            </HStack>
+          </IconButton>
         </Menu.Trigger>
         <Menu.Content>
           {allowedStates.map((menuState) => {
@@ -81,19 +84,18 @@ const MarkRunAsButton = ({ dagRun, isHotkeyEnabled = false, withText = true }: P
               <Tooltip
                 closeDelay={100}
                 content={content}
-                disabled={!isHotkeyEnabled || dagRun.state === menuState}
+                disabled={!isHotkeyEnabled}
                 key={menuState}
                 openDelay={100}
               >
+                {/* Not disabled when state matches: re-applying lets users also flip upstream/downstream tasks */}
                 <Menu.Item
                   asChild
-                  disabled={dagRun.state === menuState}
+                  data-testid={`mark-run-as-${menuState}`}
                   key={menuState}
                   onClick={() => {
-                    if (dagRun.state !== menuState) {
-                      setState(menuState);
-                      onOpen();
-                    }
+                    setState(menuState);
+                    onOpen();
                   }}
                   value={menuState}
                 >
@@ -107,7 +109,7 @@ const MarkRunAsButton = ({ dagRun, isHotkeyEnabled = false, withText = true }: P
         </Menu.Content>
       </Menu.Root>
 
-      {open ? <MarkRunAsDialog dagRun={dagRun} onClose={onClose} open={open} state={state} /> : undefined}
+      <MarkRunAsDialog dagRun={dagRun} onClose={onClose} open={open} state={state} />
     </Box>
   );
 };

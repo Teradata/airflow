@@ -29,12 +29,12 @@ from typing import NamedTuple
 
 import lazy_object_proxy
 
+from airflow._shared.module_loading import import_string
 from airflow._shared.timezones.timezone import parse as parsedate
 from airflow.cli.commands.legacy_commands import check_legacy_command
 from airflow.configuration import conf
 from airflow.jobs.job import JobState
 from airflow.utils.cli import ColorMode
-from airflow.utils.module_loading import import_string
 from airflow.utils.state import DagRunState
 
 BUILD_DOCS = "BUILDING_AIRFLOW_DOCS" in os.environ
@@ -167,8 +167,52 @@ ARG_BUNDLE_NAME = Arg(
     default=None,
     action="append",
 )
-ARG_START_DATE = Arg(("-s", "--start-date"), help="Override start_date YYYY-MM-DD", type=parsedate)
-ARG_END_DATE = Arg(("-e", "--end-date"), help="Override end_date YYYY-MM-DD", type=parsedate)
+ARG_START_DATE = Arg(
+    ("-s", "--start-date"),
+    help=(
+        "Override start_date. Accepts multiple datetime formats including: "
+        "YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS, YYYY-MM-DDTHH:MM:SS±HH:MM (ISO 8601), "
+        "and other formats supported by pendulum.parse()"
+    ),
+    type=parsedate,
+)
+ARG_END_DATE = Arg(
+    ("-e", "--end-date"),
+    help=(
+        "Override end_date. Accepts multiple datetime formats including: "
+        "YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS, YYYY-MM-DDTHH:MM:SS±HH:MM (ISO 8601), "
+        "and other formats supported by pendulum.parse()"
+    ),
+    type=parsedate,
+)
+ARG_PARTITION_DATE_START = Arg(
+    ("--partition-date-start",),
+    help=(
+        "Inclusive lower bound of the partition_date window. Matched at local calendar-day "
+        "granularity: the start of the given local calendar day in the Dag's timetable timezone "
+        "(any time-of-day component is ignored). "
+        "Accepts the same datetime formats as --start-date."
+    ),
+    type=parsedate,
+)
+ARG_PARTITION_DATE_END = Arg(
+    ("--partition-date-end",),
+    help=(
+        "Inclusive upper bound of the partition_date window. Matched at local calendar-day "
+        "granularity: all runs whose partition_date falls on the given local calendar day in the "
+        "Dag's timetable timezone are included (any time-of-day component is ignored). "
+        "Accepts the same datetime formats as --end-date."
+    ),
+    type=parsedate,
+)
+ARG_PARTITION_KEY = Arg(
+    ("--partition-key",),
+    help="Clear all Dag runs whose partition_key matches this exact value.",
+)
+ARG_CLEAR_RUN_ID = Arg(
+    ("--run-id",),
+    help="Clear the Dag run with this run_id.",
+)
 ARG_OUTPUT_PATH = Arg(
     (
         "-o",
@@ -260,11 +304,30 @@ ARG_JOB_STATE = Arg(
 )
 
 # next_execution
+ARG_TABLE = Arg(
+    ("--table",),
+    action="store_true",
+    default=False,
+    help="Show a table expected of attributes of next executions",
+)
+ARG_FIELD = Arg(
+    ("--field",),
+    choices=(
+        "logical_date",
+        "data_interval.start",
+        "data_interval.end",
+        "partition_key",
+        "partition_date",
+        "run_after",
+    ),
+    default=None,
+    help="Show given attribute of next executions",
+)
 ARG_NUM_EXECUTIONS = Arg(
     ("-n", "--num-executions"),
     default=1,
     type=positive_int(allow_zero=False),
-    help="The number of next logical date times to show",
+    help="The number of next executions to show",
 )
 
 # misc
@@ -311,10 +374,22 @@ ARG_TEAM_NAME = Arg(("name",), help="Team name")
 # backfill
 ARG_BACKFILL_DAG = Arg(flags=("--dag-id",), help="The dag to backfill.", required=True)
 ARG_BACKFILL_FROM_DATE = Arg(
-    ("--from-date",), help="Earliest logical date to backfill.", type=parsedate, required=True
+    ("--from-date",),
+    help=(
+        "Backfill window start (inclusive). "
+        "For partitioned Dags, this range is interpreted as the partition-date range (auto-detected)."
+    ),
+    type=parsedate,
+    required=True,
 )
 ARG_BACKFILL_TO_DATE = Arg(
-    ("--to-date",), help="Latest logical date to backfill", type=parsedate, required=True
+    ("--to-date",),
+    help=(
+        "Backfill window end (inclusive). "
+        "For partitioned Dags, this range is interpreted as the partition-date range (auto-detected)."
+    ),
+    type=parsedate,
+    required=True,
 )
 ARG_DAG_RUN_CONF = Arg(flags=("--dag-run-conf",), help="JSON dag run configuration.")
 ARG_RUN_BACKWARDS = Arg(
@@ -346,13 +421,14 @@ ARG_BACKFILL_REPROCESS_BEHAVIOR = Arg(
 ARG_BACKFILL_RUN_ON_LATEST_VERSION = Arg(
     ("--run-on-latest-version",),
     help=(
-        "(Experimental) If set, the backfill will run tasks using the latest bundle version instead of "
-        "the version that was active when the original Dag run was created."
+        "(Experimental) The backfill will run tasks using the latest bundle version instead of "
+        "the version that was active when the original Dag run was created. "
+        "If not specified, uses the DAG-level or global configuration default "
+        "(falling back to True for backfills to preserve historical behavior)."
     ),
-    action="store_true",
+    action=argparse.BooleanOptionalAction,
+    default=None,
 )
-
-
 # misc
 ARG_TREAT_DAG_ID_AS_REGEX = Arg(
     ("--treat-dag-id-as-regex",),
@@ -442,8 +518,10 @@ ARG_REPLACE_MICRO = Arg(
 ARG_DB_TABLES = Arg(
     ("-t", "--tables"),
     help=lazy_object_proxy.Proxy(
-        lambda: f"Table names to perform maintenance on (use comma-separated list).\n"
-        f"Options: {import_string('airflow.cli.commands.db_command.all_tables')}"
+        lambda: (
+            f"Table names to perform maintenance on (use comma-separated list).\n"
+            f"Options: {import_string('airflow.cli.commands.db_command.all_tables')}"
+        )
     ),
     type=string_list_type,
 )
@@ -503,6 +581,23 @@ ARG_DB_BATCH_SIZE = Arg(
         "Lower values reduce long-running locks but increase the number of batches."
     ),
 )
+ARG_DB_ERROR_ON_CLEANUP_FAILURE = Arg(
+    ("--error-on-cleanup-failure",),
+    help="Command will exit with a non-zero exit code if any table cleanup failed. By default errors are suppressed and the command exits 0.",
+    action="store_true",
+)
+ARG_DAG_IDS = Arg(
+    ("--dag-ids",),
+    default=None,
+    help="Only cleanup data related to the given dag_id",
+    type=string_list_type,
+)
+ARG_EXCLUDE_DAG_IDS = Arg(
+    ("--exclude-dag-ids",),
+    default=None,
+    help="Avoid cleaning up data related to the given dag_ids",
+    type=string_list_type,
+)
 
 # pool
 ARG_POOL_NAME = Arg(("pool",), metavar="NAME", help="Pool name")
@@ -511,6 +606,7 @@ ARG_POOL_DESCRIPTION = Arg(("description",), help="Pool description")
 ARG_POOL_INCLUDE_DEFERRED = Arg(
     ("--include-deferred",), help="Include deferred tasks in calculations for Pool", action="store_true"
 )
+ARG_POOL_TEAM_NAME = Arg(("--team-name",), help="Team name to assign the pool to (requires multi_team mode)")
 ARG_POOL_IMPORT = Arg(
     ("file",),
     metavar="FILEPATH",
@@ -520,7 +616,7 @@ ARG_POOL_IMPORT = Arg(
             """
             {
                 "pool_1": {"slots": 5, "description": "", "include_deferred": true},
-                "pool_2": {"slots": 10, "description": "test", "include_deferred": false}
+                "pool_2": {"slots": 10, "description": "test", "include_deferred": false, "team_name": "my_team"}
             }"""
         ),
         " " * 4,
@@ -555,6 +651,16 @@ ARG_VAR_ACTION_ON_EXISTING_KEY = Arg(
     default="overwrite",
     choices=("overwrite", "fail", "skip"),
 )
+ARG_VAR_LIST_SHOW_VALUES = Arg(
+    ("--show-values",),
+    action="store_true",
+    help="Show variable values. By default only variable keys are listed.",
+)
+ARG_VAR_LIST_HIDE_SENSITIVE = Arg(
+    ("--hide-sensitive",),
+    action="store_true",
+    help="When used with --show-values, mask variable values.",
+)
 
 # kerberos
 ARG_PRINCIPAL = Arg(("principal",), help="kerberos principal", nargs="?")
@@ -569,7 +675,7 @@ ARG_MAP_INDEX = Arg(("--map-index",), type=int, default=-1, help="Mapped task in
 # database
 ARG_MIGRATION_TIMEOUT = Arg(
     ("-t", "--migration-wait-timeout"),
-    help="timeout to wait for db to migrate ",
+    help="timeout to wait for db to migrate",
     type=int,
     default=60,
 )
@@ -610,6 +716,16 @@ ARG_DB_SQL_ONLY = Arg(
 ARG_DB_SKIP_INIT = Arg(
     ("-s", "--skip-init"),
     help="Only remove tables; do not perform db init.",
+    action="store_true",
+    default=False,
+)
+ARG_DB_USE_MIGRATION_FILES = Arg(
+    ("-m", "--use-migration-files"),
+    help=(
+        "Use migration files to create the database instead of the ORM. "
+        "This is useful for verifying that the migration files produce the "
+        "same schema as the ORM models."
+    ),
     action="store_true",
     default=False,
 )
@@ -669,6 +785,17 @@ ARG_SSL_KEY = Arg(
     default=conf.get("api", "ssl_key"),
     help="Path to the key to use with the SSL certificate",
 )
+ARG_SSL_CA_FILE = Arg(
+    ("--ssl-ca-file",),
+    default=conf.get("api", "ssl_ca_file", fallback=None),
+    help="(Optional) Path to the SSL CA file",
+)
+ARG_SSL_CERT_REQS = Arg(
+    ("--ssl-cert-reqs",),
+    default=conf.get("api", "ssl_cert_reqs", fallback="none"),
+    help="(Optional) Set certificate verification options.",
+    choices=("none", "optional", "required"),
+)
 ARG_DEV = Arg(("-d", "--dev"), help="Start in development mode with hot-reload enabled", action="store_true")
 
 # scheduler
@@ -677,6 +804,13 @@ ARG_NUM_RUNS = Arg(
     default=conf.getint("scheduler", "num_runs"),
     type=int,
     help="Set the number of runs to execute before exiting",
+)
+
+ARG_ONLY_IDLE = Arg(
+    ("-i", "--only-idle"),
+    default=conf.getboolean("scheduler", "only_idle", fallback=False),
+    help="Only count runs after the scheduler becomes idle.",
+    action="store_true",
 )
 
 ARG_WITHOUT_MINGLE = Arg(
@@ -704,9 +838,6 @@ ARG_ENV_VARS = Arg(
 
 # connections
 ARG_CONN_ID = Arg(("conn_id",), help="Connection id, required to get/add/delete/test a connection", type=str)
-ARG_CONN_ID_FILTER = Arg(
-    ("--conn-id",), help="If passed, only items with the specified connection ID will be displayed", type=str
-)
 ARG_CONN_URI = Arg(
     ("--conn-uri",), help="Connection URI, required to add a connection without conn_type", type=str
 )
@@ -758,6 +889,16 @@ ARG_CONN_OVERWRITE = Arg(
     required=False,
     action="store_true",
 )
+ARG_CONN_LIST_SHOW_VALUES = Arg(
+    ("--show-values",),
+    action="store_true",
+    help="Show connection values (host, login, URI, etc.). By default only connection IDs are listed.",
+)
+ARG_CONN_LIST_HIDE_SENSITIVE = Arg(
+    ("--hide-sensitive",),
+    action="store_true",
+    help="When used with --show-values, mask sensitive values (passwords, URI credentials, extra).",
+)
 
 # providers
 ARG_PROVIDER_NAME = Arg(
@@ -788,6 +929,20 @@ ARG_SECTION = Arg(
 ARG_OPTION = Arg(
     ("option",),
     help="The option name",
+)
+ARG_HIDE_SENSITIVE = Arg(
+    ("--hide-sensitive",),
+    action="store_true",
+    help="When used with --show-values, hide sensitive values (passwords, keys, tokens, etc.) and only show non-sensitive configuration values.",
+)
+ARG_CONFIG_SHOW_VALUES = Arg(
+    ("--show-values",),
+    action="store_true",
+    help=(
+        "Show configuration values. "
+        "By default only option names are shown and values (including potentially "
+        "sensitive ones) are hidden."
+    ),
 )
 
 # lint
@@ -891,6 +1046,15 @@ ARG_CAPACITY = Arg(
     type=positive_int(allow_zero=False),
     help="The maximum number of triggers that a Triggerer will run at one time.",
 )
+ARG_QUEUES = Arg(
+    ("--queues",),
+    type=string_list_type,
+    help="Optional comma-separated list of task queues which the triggerer should consume from.",
+)
+ARG_TRIGGERER_TEAM_NAME = Arg(
+    ("--team-name",),
+    help="Team name to scope this triggerer to. Requires core.multi_team to be enabled.",
+)
 
 ARG_DAG_LIST_COLUMNS = Arg(
     ("--columns",),
@@ -909,6 +1073,49 @@ ARG_ASSET_LIST_COLUMNS = Arg(
 ARG_ASSET_NAME = Arg(("--name",), default="", help="Asset name")
 ARG_ASSET_URI = Arg(("--uri",), default="", help="Asset URI")
 ARG_ASSET_ALIAS = Arg(("--alias",), default=False, action="store_true", help="Show asset alias")
+
+# partitions clear
+ARG_PARTITIONS_CLEAR_DAG_ID = Arg(
+    ("-d", "--dag-id"),
+    help="The id of the Dag whose DagRun partition fields should be cleared",
+    required=True,
+)
+ARG_PARTITIONS_CLEAR_START_DATE = Arg(
+    ("-s", "--start-date"),
+    help="Inclusive lower bound of the partition_date window.",
+    type=parsedate,
+)
+ARG_PARTITIONS_CLEAR_END_DATE = Arg(
+    ("-e", "--end-date"),
+    help="Inclusive upper bound of the partition_date window.",
+    type=parsedate,
+)
+ARG_PARTITIONS_CLEAR_DRY_RUN = Arg(
+    ("--dry-run",),
+    help="Show which DagRuns would be cleared without modifying the database",
+    action="store_true",
+)
+ARG_PARTITIONS_CLEAR_PARTITION_KEY = Arg(
+    ("-k", "--partition-key"),
+    type=str,
+    help="Only clear DagRuns whose `partition_key` equals this exact value",
+)
+ARG_PARTITIONS_CLEAR_DATE_RANGE = Arg(
+    ("--date",),
+    type=str,
+    help=(
+        "Range expressed as 'a~b' (e.g. '2026-01-01~2026-01-31'); equivalent to "
+        "--start-date a --end-date b. Mutually exclusive with --start-date / --end-date."
+    ),
+)
+ARG_PARTITIONS_CLEAR_TASK_INSTANCES = Arg(
+    ("--clear-task-instances",),
+    help=(
+        "Also clear the matching DagRuns' task instances (resetting finished runs back to "
+        "QUEUED so they re-execute), in addition to clearing the partition fields."
+    ),
+    action="store_true",
+)
 
 ALTERNATIVE_CONN_SPECS_ARGS = [
     ARG_CONN_TYPE,
@@ -969,7 +1176,7 @@ BACKFILL_COMMANDS = (
     ActionCommand(
         name="create",
         help="Create a backfill for a dag.",
-        description="Run subsections of a DAG for a specified date range.",
+        description="Run subsections of a Dag for a specified date range.",
         func=lazy_load_command("airflow.cli.commands.backfill_command.create_backfill"),
         args=(
             ARG_BACKFILL_DAG,
@@ -990,6 +1197,32 @@ DAGS_COMMANDS = (
         help="Get DAG details given a DAG id",
         func=lazy_load_command("airflow.cli.commands.dag_command.dag_details"),
         args=(ARG_DAG_ID, ARG_OUTPUT, ARG_VERBOSE),
+    ),
+    ActionCommand(
+        name="clear",
+        help="Clear Dag runs selected by run_id, partition_key, or a partition_date window",
+        description=(
+            "Clear Dag runs of the given dag_id and re-queue them for reprocessing. Exactly one "
+            "of the following selectors must be provided: --run-id (single run); --partition-key "
+            "(every run with that exact partition_key); or a partition_date window via "
+            "--partition-date-start and/or --partition-date-end (both bounds are inclusive local "
+            "calendar days, anchored in the Dag's timetable timezone). "
+            "Intended for partitioned Dags, whose runs are keyed by partition_date / "
+            "partition_key instead of logical_date. For traditional, non-partitioned Dags, use "
+            "`airflow tasks clear --start-date / --end-date`."
+        ),
+        func=lazy_load_command("airflow.cli.commands.dag_command.dag_clear"),
+        args=(
+            ARG_DAG_ID,
+            ARG_CLEAR_RUN_ID,
+            ARG_PARTITION_KEY,
+            ARG_PARTITION_DATE_START,
+            ARG_PARTITION_DATE_END,
+            ARG_ONLY_FAILED,
+            ARG_ONLY_RUNNING,
+            ARG_YES,
+            ARG_VERBOSE,
+        ),
     ),
     ActionCommand(
         name="list",
@@ -1050,7 +1283,7 @@ DAGS_COMMANDS = (
             "num-executions option is given"
         ),
         func=lazy_load_command("airflow.cli.commands.dag_command.dag_next_execution"),
-        args=(ARG_DAG_ID, ARG_NUM_EXECUTIONS, ARG_VERBOSE),
+        args=(ARG_DAG_ID, ARG_TABLE, ARG_FIELD, ARG_NUM_EXECUTIONS, ARG_VERBOSE),
     ),
     ActionCommand(
         name="pause",
@@ -1306,6 +1539,31 @@ TASKS_COMMANDS = (
         args=(ARG_DAG_ID, ARG_LOGICAL_DATE_OR_RUN_ID, ARG_OUTPUT, ARG_VERBOSE),
     ),
 )
+PARTITIONS_COMMANDS = (
+    ActionCommand(
+        name="clear",
+        help="Clear the partition_key and partition_date of one or more DagRuns",
+        description=(
+            "Clear the partition_key and partition_date columns on a Dag's DagRuns.\n"
+            "Either --run-id (single run), --partition-key (exact match), or a partition_date range "
+            "(--start-date/--end-date or --date a~b) is required.\n"
+            "Pass --clear-task-instances to additionally clear the matching DagRuns' "
+            "task instances so finished runs go back to QUEUED and re-execute."
+        ),
+        func=lazy_load_command("airflow.cli.commands.partition_command.clear"),
+        args=(
+            ARG_PARTITIONS_CLEAR_DAG_ID,
+            ARG_RUN_ID,
+            ARG_PARTITIONS_CLEAR_START_DATE,
+            ARG_PARTITIONS_CLEAR_END_DATE,
+            ARG_PARTITIONS_CLEAR_PARTITION_KEY,
+            ARG_PARTITIONS_CLEAR_DATE_RANGE,
+            ARG_PARTITIONS_CLEAR_TASK_INSTANCES,
+            ARG_PARTITIONS_CLEAR_DRY_RUN,
+            ARG_VERBOSE,
+        ),
+    ),
+)
 POOLS_COMMANDS = (
     ActionCommand(
         name="list",
@@ -1328,6 +1586,7 @@ POOLS_COMMANDS = (
             ARG_POOL_SLOTS,
             ARG_POOL_DESCRIPTION,
             ARG_POOL_INCLUDE_DEFERRED,
+            ARG_POOL_TEAM_NAME,
             ARG_OUTPUT,
             ARG_VERBOSE,
         ),
@@ -1356,7 +1615,7 @@ VARIABLES_COMMANDS = (
         name="list",
         help="List variables",
         func=lazy_load_command("airflow.cli.commands.variable_command.variables_list"),
-        args=(ARG_OUTPUT, ARG_VERBOSE),
+        args=(ARG_OUTPUT, ARG_VAR_LIST_SHOW_VALUES, ARG_VAR_LIST_HIDE_SENSITIVE, ARG_VERBOSE),
     ),
     ActionCommand(
         name="get",
@@ -1397,6 +1656,9 @@ TEAMS_COMMANDS = (
     ActionCommand(
         name="create",
         help="Create a team",
+        description=(
+            "Create a team. Team names must be 3-50 characters long and contain only alphanumeric characters, hyphens, and underscores.\n"
+        ),
         func=lazy_load_command("airflow.cli.commands.team_command.team_create"),
         args=(ARG_TEAM_NAME, ARG_VERBOSE),
     ),
@@ -1412,12 +1674,33 @@ TEAMS_COMMANDS = (
         func=lazy_load_command("airflow.cli.commands.team_command.team_list"),
         args=(ARG_OUTPUT, ARG_VERBOSE),
     ),
+    ActionCommand(
+        name="sync",
+        help="Sync teams",
+        description=("Sync missing teams from the dag bundle config into the database.\n"),
+        func=lazy_load_command("airflow.cli.commands.team_command.team_sync"),
+        args=(ARG_VERBOSE,),
+    ),
 )
+STATE_STORE_COMMANDS = (
+    ActionCommand(
+        name="cleanup-task-state-store",
+        help="Remove expired task state store rows (MetastoreBackend only)",
+        description=(
+            "Reads [state_store] default_retention_days from config and deletes task_state_store rows "
+            "older than the configured threshold. Only applies when MetastoreBackend is configured; "
+            "custom backends are skipped. Use --dry-run to preview without deleting."
+        ),
+        func=lazy_load_command("airflow.cli.commands.state_store_command.cleanup_task_state_store"),
+        args=(ARG_DB_DRY_RUN, ARG_VERBOSE),
+    ),
+)
+
 DB_COMMANDS = (
     ActionCommand(
         name="check-migrations",
-        help="Check if migration have finished",
-        description="Check if migration have finished (or continually check until timeout)",
+        help="Check if migrations have finished",
+        description="Check if migrations have finished (or continually check until timeout)",
         func=lazy_load_command("airflow.cli.commands.db_command.check_migrations"),
         args=(ARG_MIGRATION_TIMEOUT, ARG_VERBOSE),
     ),
@@ -1425,7 +1708,7 @@ DB_COMMANDS = (
         name="reset",
         help="Burn down and rebuild the metadata database",
         func=lazy_load_command("airflow.cli.commands.db_command.resetdb"),
-        args=(ARG_YES, ARG_DB_SKIP_INIT, ARG_VERBOSE),
+        args=(ARG_YES, ARG_DB_SKIP_INIT, ARG_DB_USE_MIGRATION_FILES, ARG_VERBOSE),
     ),
     ActionCommand(
         name="migrate",
@@ -1445,6 +1728,7 @@ DB_COMMANDS = (
             ARG_DB_SQL_ONLY,
             ARG_DB_FROM_REVISION,
             ARG_DB_FROM_VERSION,
+            ARG_DB_USE_MIGRATION_FILES,
             ARG_VERBOSE,
         ),
     ),
@@ -1494,6 +1778,9 @@ DB_COMMANDS = (
             ARG_YES,
             ARG_DB_SKIP_ARCHIVE,
             ARG_DB_BATCH_SIZE,
+            ARG_DAG_IDS,
+            ARG_EXCLUDE_DAG_IDS,
+            ARG_DB_ERROR_ON_CLEANUP_FAILURE,
         ),
     ),
     ActionCommand(
@@ -1526,7 +1813,7 @@ CONNECTIONS_COMMANDS = (
         name="list",
         help="List connections",
         func=lazy_load_command("airflow.cli.commands.connection_command.connections_list"),
-        args=(ARG_OUTPUT, ARG_VERBOSE, ARG_CONN_ID_FILTER),
+        args=(ARG_OUTPUT, ARG_CONN_LIST_SHOW_VALUES, ARG_CONN_LIST_HIDE_SENSITIVE, ARG_VERBOSE),
     ),
     ActionCommand(
         name="add",
@@ -1717,6 +2004,8 @@ CONFIG_COMMANDS = (
             ARG_EXCLUDE_PROVIDERS,
             ARG_DEFAULTS,
             ARG_VERBOSE,
+            ARG_HIDE_SENSITIVE,
+            ARG_CONFIG_SHOW_VALUES,
         ),
     ),
     ActionCommand(
@@ -1778,7 +2067,7 @@ DB_MANAGERS_COMMANDS = (
         name="reset",
         help="Burn down and rebuild the specified external database",
         func=lazy_load_command("airflow.cli.commands.db_manager_command.resetdb"),
-        args=(ARG_DB_MANAGER_PATH, ARG_YES, ARG_DB_SKIP_INIT, ARG_VERBOSE),
+        args=(ARG_DB_MANAGER_PATH, ARG_YES, ARG_DB_SKIP_INIT, ARG_DB_USE_MIGRATION_FILES, ARG_VERBOSE),
     ),
     ActionCommand(
         name="migrate",
@@ -1799,6 +2088,7 @@ DB_MANAGERS_COMMANDS = (
             ARG_DB_SQL_ONLY,
             ARG_DB_FROM_REVISION,
             ARG_DB_FROM_VERSION,
+            ARG_DB_USE_MIGRATION_FILES,
             ARG_VERBOSE,
         ),
     ),
@@ -1836,6 +2126,11 @@ core_commands: list[CLICommand] = [
         name="backfill",
         help="Manage backfills",
         subcommands=BACKFILL_COMMANDS,
+    ),
+    GroupCommand(
+        name="partitions",
+        help="Manage Dag run partition metadata",
+        subcommands=PARTITIONS_COMMANDS,
     ),
     GroupCommand(
         name="tasks",
@@ -1906,6 +2201,8 @@ core_commands: list[CLICommand] = [
             ARG_LOG_FILE,
             ARG_SSL_CERT,
             ARG_SSL_KEY,
+            ARG_SSL_CA_FILE,
+            ARG_SSL_CERT_REQS,
             ARG_DEV,
             ARG_API_SERVER_ALLOW_PROXY_FORWARDING,
         ),
@@ -1916,6 +2213,7 @@ core_commands: list[CLICommand] = [
         func=lazy_load_command("airflow.cli.commands.scheduler_command.scheduler"),
         args=(
             ARG_NUM_RUNS,
+            ARG_ONLY_IDLE,
             ARG_PID,
             ARG_DAEMON,
             ARG_STDOUT,
@@ -1948,6 +2246,8 @@ core_commands: list[CLICommand] = [
             ARG_VERBOSE,
             ARG_SKIP_SERVE_LOGS,
             ARG_DEV,
+            ARG_QUEUES,
+            ARG_TRIGGERER_TEAM_NAME,
         ),
     ),
     ActionCommand(
@@ -1987,6 +2287,11 @@ core_commands: list[CLICommand] = [
         name="providers",
         help="Display providers",
         subcommands=PROVIDERS_COMMANDS,
+    ),
+    GroupCommand(
+        name="state-store",
+        help="Manage task and asset state storage",
+        subcommands=STATE_STORE_COMMANDS,
     ),
     ActionCommand(
         name="rotate-fernet-key",

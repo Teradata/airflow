@@ -179,6 +179,12 @@ with DAG(
             "{{ task_instance.xcom_pull('create-workflow-invocation-async')['name'].split('/')[-1] }}"
         ),
         expected_statuses={WorkflowInvocation.State.SUCCEEDED},
+        failure_statuses={
+            WorkflowInvocationAction.State.SKIPPED,
+            WorkflowInvocationAction.State.DISABLED,
+            WorkflowInvocationAction.State.CANCELLED,
+            WorkflowInvocationAction.State.FAILED,
+        },
     )
     # [END howto_operator_create_workflow_invocation_async]
 
@@ -341,7 +347,7 @@ with DAG(
         >> delete_dataset
     )
     (
-        last_initialization_step
+        remove_test_directory
         >> install_npm_packages
         >> create_compilation_result
         >> [
@@ -358,7 +364,8 @@ with DAG(
     )
     (
         create_workflow_invocation_async
-        >> [is_workflow_invocation_done, is_workflow_invocation_action_done]
+        >> is_workflow_invocation_done
+        >> is_workflow_invocation_action_done
         >> delete_dataset
     )
     create_workflow_invocation_for_cancel >> cancel_workflow_invocation >> delete_dataset
@@ -377,5 +384,5 @@ with DAG(
 
 from tests_common.test_utils.system_tests import get_test_run  # noqa: E402
 
-# Needed to run the example DAG with pytest (see: tests/system/README.md#run_via_pytest)
+# Needed to run the example DAG with pytest (see: contributing-docs/testing/system_tests.rst)
 test_run = get_test_run(dag)

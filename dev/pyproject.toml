@@ -17,7 +17,14 @@
 # under the License.
 
 [build-system]
-requires = [ "hatchling==1.27.0" ]
+requires = [
+    "hatchling==1.30.1",
+    "packaging==26.2",
+    "pathspec==1.1.1",
+    "pluggy==1.6.0",
+    "tomli==2.4.1; python_version < '3.11'",
+    "trove-classifiers==2026.6.1.19",
+]
 build-backend = "hatchling.build"
 
 [project]
@@ -26,7 +33,7 @@ description = "Development tools for Apache Airflow"
 classifiers = [
     "Private :: Do Not Upload",
 ]
-requires-python = ">=3.10,!=3.14"
+requires-python = ">=3.10,!=3.15"
 authors = [
     { name = "Apache Software Foundation", email = "dev@airflow.apache.org" },
 ]
@@ -36,17 +43,21 @@ maintainers = [
 version = "0.0.1"
 
 dependencies = [
-    "click>=8.1.8",
+    "apache-airflow-mypy",
+    "beautifulsoup4>=4.12.0",
+    "click>=8.3.0",
+    "icalendar>=5.0.0",
     "jinja2>=3.1.5",
-    "keyring==25.6.0",
+    "keyring==25.7.0",
     "PyGithub>=2.1.1",
     "jsonpath_ng>=1.5.3",
     "jsonschema>=4.19.1",
     'pendulum>=3.1.0',
     "pyyaml>=6.0.3",
     "packaging>=25.0",
+    "requests>=2.31.0",
     "rich>=13.6.0",
-    "rich-click>=1.7.1",
+    "rich-click>=1.9.7",
     "semver>=3.0.2",
     "tabulate>=0.9.0",
 ]
@@ -56,3 +67,73 @@ exclude = ["*"]
 
 [tool.hatch.build.targets.wheel]
 bypass-selection = true
+
+[tool.mypy]
+ignore_missing_imports = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+plugins = [
+    "airflow_mypy.plugins.decorators",
+    "airflow_mypy.plugins.outputs",
+]
+pretty = true
+show_error_codes = true
+disable_error_code = [
+    "annotation-unchecked",
+]
+namespace_packages = true
+explicit_package_bases = true
+exclude = [
+    ".*/node_modules/.*",
+    # Exclude hidden files and directories
+    ".*/\\..*"
+]
+# Workspace packages (airflow_breeze, airflow_perf, airflow_mypy, etc.) are installed
+# editable into the hook's virtualenv by `uv sync`, so mypy resolves them via
+# site-packages — no mypy_path entries needed.
+
+[[tool.mypy.overrides]]
+module="airflow.config_templates.default_webserver_config"
+disable_error_code = [
+    "var-annotated",
+]
+
+[[tool.mypy.overrides]]
+module="airflow.migrations.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module="airflow.*._vendor.*"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module= [
+    "google.cloud.*",
+    "azure.*",
+]
+no_implicit_optional = false
+
+[[tool.mypy.overrides]]
+module = "google.api_core.gapic_v1"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+module=[
+    "referencing.*",
+    # Beam has some old type annotations, and they introduced an error recently with bad signature of
+    # a function. This is captured in https://github.com/apache/beam/issues/29927
+    # and we should remove this exclusion when it is fixed.
+    "apache_beam.*"
+]
+ignore_errors = true
+
+# airflowctl autogenered datamodels
+[[tool.mypy.overrides]]
+module="airflowctl.api.datamodels.*"
+ignore_errors = true
+
+[dependency-groups]
+mypy = [
+    "apache-airflow-devel-common[mypy]",
+]

@@ -24,6 +24,8 @@ import pytest
 from airflow.configuration import ensure_secrets_loaded, initialize_secrets_backends
 from airflow.models import Connection, Variable
 from airflow.sdk import SecretCache
+from airflow.sdk.exceptions import AirflowNotFoundException
+from airflow.secrets import BaseSecretsBackend
 
 from tests_common.test_utils.config import conf_vars
 from tests_common.test_utils.db import clear_db_variables
@@ -40,15 +42,15 @@ class TestConnectionsFromSecrets:
     def test_get_connection_second_try(self, mock_env_get, mock_meta_get):
         mock_env_get.side_effect = [None]  # return None
         Connection.get_connection_from_secrets("fake_conn_id")
-        mock_meta_get.assert_called_once_with(conn_id="fake_conn_id")
-        mock_env_get.assert_called_once_with(conn_id="fake_conn_id")
+        mock_meta_get.assert_called_once_with(conn_id="fake_conn_id", team_name=None)
+        mock_env_get.assert_called_once_with(conn_id="fake_conn_id", team_name=None)
 
     @mock.patch("airflow.secrets.metastore.MetastoreBackend.get_connection")
     @mock.patch("airflow.secrets.environment_variables.EnvironmentVariablesBackend.get_connection")
     def test_get_connection_first_try(self, mock_env_get, mock_meta_get):
         mock_env_get.return_value = Connection("something")  # returns something
         Connection.get_connection_from_secrets("fake_conn_id")
-        mock_env_get.assert_called_once_with(conn_id="fake_conn_id")
+        mock_env_get.assert_called_once_with(conn_id="fake_conn_id", team_name=None)
         mock_meta_get.assert_not_called()
 
     @conf_vars(
@@ -115,9 +117,20 @@ class TestConnectionsFromSecrets:
         conn = Connection.get_connection_from_secrets(conn_id="test_mysql")
 
         # Assert that SystemsManagerParameterStoreBackend.get_conn_uri was called
-        mock_get_connection.assert_called_once_with(conn_id="test_mysql")
+        mock_get_connection.assert_called_once_with(conn_id="test_mysql", team_name=None)
 
         assert conn.get_uri() == "mysql://airflow:airflow@host:5432/airflow"
+
+    @pytest.mark.db_test
+    @mock.patch.dict(
+        "os.environ",
+        {
+            "AIRFLOW_CONN__TEAM___TEST_MYSQL": "mysql://airflow:airflow@host:5432/airflow",
+        },
+    )
+    def test_connection_env_var_do_not_access_team_specific(self):
+        with pytest.raises(AirflowNotFoundException, match=r"The conn_id `_team___test_mysql` isn't defined"):
+            Connection.get_connection_from_secrets(conn_id="_team___test_mysql")
 
 
 @skip_if_force_lowest_dependencies_marker
@@ -142,8 +155,8 @@ class TestVariableFromSecrets:
 
         Variable.get_variable_from_secrets("fake_var_key")
 
-        mock_meta_get.assert_called_once_with(key="fake_var_key")
-        mock_env_get.assert_called_once_with(key="fake_var_key")
+        mock_meta_get.assert_called_once_with(key="fake_var_key", team_name=None)
+        mock_env_get.assert_called_once_with(key="fake_var_key", team_name=None)
 
     @mock.patch("airflow.secrets.metastore.MetastoreBackend.get_variable")
     @mock.patch("airflow.secrets.environment_variables.EnvironmentVariablesBackend.get_variable")
@@ -154,7 +167,7 @@ class TestVariableFromSecrets:
         """
         mock_env_get.return_value = "something"
         Variable.get_variable_from_secrets("fake_var_key")
-        mock_env_get.assert_called_once_with(key="fake_var_key")
+        mock_env_get.assert_called_once_with(key="fake_var_key", team_name=None)
         mock_meta_get.assert_not_called()
 
     def test_backend_fallback_to_default_var(self):
@@ -194,13 +207,142 @@ class TestVariableFromSecrets:
         mock_meta_get.return_value = None
 
         assert Variable.get(key="MYVAR") == "a_venv_value"
-        mock_secret_get.assert_called_with(key="MYVAR")
+        mock_secret_get.assert_called_with(key="MYVAR", team_name=None)
         mock_meta_get.assert_not_called()
 
         mock_secret_get.return_value = None
         mock_meta_get.return_value = "a_metastore_value"
         assert Variable.get(key="not_myvar") == "a_metastore_value"
-        mock_meta_get.assert_called_once_with(key="not_myvar")
+        mock_meta_get.assert_called_once_with(key="not_myvar", team_name=None)
 
         mock_secret_get.return_value = "a_secret_value"
         assert Variable.get(key="not_myvar") == "a_secret_value"
+
+    @mock.patch.dict(
+        "os.environ",
+        {
+            "AIRFLOW_VAR__TEAM___MYVAR": "value",
+        },
+    )
+    def test_variable_env_var_do_not_access_team_specific(self):
+        assert Variable.get_variable_from_secrets(key="_team___myvar") is None
+
+
+class _LegacyGetConnectionBackend(BaseSecretsBackend):
+    """Backend overriding ``get_connection`` with the pre-3.2 ``(self, conn_id)`` signature (e.g. Vault)."""
+
+    def __init__(self, conns: dict[str, Connection]):
+        self._conns = conns
+
+    def get_connection(self, conn_id):
+        return self._conns.get(conn_id)
+
+
+class _LegacyGetVariableBackend(BaseSecretsBackend):
+    """Backend overriding ``get_variable`` with the pre-3.2 ``(self, key)`` signature."""
+
+    def __init__(self, variables: dict[str, str]):
+        self._vars = variables
+
+    def get_variable(self, key):
+        return self._vars.get(key)
+
+
+@skip_if_force_lowest_dependencies_marker
+class TestLegacyBackendSignatureCompat:
+    """Backends whose overrides predate the ``team_name`` keyword must keep working (issue #1333)."""
+
+    def setup_method(self) -> None:
+        SecretCache.reset()
+
+    @pytest.mark.parametrize("team_name", [None, "team_a"])
+    @conf_vars({("core", "multi_team"): "True"})
+    @mock.patch.dict("sys.modules", {"airflow.sdk.execution_time.task_runner": None})
+    def test_get_connection_with_legacy_get_connection_override(self, team_name):
+        backend = _LegacyGetConnectionBackend(
+            {"legacy_conn": Connection(conn_id="legacy_conn", conn_type="mysql", host="h")}
+        )
+        with mock.patch("airflow.configuration.ensure_secrets_loaded", return_value=[backend]):
+            conn = Connection.get_connection_from_secrets("legacy_conn", team_name=team_name)
+
+        assert conn.conn_id == "legacy_conn"
+        assert conn.conn_type == "mysql"
+
+    @pytest.mark.parametrize("team_name", [None, "team_a"])
+    def test_get_variable_with_legacy_get_variable_override(self, team_name):
+        backend = _LegacyGetVariableBackend({"legacy_var": "secret_value"})
+        with mock.patch("airflow.models.variable.ensure_secrets_loaded", return_value=[backend]):
+            value = Variable.get_variable_from_secrets("legacy_var", team_name=team_name)
+
+        assert value == "secret_value"
+
+
+@skip_if_force_lowest_dependencies_marker
+class TestSecretBackendKwargEnvVars:
+    """Test per-key env var overrides for secrets backend kwargs."""
+
+    def setup_method(self) -> None:
+        SecretCache.reset()
+
+    @conf_vars(
+        {
+            (
+                "secrets",
+                "backend",
+            ): "airflow.providers.amazon.aws.secrets.systems_manager.SystemsManagerParameterStoreBackend",
+        }
+    )
+    @mock.patch.dict(
+        "os.environ",
+        {"AIRFLOW__SECRETS__BACKEND_KWARG__CONNECTIONS_PREFIX": "/airflow/connections"},
+    )
+    def test_backend_kwarg_env_vars_basic(self):
+        """Per-key env var is picked up when no JSON blob is set."""
+        backends = initialize_secrets_backends()
+        systems_manager = next(
+            b for b in backends if b.__class__.__name__ == "SystemsManagerParameterStoreBackend"
+        )
+        assert systems_manager.connections_prefix == "/airflow/connections"
+
+    @conf_vars(
+        {
+            (
+                "secrets",
+                "backend",
+            ): "airflow.providers.amazon.aws.secrets.systems_manager.SystemsManagerParameterStoreBackend",
+            ("secrets", "backend_kwargs"): '{"connections_prefix": "/old"}',
+        }
+    )
+    @mock.patch.dict(
+        "os.environ",
+        {"AIRFLOW__SECRETS__BACKEND_KWARG__CONNECTIONS_PREFIX": "/new"},
+    )
+    def test_backend_kwarg_env_vars_override_json(self):
+        """Per-key env var overrides the same key in the JSON blob."""
+        backends = initialize_secrets_backends()
+        systems_manager = next(
+            b for b in backends if b.__class__.__name__ == "SystemsManagerParameterStoreBackend"
+        )
+        assert systems_manager.connections_prefix == "/new"
+
+    @conf_vars(
+        {
+            (
+                "secrets",
+                "backend",
+            ): "airflow.providers.amazon.aws.secrets.systems_manager.SystemsManagerParameterStoreBackend",
+            ("secrets", "backend_kwargs"): '{"connections_prefix": "/airflow"}',
+        }
+    )
+    @mock.patch.dict(
+        "os.environ",
+        {"AIRFLOW__SECRETS__BACKEND_KWARG__VARIABLES_PREFIX": "/airflow/variables"},
+    )
+    def test_backend_kwarg_env_vars_merge_with_json(self):
+        """Per-key env var is merged with (not replacing) the JSON blob."""
+        backends = initialize_secrets_backends()
+        systems_manager = next(
+            b for b in backends if b.__class__.__name__ == "SystemsManagerParameterStoreBackend"
+        )
+        assert systems_manager.connections_prefix == "/airflow"
+        assert systems_manager.variables_prefix == "/airflow/variables"
