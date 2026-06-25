@@ -27,7 +27,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      workflows: write
 
     steps:
       - name: Checkout Teradata public main
@@ -52,6 +51,7 @@ jobs:
       - name: Reset local main to upstream/main and push
         run: |
           git reset --hard upstream/main
+          git remote set-url origin https://x-access-token:${{ secrets.TERADATA_PUBLIC_PAT }}@github.com/Teradata/airflow.git
           git push origin main --force-with-lease
           echo "synced_sha=$(git rev-parse HEAD)" >> $GITHUB_ENV
           echo "✓ Teradata/airflow:main is now at $(git rev-parse HEAD)"
