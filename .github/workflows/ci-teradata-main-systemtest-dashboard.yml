@@ -29,6 +29,11 @@ on:
         description: 'Branch to run system tests on (defaults to main)'
         required: false
         default: 'main'
+      skip_csae:
+        description: 'Skip CSAE environment creation and system tests (for pipeline testing only)'
+        required: false
+        default: false
+        type: boolean
 permissions:
   contents: write
   pages: write
@@ -62,11 +67,23 @@ jobs:
           cp .github/workflows/system-tests-files/report_parse_xml.py .
           cp .github/workflows/system-tests-files/reporttest.csv .
 
+      - name: "Install uv and report generation dependencies"
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          export PATH="$HOME/.local/bin:$PATH"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          # Minimal venv with jinja2 so the HTML report can be generated
+          # even when the full uv sync (Airflow install) is skipped.
+          uv venv
+          uv pip install jinja2
+
       - name: "Define CSAE environment name"
+        if: inputs.skip_csae != true
         id: define-environment-name
         run: echo "env-name=airflow-ci-$(date +%s%N)" >> $GITHUB_OUTPUT
 
       - name: "Create CSAE environment"
+        if: inputs.skip_csae != true
         id: create-csae-environment
         shell: bash
         run: |
@@ -83,8 +100,6 @@ jobs:
         run: |
           export AIRFLOW_HOME=~/airflow
           mkdir -p $AIRFLOW_HOME
-          curl -LsSf https://astral.sh/uv/install.sh | sh
-          export PATH="$HOME/.local/bin:$PATH"
 
           sudo apt-get update -q
           sudo apt-get install -y apt-transport-https apt-utils build-essential ca-certificates dirmngr \
@@ -118,7 +133,7 @@ jobs:
             providers/teradata/tests/system/teradata/example_*.py
 
       - name: "Delete CSAE environment"
-        if: always()
+        if: always() && inputs.skip_csae != true
         run: |
           chmod +x .github/workflows/scripts/deleteTestEnvironments.sh
           .github/workflows/scripts/deleteTestEnvironments.sh
