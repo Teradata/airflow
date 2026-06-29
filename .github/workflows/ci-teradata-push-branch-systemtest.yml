@@ -103,19 +103,7 @@ jobs:
               export AIRFLOW_HOME=~/airflow
               mkdir -p $AIRFLOW_HOME
 
-              # Initialize Airflow database
-              airflow db init
-
-              # Create Teradata connection using CLI (no Python code needed!)
-              airflow connections add teradata_default \
-                --conn-type teradata \
-                --conn-host '${{ steps.create-csae-environment.outputs.teradata-server-name }}' \
-                --conn-login '${{ vars.CSAE_AIRFLOW_ENV_USERNAME }}' \
-                --conn-password '${{ secrets.CSAE_AIRFLOW_ENV_PASSWORD }}' \
-                --conn-schema '${{ vars.CSAE_AIRFLOW_ENV_DATABASE }}' \
-                --conn-port 1025
-
-              uv run pytest --system --junitxml=report_test.xml \
+              uv run pytest --system --no-db-cleanup --junitxml=report_test.xml \
                 providers/teradata/tests/system/teradata/example_*.py
       - name: "Delete CSAE environment"
         if: always()
