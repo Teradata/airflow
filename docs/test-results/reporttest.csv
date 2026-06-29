@@ -1,5 +1,5 @@
-providers.teradata.tests.system.teradata.example_azure_blob_to_teradata_transfer,S,77.835,2026-06-29
-providers.teradata.tests.system.teradata.example_ssl_teradata,S,7.247,2026-06-29
-providers.teradata.tests.system.teradata.example_teradata,S,11.236,2026-06-29
-providers.teradata.tests.system.teradata.example_teradata_call_sp,S,11.393,2026-06-29
-providers.teradata.tests.system.teradata.example_teradata_to_teradata_transfer,S,9.095,2026-06-29
+providers.teradata.tests.system.teradata.example_azure_blob_to_teradata_transfer,S,78.176,2026-06-29
+providers.teradata.tests.system.teradata.example_ssl_teradata,S,6.050,2026-06-29
+providers.teradata.tests.system.teradata.example_teradata,S,12.128,2026-06-29
+providers.teradata.tests.system.teradata.example_teradata_call_sp,S,10.895,2026-06-29
+providers.teradata.tests.system.teradata.example_teradata_to_teradata_transfer,S,8.912,2026-06-29
