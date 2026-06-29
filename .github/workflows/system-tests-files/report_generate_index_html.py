@@ -27,8 +27,6 @@ tz = ZoneInfo("Asia/Kolkata")
 now = datetime.now(tz)
 formatted_date = now.strftime("%B %d, %Y at %I:%M:%S %p GMT%z")
 
-# Load full run history from CSV — keyed by classname.
-# Each value is a list of (result, duration) tuples in chronological order.
 history: dict[str, list[tuple[str, str]]] = {}
 try:
     with open("reporttest.csv", newline="") as csvfile:
@@ -59,8 +57,8 @@ for filename in system_test_files:
     successes = sum(1 for result, _ in runs if result == "S")
     failures = sum(1 for result, _ in runs if result == "F")
     last_duration = runs[-1][1]
-    last_date = formatted_date
-    status = [result for result, _ in runs[-10:]]
+    last_result = runs[-1][0]
+    status_icons = ["✅" if r == "S" else "❌" for r, _ in runs[-10:]]
 
     items.append(
         dict(
@@ -68,13 +66,24 @@ for filename in system_test_files:
             successre=successes,
             failurere=failures,
             time=last_duration,
-            lastrundate=last_date,
-            status=status,
+            lastrundate=formatted_date,
+            last_status="✅ Passing" if last_result == "S" else "❌ Failing",
+            status=status_icons,
         )
     )
+
+total_passing = sum(1 for item in items if item["last_status"].startswith("✅"))
+total_failing = sum(1 for item in items if item["last_status"].startswith("❌"))
+overall = "✅ All tests passing" if total_failing == 0 else f"❌ {total_failing} test(s) failing"
 
 with open("report_index_template.html") as f:
     template = Template(f.read())
 
 with open("index.html", "w") as f:
-    f.write(template.render(items=items))
+    f.write(template.render(
+        items=items,
+        updated_at=formatted_date,
+        overall_status=overall,
+        total_passing=total_passing,
+        total_failing=total_failing,
+    ))

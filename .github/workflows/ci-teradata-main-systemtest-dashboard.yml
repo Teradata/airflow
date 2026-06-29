@@ -111,7 +111,7 @@ jobs:
           # Install provider and shared workspace members
           uv sync --extra teradata --extra microsoft.azure --extra amazon
           # Install devel-common so tests_common.pytest_plugin (--system flag) is available
-          uv sync --project providers/teradata --group devel
+          uv sync --project providers/teradata --group dev
 
           # Unique ID per run to avoid DAG ID collisions if runs overlap
           export SYSTEM_TESTS_ENV_ID=teradatasystemtest-$(date +%s)
