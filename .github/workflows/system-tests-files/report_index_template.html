@@ -57,10 +57,18 @@ This dashboard displays test results for core Teradata operations. Some system t
 </table>
 
 <div style="margin-top: 32px; padding: 16px; background-color: #f0f0f0; border-left: 4px solid #2196F3; border-radius: 4px;">
-  <h3 style="margin-top: 0; color: #2196F3;">ℹ️ Infrastructure Limitations</h3>
+  <h3 style="margin-top: 0; color: #2196F3;">ℹ️ Tests with Infrastructure Limitations</h3>
   <p style="margin: 8px 0;">
-    This test suite includes 5 passing tests. Some Teradata system tests are not available due to infrastructure limitations and are not run in this environment.
+    The following tests require external infrastructure not available in this environment:
   </p>
+  <ul style="margin: 8px 0; padding-left: 24px;">
+    <li>example_remote_bteq.py</li>
+    <li>example_remote_tpt.py</li>
+    <li>example_tpt.py</li>
+    <li>example_bteq.py</li>
+    <li>example_s3_to_teradata_transfer.py</li>
+    <li>example_teradata_compute_cluster.py</li>
+  </ul>
 </div>
 
 </body>
