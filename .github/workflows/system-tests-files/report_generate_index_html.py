@@ -77,23 +77,9 @@ try:
 except FileNotFoundError:
     print(f"WARNING: {csv_file} not found, creating report with no history")
 
-directory = "providers/teradata/tests/system/teradata"
-system_test_files = []
-
-try:
-    system_test_files = [
-        f for f in os.listdir(directory) if f.endswith(".py") and f != "__init__.py"
-    ]
-except FileNotFoundError:
-    print(f"ERROR: Test directory not found: {directory}")
-    system_test_files = []
-
 items = []
-for filename in system_test_files:
-    test_name = filename[:-3]
-    classname = f"providers.teradata.tests.system.teradata.{test_name}"
-    runs = history.get(classname, [])
-
+# Display all tests that have run history, regardless of whether test files exist currently
+for classname, runs in history.items():
     if not runs:
         continue
 
