@@ -126,6 +126,19 @@ jobs:
           export AIRFLOW_VAR_AZURE_BLOB_ACCOUNT_SECRET_KEY=${{ secrets.AZURE_BLOB_ACCOUNT_SECRET_KEY }}
           export AIRFLOW_VAR_AWS_ACCESS_KEY_ID=${{ secrets.TERADATA_DOWNLOAD_AWS_SECRET_ACCESS_ID }}
           export AIRFLOW_VAR_AWS_SECRET_ACCESS_KEY=${{ secrets.TERADATA_DOWNLOAD_AWS_SECRET_ACCESS_KEY }}
+          export AIRFLOW__CORE__LOAD_PLUGINS=false
+
+          # Initialize Airflow database
+          airflow db init
+
+          # Create Teradata connection using CLI (no Python code needed!)
+          airflow connections add teradata_default \
+            --conn-type teradata \
+            --conn-host '${{ steps.create-csae-environment.outputs.teradata-server-name }}' \
+            --conn-login '${{ vars.CSAE_AIRFLOW_ENV_USERNAME }}' \
+            --conn-password '${{ secrets.CSAE_AIRFLOW_ENV_PASSWORD }}' \
+            --conn-schema '${{ vars.CSAE_AIRFLOW_ENV_DATABASE }}' \
+            --conn-port 1025
 
           uv run pytest --system --junitxml=report_test.xml \
             providers/teradata/tests/system/teradata/example_*.py
