@@ -24,6 +24,11 @@ on:
   schedule:
     - cron: "0 6 * * *"
   workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to run system tests on (defaults to main)'
+        required: false
+        default: 'main'
 permissions:
   contents: write
   pages: write
@@ -37,10 +42,10 @@ jobs:
       - name: Cleanup workspace
         run: docker run -v "${GITHUB_WORKSPACE}:/workspace" -u 0:0 bash -c "rm -rf /workspace/*"
 
-      - name: "Checkout main branch"
+      - name: "Checkout branch"
         uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ inputs.branch || 'main' }}
 
       - name: "Checkout support scripts and test history from teradata-workflows"
         run: |
