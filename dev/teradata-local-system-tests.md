@@ -28,6 +28,24 @@ sudo apt-get install -y libkrb5-dev krb5-multidev gcc g++ \
   unixodbc-dev default-libmysqlclient-dev libxmlsec1-dev
 ```
 
+> **Troubleshooting — `apt-get update` fails with certificate error:**
+>
+> If you see an error like:
+> ```
+> Certificate verification failed: The certificate is NOT trusted.
+> Could not handshake: Error in the certificate verification.
+> ```
+> for `apt.packages.shiftkey.dev` (GitHub Desktop repository), disable that repo and retry:
+>
+> ```bash
+> sudo mv /etc/apt/sources.list.d/shiftkey-packages.list \
+>         /etc/apt/sources.list.d/shiftkey-packages.list.disabled
+> sudo apt-get update -q
+> ```
+>
+> This repo is for GitHub Desktop and is not needed for Airflow system tests.
+> To re-enable it later: `sudo mv /etc/apt/sources.list.d/shiftkey-packages.list.disabled /etc/apt/sources.list.d/shiftkey-packages.list`
+
 ### 3. Install uv
 
 ```bash
