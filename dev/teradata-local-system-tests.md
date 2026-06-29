@@ -89,13 +89,26 @@ export SYSTEM_TESTS_ENV_ID=teradatasystemtest-$(date +%s)
 
 ## Run the tests
 
-### IMPORTANT: Use `--no-db-cleanup` flag
+### IMPORTANT: Use `--no-db-cleanup` flag (or `_AIRFLOW_SKIP_DB_TESTS`)
 
-**CRITICAL:** Always include the `--no-db-cleanup` flag when running system tests locally.
+**CRITICAL:** Always include one of these options when running system tests locally:
+- **Command-line flag:** `--no-db-cleanup`
+- **Environment variable:** `export _AIRFLOW_SKIP_DB_TESTS=true`
 
-The pytest framework's `_clear_db` fixture deletes and recreates environment variables before each test module runs. This overwrites your Teradata connection env vars with hardcoded localhost defaults, causing tests to fail with "localhost connection" or "connection not defined" errors.
+#### Why This Is Required
 
-**The `--no-db-cleanup` flag skips this fixture for system tests, preserving your environment variables.**
+The pytest framework's `_clear_db` fixture is designed to clean up the database between unit test modules. However, it has a destructive side effect for system tests:
+
+1. The fixture runs **before each test module** and **deletes ALL `AIRFLOW_CONN_*` environment variables** from the shell
+2. It then **recreates default connections from hardcoded defaults** (with `host=localhost`)
+3. Your pre-configured Teradata connection env vars (with the correct VM host) are **overwritten**
+4. Tests then fail trying to connect to `localhost` instead of your Teradata VM
+
+**Result without the flag:**
+- `teradata_default` test: Connects to localhost → "Failed to connect to localhost" error
+- `teradata_sp_call` test: Connection not found (it's not in the defaults, so it stays deleted)
+
+**What the flag does:** Skips the `_clear_db` fixture entirely for system tests, preserving your environment variables intact.
 
 ### Run a single test first to verify the setup
 
