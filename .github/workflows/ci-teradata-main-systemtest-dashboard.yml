@@ -70,12 +70,10 @@ jobs:
       - name: "Install uv and report generation dependencies"
         run: |
           curl -LsSf https://astral.sh/uv/install.sh | sh
-          export PATH="$HOME/.local/bin:$PATH"
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-          # Minimal venv with jinja2 so the HTML report can be generated
-          # even when the full uv sync (Airflow install) is skipped.
-          uv venv
-          uv pip install jinja2
+          # Install jinja2 into system Python so report scripts work even when
+          # the full uv sync (Airflow install) is skipped (skip_csae=true).
+          pip3 install --quiet jinja2
 
       - name: "Define CSAE environment name"
         if: inputs.skip_csae != true
@@ -144,8 +142,8 @@ jobs:
       - name: "Parse test results and generate HTML dashboard"
         if: always()
         run: |
-          uv run python report_parse_xml.py
-          uv run python report_generate_index_html.py
+          python3 report_parse_xml.py
+          python3 report_generate_index_html.py
           mkdir -p teradata_report
           cp index.html teradata_report/index.html
           cat reporttest.csv
