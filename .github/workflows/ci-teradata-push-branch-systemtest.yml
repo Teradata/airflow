@@ -103,6 +103,9 @@ jobs:
               export AIRFLOW_HOME=~/airflow
               mkdir -p $AIRFLOW_HOME
 
+              # Initialize Airflow database (required for tests)
+              uv run airflow db migrate
+
               uv run pytest --system --no-db-cleanup --junitxml=report_test.xml \
                 providers/teradata/tests/system/teradata/example_*.py
       - name: "Delete CSAE environment"

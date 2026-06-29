@@ -128,6 +128,9 @@ jobs:
           export AIRFLOW_VAR_AWS_SECRET_ACCESS_KEY=${{ secrets.TERADATA_DOWNLOAD_AWS_SECRET_ACCESS_KEY }}
           export AIRFLOW__CORE__LOAD_PLUGINS=false
 
+          # Initialize Airflow database (required for tests)
+          uv run airflow db migrate
+
           uv run pytest --system --no-db-cleanup --junitxml=report_test.xml \
             providers/teradata/tests/system/teradata/example_*.py
 
