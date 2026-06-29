@@ -52,7 +52,7 @@ jobs:
         with:
           ref: ${{ inputs.branch || 'main' }}
 
-      - name: "Checkout support scripts and test history from teradata-workflows"
+      - name: "Checkout support scripts from teradata-workflows"
         run: |
           git fetch origin teradata-workflows
           git checkout origin/teradata-workflows -- .github/workflows/scripts/createTestEnvironments.sh
@@ -61,15 +61,13 @@ jobs:
           git checkout origin/teradata-workflows -- .github/workflows/system-tests-files/report_index_template.html
           git checkout origin/teradata-workflows -- .github/workflows/system-tests-files/report_parse_xml.py
 
-          # Pull test history CSV - try docs/test-results first (persisted location), then fall back to system-tests-files (seed data)
+          # Load test history CSV from single location (docs/test-results/)
+          # If not found, start fresh - history accumulates with multiple runs
           if git checkout origin/teradata-workflows -- docs/test-results/reporttest.csv 2>/dev/null; then
-            echo "INFO: Loaded existing test history from docs/test-results/reporttest.csv"
+            echo "INFO: Loaded test history from docs/test-results/reporttest.csv"
             cp docs/test-results/reporttest.csv reporttest.csv
-          elif git checkout origin/teradata-workflows -- .github/workflows/system-tests-files/reporttest.csv 2>/dev/null; then
-            echo "INFO: Loading seed data from .github/workflows/system-tests-files/reporttest.csv"
-            cp .github/workflows/system-tests-files/reporttest.csv reporttest.csv
           else
-            echo "INFO: No existing test history found, initializing new reporttest.csv"
+            echo "INFO: Starting fresh test history"
             touch reporttest.csv
           fi
 
