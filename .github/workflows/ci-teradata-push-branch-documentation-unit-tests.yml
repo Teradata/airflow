@@ -71,6 +71,6 @@
                 breeze --answer y build-docs --package-filter apache-airflow-providers-teradata
           - name: Run Unit Tests
             run: |
-                breeze --answer y testing tests --test-type "Providers[teradata]"
+                breeze --answer y testing providers-tests --test-type "Providers[teradata]"
 
 
