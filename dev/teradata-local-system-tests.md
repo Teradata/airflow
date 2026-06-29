@@ -89,17 +89,25 @@ export SYSTEM_TESTS_ENV_ID=teradatasystemtest-$(date +%s)
 
 ## Run the tests
 
+### IMPORTANT: Use `--no-db-cleanup` flag
+
+**CRITICAL:** Always include the `--no-db-cleanup` flag when running system tests locally.
+
+The pytest framework's `_clear_db` fixture deletes and recreates environment variables before each test module runs. This overwrites your Teradata connection env vars with hardcoded localhost defaults, causing tests to fail with "localhost connection" or "connection not defined" errors.
+
+**The `--no-db-cleanup` flag skips this fixture for system tests, preserving your environment variables.**
+
 ### Run a single test first to verify the setup
 
 ```bash
-uv run pytest --system -xvs \
+uv run pytest --system --no-db-cleanup -xvs \
   providers/teradata/tests/system/teradata/example_teradata.py
 ```
 
 ### Run all tests that work with a local Teradata instance
 
 ```bash
-uv run pytest --system --junitxml=report_test.xml -xvs \
+uv run pytest --system --no-db-cleanup --junitxml=report_test.xml -xvs \
   providers/teradata/tests/system/teradata/example_teradata.py \
   providers/teradata/tests/system/teradata/example_teradata_to_teradata_transfer.py \
   providers/teradata/tests/system/teradata/example_teradata_call_sp.py \
@@ -107,6 +115,13 @@ uv run pytest --system --junitxml=report_test.xml -xvs \
   providers/teradata/tests/system/teradata/example_tpt.py \
   providers/teradata/tests/system/teradata/example_bteq.py
 ```
+
+**Alternative:** If you prefer using environment variables instead of command-line flags, set:
+```bash
+export _AIRFLOW_SKIP_DB_TESTS=true
+```
+
+This achieves the same effect as `--no-db-cleanup` by skipping the test fixture.
 
 ### Tests to skip for local-only runs
 
