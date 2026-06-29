@@ -61,9 +61,13 @@ jobs:
           git checkout origin/teradata-workflows -- .github/workflows/system-tests-files/report_index_template.html
           git checkout origin/teradata-workflows -- .github/workflows/system-tests-files/report_parse_xml.py
 
-          # Pull test history CSV from docs/test-results (new location to avoid workflow permission issues)
+          # Pull test history CSV - try docs/test-results first (persisted location), then fall back to system-tests-files (seed data)
           if git checkout origin/teradata-workflows -- docs/test-results/reporttest.csv 2>/dev/null; then
             echo "INFO: Loaded existing test history from docs/test-results/reporttest.csv"
+            cp docs/test-results/reporttest.csv reporttest.csv
+          elif git checkout origin/teradata-workflows -- .github/workflows/system-tests-files/reporttest.csv 2>/dev/null; then
+            echo "INFO: Loading seed data from .github/workflows/system-tests-files/reporttest.csv"
+            cp .github/workflows/system-tests-files/reporttest.csv reporttest.csv
           else
             echo "INFO: No existing test history found, initializing new reporttest.csv"
             touch reporttest.csv
