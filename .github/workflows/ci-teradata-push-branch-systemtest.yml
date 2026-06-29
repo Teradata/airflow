@@ -85,7 +85,7 @@ jobs:
               libssl-dev libxmlsec1 libxmlsec1-dev locales lsb-release openssh-client pkgconf sasl2-bin \
               software-properties-common sqlite3 sudo unixodbc unixodbc-dev zlib1g-dev python3-venv python3-pip pipx
               curl -LsSf https://astral.sh/uv/install.sh | sh
-              source $HOME/.local/bin/env
+              export PATH="$HOME/.local/bin:$PATH"
               uv sync --extra teradata --extra microsoft.azure --extra amazon
               uv sync --project providers/teradata --group devel
               export SYSTEM_TESTS_ENV_ID=teradatasystemtest-$(date +%s)

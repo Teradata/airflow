@@ -84,7 +84,7 @@ jobs:
           export AIRFLOW_HOME=~/airflow
           mkdir -p $AIRFLOW_HOME
           curl -LsSf https://astral.sh/uv/install.sh | sh
-          source $HOME/.local/bin/env
+          export PATH="$HOME/.local/bin:$PATH"
 
           sudo apt-get update -q
           sudo apt-get install -y apt-transport-https apt-utils build-essential ca-certificates dirmngr \
