@@ -60,12 +60,18 @@ jobs:
           git checkout origin/teradata-workflows -- .github/workflows/system-tests-files/report_generate_index_html.py
           git checkout origin/teradata-workflows -- .github/workflows/system-tests-files/report_index_template.html
           git checkout origin/teradata-workflows -- .github/workflows/system-tests-files/report_parse_xml.py
-          git checkout origin/teradata-workflows -- .github/workflows/system-tests-files/reporttest.csv \
-            || touch .github/workflows/system-tests-files/reporttest.csv
+
+          # Pull test history CSV from docs/test-results (new location to avoid workflow permission issues)
+          if git checkout origin/teradata-workflows -- docs/test-results/reporttest.csv 2>/dev/null; then
+            echo "INFO: Loaded existing test history from docs/test-results/reporttest.csv"
+          else
+            echo "INFO: No existing test history found, initializing new reporttest.csv"
+            touch reporttest.csv
+          fi
+
           cp .github/workflows/system-tests-files/report_generate_index_html.py .
           cp .github/workflows/system-tests-files/report_index_template.html .
           cp .github/workflows/system-tests-files/report_parse_xml.py .
-          cp .github/workflows/system-tests-files/reporttest.csv .
 
       - name: "Install uv and report generation dependencies"
         run: |
@@ -215,21 +221,52 @@ jobs:
       - name: "Persist updated test history CSV to teradata-workflows branch"
         if: always()
         run: |
+          set -e  # Exit on error
+
+          # Validate CSV before persisting
+          if [ -f reporttest.csv ]; then
+            CSV_LINES=$(wc -l < reporttest.csv)
+            echo "INFO: CSV file has $CSV_LINES lines"
+
+            # Check for corrupted lines (should have 4 fields minimum)
+            INVALID_LINES=$(awk -F',' 'NF < 4 {print NR}' reporttest.csv | wc -l || true)
+            if [ "$INVALID_LINES" -gt 0 ]; then
+              echo "WARNING: Found $INVALID_LINES invalid CSV lines, will be cleaned by report_parse_xml.py"
+            fi
+          else
+            echo "ERROR: reporttest.csv not found!"
+            exit 1
+          fi
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git fetch origin teradata-workflows
+
           git worktree add /tmp/tw-worktree origin/teradata-workflows
-          cp reporttest.csv /tmp/tw-worktree/.github/workflows/system-tests-files/reporttest.csv
+
+          # Store CSV in docs directory (not .github/workflows) to avoid permission issues
+          mkdir -p /tmp/tw-worktree/docs/test-results
+          cp reporttest.csv /tmp/tw-worktree/docs/test-results/reporttest.csv
+          echo "INFO: Copied reporttest.csv to docs/test-results/"
+
           cd /tmp/tw-worktree
-          git add .github/workflows/system-tests-files/reporttest.csv
+          git add docs/test-results/reporttest.csv
+
           if git diff --staged --quiet; then
-            echo "No changes to CSV — skipping commit"
+            echo "INFO: No changes to CSV — skipping commit"
           else
             git commit -m "ci: update system test results [skip ci]"
-            git push origin HEAD:teradata-workflows
+            if git push origin HEAD:teradata-workflows; then
+              echo "INFO: Successfully pushed test results to teradata-workflows"
+            else
+              echo "WARNING: Failed to push to teradata-workflows (may have permission issues)"
+            fi
           fi
+
           cd "$GITHUB_WORKSPACE"
           git worktree remove /tmp/tw-worktree
+
+          echo "INFO: Test history persistence completed"
 
       - name: "Build GitHub Pages site"
         if: always()

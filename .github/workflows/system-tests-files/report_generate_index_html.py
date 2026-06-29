@@ -30,22 +30,63 @@ formatted_date = now.strftime("%d-%b-%Y %H:%M IST")
 branch = os.environ.get("BRANCH_NAME", "main")
 
 history: dict[str, list[tuple[str, str]]] = {}
+csv_file = "reporttest.csv"
+
+# Load and validate CSV
 try:
-    with open("reporttest.csv", newline="") as csvfile:
-        for row in csv.reader(csvfile):
-            if len(row) < 3:
+    with open(csv_file, newline="") as csvfile:
+        for row_num, row in enumerate(csv.reader(csvfile), start=1):
+            try:
+                # Validate row format
+                if len(row) < 4:
+                    print(f"WARNING: Row {row_num} has insufficient columns ({len(row)}), skipping: {row}")
+                    continue
+
+                classname = row[0].strip()
+                result = row[1].strip()
+                duration = row[2].strip()
+
+                # Validate result is S or F
+                if result not in ("S", "F"):
+                    print(f"WARNING: Row {row_num} has invalid result '{result}', skipping: {row}")
+                    continue
+
+                # Validate classname is not empty
+                if not classname:
+                    print(f"WARNING: Row {row_num} has empty classname, skipping: {row}")
+                    continue
+
+                # Validate duration is numeric
+                try:
+                    float(duration)
+                except ValueError:
+                    print(f"WARNING: Row {row_num} has non-numeric duration '{duration}', skipping: {row}")
+                    continue
+
+                history.setdefault(classname, []).append((result, duration))
+
+            except Exception as e:
+                print(f"ERROR: Failed to parse row {row_num}: {e}, row: {row}")
                 continue
-            classname = row[0].strip()
-            result = row[1].strip()
-            duration = row[2].strip()
-            history.setdefault(classname, []).append((result, duration))
+
+    if history:
+        print(f"INFO: Loaded {sum(len(v) for v in history.values())} test results from {len(history)} unique tests")
+    else:
+        print(f"WARNING: No valid test results found in {csv_file}")
+
 except FileNotFoundError:
-    pass
+    print(f"WARNING: {csv_file} not found, creating report with no history")
 
 directory = "providers/teradata/tests/system/teradata"
-system_test_files = [
-    f for f in os.listdir(directory) if f.endswith(".py") and f != "__init__.py"
-]
+system_test_files = []
+
+try:
+    system_test_files = [
+        f for f in os.listdir(directory) if f.endswith(".py") and f != "__init__.py"
+    ]
+except FileNotFoundError:
+    print(f"ERROR: Test directory not found: {directory}")
+    system_test_files = []
 
 items = []
 for filename in system_test_files:
