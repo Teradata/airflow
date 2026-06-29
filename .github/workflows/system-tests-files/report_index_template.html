@@ -33,6 +33,15 @@ This dashboard displays test results for core Teradata operations. Some system t
   Status: {{overall_status}} &nbsp;|&nbsp; Passing: {{total_passing}} &nbsp;|&nbsp; Failing: {{total_failing}} &nbsp;|&nbsp; Last updated: {{updated_at}}
 </div>
 
+<div style="margin-bottom: 16px; padding: 12px; background-color: #e8f4f8; border-left: 4px solid #01579B; border-radius: 4px;">
+  <strong>Source Information:</strong>
+  <ul style="margin: 8px 0; padding-left: 24px;">
+    <li><strong>Branch:</strong> <code>{{branch}}</code></li>
+    <li><strong>Commit:</strong> <code>{{commit_hash}}</code></li>
+    <li><strong>Repository:</strong> <a href="{{source_url}}" target="_blank" style="color: #01579B; text-decoration: none;">View on GitHub →</a></li>
+  </ul>
+</div>
+
 <table style="width:100%" id="myTable" class="w3-table-all">
 <tr>
     <th onclick="w3.sortHTML('#myTable','.item', 'td:nth-child(1)')">System Test Name</th>

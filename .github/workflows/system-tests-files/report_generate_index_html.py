@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import csv
 import os
+import subprocess
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -28,6 +29,17 @@ now = datetime.now(tz)
 formatted_date = now.strftime("%d-%b-%Y %H:%M IST")
 
 branch = os.environ.get("BRANCH_NAME", "main")
+
+# Get git commit hash
+try:
+    commit_hash = subprocess.check_output(
+        ["git", "rev-parse", "--short", "HEAD"],
+        stderr=subprocess.DEVNULL
+    ).decode().strip()
+    source_url = f"https://github.com/Teradata/airflow/tree/{branch}"
+except Exception:
+    commit_hash = "unknown"
+    source_url = "https://github.com/Teradata/airflow"
 
 history: dict[str, list[tuple[str, str]]] = {}
 csv_file = "reporttest.csv"
@@ -116,4 +128,6 @@ with open("index.html", "w") as f:
         total_passing=total_passing,
         total_failing=total_failing,
         branch=branch,
+        commit_hash=commit_hash,
+        source_url=source_url,
     ))
