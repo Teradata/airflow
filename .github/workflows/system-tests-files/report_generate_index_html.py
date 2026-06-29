@@ -53,10 +53,13 @@ for filename in system_test_files:
     classname = f"providers.teradata.tests.system.teradata.{test_name}"
     runs = history.get(classname, [])
 
+    if not runs:
+        continue
+
     successes = sum(1 for result, _ in runs if result == "S")
     failures = sum(1 for result, _ in runs if result == "F")
-    last_duration = runs[-1][1] if runs else "N/A"
-    last_date = formatted_date if runs else "Never run"
+    last_duration = runs[-1][1]
+    last_date = formatted_date
     status = [result for result, _ in runs[-10:]]
 
     items.append(
