@@ -141,6 +141,8 @@ jobs:
 
       - name: "Parse test results and generate HTML dashboard"
         if: always()
+        env:
+          BRANCH_NAME: ${{ inputs.branch || 'main' }}
         run: |
           python3 report_parse_xml.py
           python3 report_generate_index_html.py

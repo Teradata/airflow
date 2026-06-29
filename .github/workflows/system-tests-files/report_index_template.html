@@ -26,7 +26,7 @@ th {
 
 <div>View the health of Teradata system tests for Apache Airflow.</div>
 <div style="margin-bottom: 16px;">
-This live dashboard displays the current health of Teradata system tests available in the Teradata Provider package of <a href="https://github.com/Teradata/airflow/tree/main">Apache Airflow</a>.
+This live dashboard displays the current health of Teradata system tests available in the Teradata Provider package of <a href="https://github.com/Teradata/airflow/tree/{{branch}}">Apache Airflow ({{branch}})</a>.
 </div>
 
 <div class="status-banner">
@@ -40,7 +40,7 @@ This live dashboard displays the current health of Teradata system tests availab
     <th onclick="w3.sortHTML('#myTable','.item', 'td:nth-child(3)')">Failures</th>
     <th onclick="w3.sortHTML('#myTable','.item', 'td:nth-child(4)')">Duration (s)</th>
     <th onclick="w3.sortHTML('#myTable','.item', 'td:nth-child(5)')">Last Run</th>
-    <th onclick="w3.sortHTML('#myTable','.item', 'td:nth-child(6)')">Last Run Date</th>
+    <th onclick="w3.sortHTML('#myTable','.item', 'td:nth-child(6)')">Last Run Date (IST)</th>
     <th onclick="w3.sortHTML('#myTable','.item', 'td:nth-child(7)')">Last 10 runs (oldest → newest)</th>
 </tr>
 {% for item in items %}

@@ -25,7 +25,9 @@ from jinja2 import Template
 
 tz = ZoneInfo("Asia/Kolkata")
 now = datetime.now(tz)
-formatted_date = now.strftime("%B %d, %Y at %I:%M:%S %p GMT%z")
+formatted_date = now.strftime("%d-%b-%Y %H:%M IST")
+
+branch = os.environ.get("BRANCH_NAME", "main")
 
 history: dict[str, list[tuple[str, str]]] = {}
 try:
@@ -86,4 +88,5 @@ with open("index.html", "w") as f:
         overall_status=overall,
         total_passing=total_passing,
         total_failing=total_failing,
+        branch=branch,
     ))
