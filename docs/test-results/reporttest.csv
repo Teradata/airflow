@@ -6,6 +6,7 @@ providers.teradata.tests.system.teradata.example_azure_blob_to_teradata_transfer
 providers.teradata.tests.system.teradata.example_azure_blob_to_teradata_transfer,S,83.981,2026-06-29
 providers.teradata.tests.system.teradata.example_azure_blob_to_teradata_transfer,S,83.138,2026-06-30
 providers.teradata.tests.system.teradata.example_azure_blob_to_teradata_transfer,S,82.913,2026-06-30
+providers.teradata.tests.system.teradata.example_azure_blob_to_teradata_transfer,S,80.543,2026-07-01
 providers.teradata.tests.system.teradata.example_ssl_teradata,S,6.050,2026-06-29
 providers.teradata.tests.system.teradata.example_ssl_teradata,S,5.165,2026-06-29
 providers.teradata.tests.system.teradata.example_ssl_teradata,S,8.179,2026-06-29
@@ -14,6 +15,7 @@ providers.teradata.tests.system.teradata.example_ssl_teradata,S,7.645,2026-06-29
 providers.teradata.tests.system.teradata.example_ssl_teradata,S,8.193,2026-06-29
 providers.teradata.tests.system.teradata.example_ssl_teradata,S,8.694,2026-06-30
 providers.teradata.tests.system.teradata.example_ssl_teradata,S,8.090,2026-06-30
+providers.teradata.tests.system.teradata.example_ssl_teradata,S,7.626,2026-07-01
 providers.teradata.tests.system.teradata.example_teradata,S,12.128,2026-06-29
 providers.teradata.tests.system.teradata.example_teradata,S,8.710,2026-06-29
 providers.teradata.tests.system.teradata.example_teradata,S,12.653,2026-06-29
@@ -22,6 +24,7 @@ providers.teradata.tests.system.teradata.example_teradata,S,11.689,2026-06-29
 providers.teradata.tests.system.teradata.example_teradata,S,15.021,2026-06-29
 providers.teradata.tests.system.teradata.example_teradata,S,14.293,2026-06-30
 providers.teradata.tests.system.teradata.example_teradata,S,15.076,2026-06-30
+providers.teradata.tests.system.teradata.example_teradata,S,12.599,2026-07-01
 providers.teradata.tests.system.teradata.example_teradata_call_sp,S,10.895,2026-06-29
 providers.teradata.tests.system.teradata.example_teradata_call_sp,S,8.402,2026-06-29
 providers.teradata.tests.system.teradata.example_teradata_call_sp,S,14.701,2026-06-29
@@ -30,6 +33,7 @@ providers.teradata.tests.system.teradata.example_teradata_call_sp,S,13.498,2026-
 providers.teradata.tests.system.teradata.example_teradata_call_sp,S,15.001,2026-06-29
 providers.teradata.tests.system.teradata.example_teradata_call_sp,S,15.305,2026-06-30
 providers.teradata.tests.system.teradata.example_teradata_call_sp,S,14.906,2026-06-30
+providers.teradata.tests.system.teradata.example_teradata_call_sp,S,13.318,2026-07-01
 providers.teradata.tests.system.teradata.example_teradata_to_teradata_transfer,S,8.912,2026-06-29
 providers.teradata.tests.system.teradata.example_teradata_to_teradata_transfer,S,7.179,2026-06-29
 providers.teradata.tests.system.teradata.example_teradata_to_teradata_transfer,S,10.680,2026-06-29
@@ -38,3 +42,4 @@ providers.teradata.tests.system.teradata.example_teradata_to_teradata_transfer,S
 providers.teradata.tests.system.teradata.example_teradata_to_teradata_transfer,S,12.777,2026-06-29
 providers.teradata.tests.system.teradata.example_teradata_to_teradata_transfer,F,7.507,2026-06-30
 providers.teradata.tests.system.teradata.example_teradata_to_teradata_transfer,S,12.481,2026-06-30
+providers.teradata.tests.system.teradata.example_teradata_to_teradata_transfer,F,7.539,2026-07-01
