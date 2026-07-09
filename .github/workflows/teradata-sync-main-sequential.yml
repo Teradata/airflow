@@ -80,7 +80,14 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-
+      - name: Diagnose PAT access
+        run: |
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token ${{ secrets.TERADATA_PE_PAT }}" \
+            https://api.github.com/repos/Teradata-PE/devtools-airflow)
+          echo "API response: $HTTP"
+          # 200 = token works, 401 = bad token, 403 = no access / SSO blocked, 404 = repo not found or no read access
+          [ "$HTTP" = "200" ] || exit 1
       - name: Configure git identity
         run: |
           git config user.name "github-actions[bot]"
