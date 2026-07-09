@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html>
+<head>
+<link rel="stylesheet" href="https://www.w3schools.com/w3css/4/w3.css">
+<script src="https://www.w3schools.com/lib/w3.js"></script>
+<style>
+table, th, td {
+  border: 1px solid black;
+  border-collapse: collapse;
+}
+th {
+  cursor: pointer;
+  background-color: coral;
+}
+.status-banner {
+  padding: 8px 12px;
+  margin-bottom: 16px;
+  border-radius: 4px;
+  font-weight: bold;
+  font-size: 1.05em;
+}
+</style>
+</head>
+<body style="margin:10px;padding:10px">
+<h2>Apache Airflow - Teradata Provider Package Health </h2>
+
+<div>View the health of Teradata system tests for Apache Airflow.</div>
+<div style="margin-bottom: 16px;">
+This dashboard displays test results for core Teradata operations. Some system tests requiring external infrastructure are not included.
+</div>
+
+<div class="status-banner">
+  Status: ❌ 5 test(s) failing &nbsp;|&nbsp; Passing: 0 &nbsp;|&nbsp; Failing: 5 &nbsp;|&nbsp; Last updated: 09-Jul-2026 19:53 IST
+</div>
+
+<div style="margin-bottom: 16px; padding: 12px; background-color: #e8f4f8; border-left: 4px solid #01579B; border-radius: 4px;">
+  <strong>Source Information:</strong>
+  <ul style="margin: 8px 0; padding-left: 24px;">
+    <li><strong>Branch:</strong> <code>main</code></li>
+    <li><strong>Commit:</strong> <code>b030000</code></li>
+    <li><strong>Repository:</strong> <a href="https://github.com/Teradata/airflow/tree/main" target="_blank" style="color: #01579B; text-decoration: none;">View on GitHub →</a></li>
+  </ul>
+</div>
+
+<table style="width:100%" id="myTable" class="w3-table-all">
+<tr>
+    <th onclick="w3.sortHTML('#myTable','.item', 'td:nth-child(1)')">System Test Name</th>
+    <th onclick="w3.sortHTML('#myTable','.item', 'td:nth-child(2)')">Successes</th>
+    <th onclick="w3.sortHTML('#myTable','.item', 'td:nth-child(3)')">Failures</th>
+    <th onclick="w3.sortHTML('#myTable','.item', 'td:nth-child(4)')">Duration (s)</th>
+    <th onclick="w3.sortHTML('#myTable','.item', 'td:nth-child(5)')">Last Run</th>
+    <th onclick="w3.sortHTML('#myTable','.item', 'td:nth-child(6)')">Last Run Date (IST)</th>
+    <th onclick="w3.sortHTML('#myTable','.item', 'td:nth-child(7)')">Last 10 runs (oldest → newest)</th>
+</tr>
+
+<TR class="item">
+  <TD>providers.teradata.tests.system.teradata.example_azure_blob_to_teradata_transfer</TD>
+  <TD>0</TD>
+  <TD>2</TD>
+  <TD>35.681</TD>
+  <TD>❌ Failing</TD>
+  <TD>09-Jul-2026 19:53 IST</TD>
+  <TD>❌❌</TD>
+</TR>
+
+<TR class="item">
+  <TD>providers.teradata.tests.system.teradata.example_ssl_teradata</TD>
+  <TD>0</TD>
+  <TD>2</TD>
+  <TD>5.634</TD>
+  <TD>❌ Failing</TD>
+  <TD>09-Jul-2026 19:53 IST</TD>
+  <TD>❌❌</TD>
+</TR>
+
+<TR class="item">
+  <TD>providers.teradata.tests.system.teradata.example_teradata</TD>
+  <TD>0</TD>
+  <TD>2</TD>
+  <TD>9.918</TD>
+  <TD>❌ Failing</TD>
+  <TD>09-Jul-2026 19:53 IST</TD>
+  <TD>❌❌</TD>
+</TR>
+
+<TR class="item">
+  <TD>providers.teradata.tests.system.teradata.example_teradata_call_sp</TD>
+  <TD>0</TD>
+  <TD>2</TD>
+  <TD>10.155</TD>
+  <TD>❌ Failing</TD>
+  <TD>09-Jul-2026 19:53 IST</TD>
+  <TD>❌❌</TD>
+</TR>
+
+<TR class="item">
+  <TD>providers.teradata.tests.system.teradata.example_teradata_to_teradata_transfer</TD>
+  <TD>0</TD>
+  <TD>2</TD>
+  <TD>7.318</TD>
+  <TD>❌ Failing</TD>
+  <TD>09-Jul-2026 19:53 IST</TD>
+  <TD>❌❌</TD>
+</TR>
+
+</table>
+
+<div style="margin-top: 32px; padding: 16px; background-color: #f0f0f0; border-left: 4px solid #2196F3; border-radius: 4px;">
+  <h3 style="margin-top: 0; color: #2196F3;">ℹ️ Tests with Infrastructure Limitations</h3>
+  <p style="margin: 8px 0;">
+    The following tests require external infrastructure not available in this environment:
+  </p>
+  <ul style="margin: 8px 0; padding-left: 24px;">
+    <li>example_remote_bteq.py</li>
+    <li>example_remote_tpt.py</li>
+    <li>example_tpt.py</li>
+    <li>example_bteq.py</li>
+    <li>example_s3_to_teradata_transfer.py</li>
+    <li>example_teradata_compute_cluster.py</li>
+  </ul>
+</div>
+
+</body>
+</html>
