@@ -21,6 +21,7 @@
       push:
         branches:
           - '**'
+          - '!teradata-workflows'
       workflow_dispatch:
        inputs:
         branch:
